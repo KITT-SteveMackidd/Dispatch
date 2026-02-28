@@ -49,51 +49,41 @@ export default function TeamsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Teams & Chat</Text>
-      <Text style={styles.info}>
-        {profile?.role === 'worker'
-          ? 'Your assigned teams and linked event load are listed below.'
-          : 'Team roster and event load for your operation.'}
-      </Text>
-
-      <Pressable style={styles.seedBtn} onPress={handleSeedDemo} disabled={seeding || !profile}>
-        {seeding ? <ActivityIndicator color="#052e24" /> : <Text style={styles.seedText}>Load Demo Data</Text>}
-      </Pressable>
+      <Text style={styles.subhead}>Manage Your Team</Text>
 
       <FlatList
         data={teams}
         keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={styles.empty}>No teams found yet for this profile.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No teams found yet. Tap Add Demo Team Data.</Text>}
         renderItem={({ item }) => (
           <Pressable style={styles.card}>
-            <Text style={styles.title}>{item.name}</Text>
-            <Text style={styles.meta}>{item.workerIds.length} workers</Text>
-            <Text style={styles.badge}>{eventCountsByTeam.get(item.id) ?? 0} linked events</Text>
-            <Text style={styles.small}>Team chat stream is next: wiring eventChats/{'{eventId}'}/messages in upcoming build step.</Text>
+            <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>{item.name}</Text>
+              <Text style={styles.meta}>{item.workerIds.length} workers</Text>
+            </View>
+            <Text style={styles.status}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
           </Pressable>
         )}
       />
+
+      <Pressable style={styles.addBtn} onPress={handleSeedDemo} disabled={seeding || !profile}>
+        {seeding ? <ActivityIndicator color="white" /> : <Text style={styles.addText}>+ Add Demo Team Data</Text>}
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0b1020', padding: 16 },
-  header: { color: 'white', fontSize: 24, fontWeight: '700', marginBottom: 12 },
-  info: { color: '#9aa7d1', marginBottom: 10 },
-  seedBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#6ee7b7',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 12,
-  },
-  seedText: { color: '#052e24', fontWeight: '700' },
-  empty: { color: '#9aa7d1', paddingTop: 24 },
-  card: { backgroundColor: '#131c37', padding: 14, borderRadius: 14, marginBottom: 10 },
-  title: { color: 'white', fontWeight: '700', fontSize: 16 },
-  meta: { color: '#9aa7d1', marginTop: 3 },
-  badge: { marginTop: 6, color: '#4dd0a0', fontWeight: '600' },
-  small: { marginTop: 8, color: '#8c9ac8', fontSize: 12 },
+  container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
+  subhead: { color: '#334155', fontWeight: '600', marginBottom: 12 },
+  empty: { marginTop: 20, color: '#64748b' },
+  card: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontWeight: '700', color: '#1d4ed8' },
+  title: { color: '#0f172a', fontWeight: '700', fontSize: 16 },
+  meta: { color: '#64748b', marginTop: 2, fontSize: 12 },
+  status: { color: '#475569', fontSize: 12, fontWeight: '600' },
+  addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
+  addText: { color: 'white', fontWeight: '700' },
 });

@@ -1,110 +1,65 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '@/context/session';
-import { toggleTaskCompletion, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
+import { watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent } from '@/types/dispatch';
 
 export default function TodayScreen() {
   const { profile } = useSession();
   const [events, setEvents] = useState<DispatchEvent[]>([]);
-  const [openEventId, setOpenEventId] = useState<string | null>(null);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile) return;
-    const unsub =
-      profile.role === 'manager'
-        ? watchManagerEvents(profile.uid, setEvents)
-        : watchWorkerEvents(profile.uid, setEvents);
-    return unsub;
+    return profile.role === 'manager'
+      ? watchManagerEvents(profile.uid, setEvents)
+      : watchWorkerEvents(profile.uid, setEvents);
   }, [profile]);
 
   const today = useMemo(() => {
     const now = new Date();
-    return events.filter((e) => {
-      const d = new Date(e.startsAt);
-      return d.toDateString() === now.toDateString();
-    });
+    return events.filter((e) => new Date(e.startsAt).toDateString() === now.toDateString());
   }, [events]);
 
-  const roleTaskRows = (event: DispatchEvent) =>
-    event.roles.flatMap((role) => role.tasks.map((task) => ({ roleId: role.id, task })));
-
-  const onToggle = async (event: DispatchEvent, roleId: string, taskId: string, complete: boolean) => {
-    if (!profile) return;
-    const key = `${event.id}:${roleId}:${taskId}`;
-    setSavingKey(key);
-    try {
-      await toggleTaskCompletion({
-        eventId: event.id,
-        roleId,
-        taskId,
-        workerId: profile.uid,
-        complete,
-      });
-    } catch (error) {
-      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unable to update task.');
-    } finally {
-      setSavingKey(null);
-    }
+  const badge = (event: DispatchEvent) => {
+    const total = event.roles.flatMap((r) => r.tasks).length;
+    const done = event.roles.flatMap((r) => r.tasks).filter((t) => (t.completedBy?.length ?? 0) > 0).length;
+    if (done === total && total > 0) return { text: 'On Track', bg: '#dcfce7', fg: '#15803d' };
+    if (done === 0) return { text: 'Pending', bg: '#dbeafe', fg: '#1d4ed8' };
+    return { text: `${Math.max(total - done, 1)} Tasks Behind`, bg: '#ffedd5', fg: '#c2410c' };
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Today's Events</Text>
+      <Text style={styles.subhead}>You have {today.length} active dispatches.</Text>
       <FlatList
         data={today}
         keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={styles.empty}>No events scheduled for today.</Text>}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Pressable onPress={() => setOpenEventId(openEventId === item.id ? null : item.id)}>
+        contentContainerStyle={{ paddingTop: 10 }}
+        ListEmptyComponent={<Text style={styles.empty}>No dispatches for today.</Text>}
+        renderItem={({ item }) => {
+          const b = badge(item);
+          return (
+            <Pressable style={styles.card}>
               <Text style={styles.title}>{item.name}</Text>
-              <Text style={styles.meta}>{item.location}</Text>
-            </Pressable>
-
-            {openEventId === item.id ? (
-              <View style={{ marginTop: 12 }}>
-                {roleTaskRows(item).map(({ roleId, task }) => {
-                  const doneByMe = !!profile && (task.completedBy ?? []).includes(profile.uid);
-                  const key = `${item.id}:${roleId}:${task.id}`;
-                  const busy = savingKey === key;
-                  return (
-                    <Pressable
-                      key={task.id}
-                      style={[styles.task, doneByMe && styles.taskDone]}
-                      onPress={() => onToggle(item, roleId, task.id, !doneByMe)}>
-                      <View style={styles.taskRow}>
-                        <Text style={[styles.taskText, doneByMe && styles.taskDoneText]}>{doneByMe ? '☑' : '☐'} {task.name}</Text>
-                        {busy ? <ActivityIndicator size="small" color="#a7f3d0" /> : null}
-                      </View>
-                      <Text style={styles.taskMeta}>
-                        {(task.completedBy?.length ?? 0)} completed
-                        {task.dueAt ? ` · Due: ${new Date(task.dueAt).toLocaleTimeString()}` : ''}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+              <View style={[styles.badge, { backgroundColor: b.bg }]}>
+                <Text style={[styles.badgeText, { color: b.fg }]}>{b.text}</Text>
               </View>
-            ) : null}
-          </View>
-        )}
+              <Text style={styles.meta}>Due by {new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text>
+            </Pressable>
+          );
+        }}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0b1020', padding: 16 },
-  header: { color: 'white', fontSize: 24, fontWeight: '700', marginBottom: 12 },
-  empty: { color: '#9aa7d1', paddingTop: 24 },
-  card: { backgroundColor: '#131c37', padding: 14, borderRadius: 14, marginBottom: 10 },
-  title: { color: 'white', fontWeight: '700', fontSize: 16 },
-  meta: { color: '#9aa7d1', marginTop: 3 },
-  task: { backgroundColor: '#0f1730', borderRadius: 10, padding: 10, marginBottom: 8 },
-  taskDone: { backgroundColor: '#0f2a22', borderWidth: 1, borderColor: '#1f8f6f' },
-  taskRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  taskText: { color: '#e6ecff', fontWeight: '600' },
-  taskDoneText: { color: '#a7f3d0' },
-  taskMeta: { color: '#8c9ac8', fontSize: 12, marginTop: 3 },
+  container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
+  subhead: { color: '#475569', fontWeight: '500' },
+  empty: { marginTop: 20, color: '#64748b' },
+  card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  title: { color: '#0f172a', fontWeight: '700', fontSize: 20, marginBottom: 8 },
+  badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8 },
+  badgeText: { fontWeight: '700', fontSize: 12 },
+  meta: { color: '#64748b', fontSize: 12 },
 });

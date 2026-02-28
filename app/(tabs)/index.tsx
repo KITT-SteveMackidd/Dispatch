@@ -5,18 +5,16 @@ import { useSession } from '@/context/session';
 import { watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent } from '@/types/dispatch';
 
-export default function UpcomingScreen() {
+export default function DispatchesScreen() {
   const router = useRouter();
   const { profile } = useSession();
   const [events, setEvents] = useState<DispatchEvent[]>([]);
 
   useEffect(() => {
     if (!profile) return;
-    const unsub =
-      profile.role === 'manager'
-        ? watchManagerEvents(profile.uid, setEvents)
-        : watchWorkerEvents(profile.uid, setEvents);
-    return unsub;
+    return profile.role === 'manager'
+      ? watchManagerEvents(profile.uid, setEvents)
+      : watchWorkerEvents(profile.uid, setEvents);
   }, [profile]);
 
   const upcoming = useMemo(
@@ -26,17 +24,19 @@ export default function UpcomingScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Upcoming Events</Text>
+      <Text style={styles.filter}>All Assignments ▾</Text>
       <FlatList
         data={upcoming}
         keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={styles.empty}>No upcoming events yet.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No upcoming assignments.</Text>}
         renderItem={({ item }) => (
           <Pressable style={styles.card} onPress={() => router.push(`/event/${item.id}`)}>
-            <Text style={styles.title}>{item.name}</Text>
-            <Text style={styles.meta}>{item.location}</Text>
-            <Text style={styles.meta}>{new Date(item.startsAt).toLocaleString()}</Text>
-            <Text style={styles.badge}>{item.roles.length} roles</Text>
+            <View style={styles.row}>
+              <Text style={styles.title}>{item.name}</Text>
+              <View style={styles.statusPill}><Text style={styles.statusText}>Upcoming</Text></View>
+            </View>
+            <Text style={styles.meta}>Due {new Date(item.startsAt).toLocaleString()}</Text>
+            <Text style={styles.meta}>Assigned to: Team {item.teamIds[0] ? 'A' : '-'}</Text>
           </Pressable>
         )}
       />
@@ -45,11 +45,13 @@ export default function UpcomingScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0b1020', padding: 16 },
-  header: { color: 'white', fontSize: 24, fontWeight: '700', marginBottom: 12 },
-  empty: { color: '#9aa7d1', paddingTop: 24 },
-  card: { backgroundColor: '#131c37', padding: 14, borderRadius: 14, marginBottom: 10 },
-  title: { color: 'white', fontWeight: '700', fontSize: 16 },
-  meta: { color: '#9aa7d1', marginTop: 3 },
-  badge: { marginTop: 8, color: '#4dd0a0', fontWeight: '600' },
+  container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
+  filter: { color: '#334155', fontWeight: '600', marginBottom: 10 },
+  empty: { marginTop: 20, color: '#64748b' },
+  card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { color: '#0f172a', fontWeight: '700', fontSize: 20 },
+  statusPill: { backgroundColor: '#e2e8f0', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
+  statusText: { color: '#475569', fontSize: 11, fontWeight: '700' },
+  meta: { color: '#64748b', marginTop: 6, fontSize: 12 },
 });
