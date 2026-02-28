@@ -8,6 +8,7 @@ Dispatch helps **Managers** assign event roles/tasks to **Workers**, track progr
 - Upcoming Events screen (vertical list)
 - Today's Events screen with expandable task checklist
 - Teams screen with manager/worker team visibility + linked event load
+- One-tap "Load Demo Data" button in Teams tab for manual testing
 - Event detail modal (roles, assignments, tasks, completion indicators)
 - Firebase integration scaffolding (Auth + Firestore)
 - Real-time listeners for events/teams via Firestore snapshots

@@ -6,9 +6,10 @@ import {
   query,
   runTransaction,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { DispatchEvent, EventRole, Team } from '@/types/dispatch';
+import { DispatchEvent, EventRole, Team, UserProfile } from '@/types/dispatch';
 
 function mapEvents(snap: { docs: Array<{ id: string; data: () => unknown }> }): DispatchEvent[] {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DispatchEvent, 'id'>) }));
@@ -83,4 +84,88 @@ export async function toggleTaskCompletion(params: {
 
     tx.update(ref, { roles: nextRoles });
   });
+}
+
+export async function seedDemoData(profile: UserProfile) {
+  const now = new Date();
+  const inTwoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  const managerId = profile.role === 'manager' ? profile.uid : `demo-manager-${profile.uid.slice(-6)}`;
+  const workerIds = profile.role === 'worker' ? [profile.uid] : [`demo-worker-a-${profile.uid.slice(-4)}`, `demo-worker-b-${profile.uid.slice(-4)}`];
+
+  const teamAId = `demo-team-core-${profile.uid}`;
+  const teamBId = `demo-team-support-${profile.uid}`;
+  const eventTodayId = `demo-event-today-${profile.uid}`;
+  const eventTomorrowId = `demo-event-tomorrow-${profile.uid}`;
+
+  const batch = writeBatch(db);
+
+  batch.set(doc(db, 'teams', teamAId), {
+    managerId,
+    name: 'Core Event Crew',
+    workerIds,
+  });
+
+  batch.set(doc(db, 'teams', teamBId), {
+    managerId,
+    name: 'Support Team',
+    workerIds,
+  });
+
+  batch.set(doc(db, 'events', eventTodayId), {
+    managerId,
+    workerIds,
+    name: 'Downtown Promo Activation',
+    location: 'Calgary Tower Plaza',
+    startsAt: now.toISOString(),
+    endsAt: inTwoHours.toISOString(),
+    teamIds: [teamAId],
+    roles: [
+      {
+        id: 'lead',
+        name: 'Team Lead',
+        assignedWorkerIds: workerIds.slice(0, 1),
+        openSlots: 0,
+        tasks: [
+          { id: 'brief', name: 'Run pre-shift briefing', completedBy: [] },
+          { id: 'setup', name: 'Confirm booth setup and signage', completedBy: [] },
+        ],
+      },
+      {
+        id: 'support',
+        name: 'Support Rep',
+        assignedWorkerIds: workerIds,
+        openSlots: 1,
+        tasks: [
+          { id: 'stock', name: 'Restock promo materials', completedBy: [] },
+          { id: 'photo', name: 'Capture event photos', optional: true, completedBy: [] },
+        ],
+      },
+    ],
+  });
+
+  batch.set(doc(db, 'events', eventTomorrowId), {
+    managerId,
+    workerIds,
+    name: 'Mall Brand Pop-up',
+    location: 'Chinook Centre',
+    startsAt: tomorrow.toISOString(),
+    endsAt: new Date(tomorrow.getTime() + 3 * 60 * 60 * 1000).toISOString(),
+    teamIds: [teamAId, teamBId],
+    roles: [
+      {
+        id: 'greeter',
+        name: 'Greeter',
+        assignedWorkerIds: workerIds,
+        openSlots: 0,
+        tasks: [
+          { id: 'checkin', name: 'Open check-in station', completedBy: [] },
+          { id: 'handoff', name: 'Handoff lead list to manager', completedBy: [] },
+        ],
+      },
+    ],
+  });
+
+  await batch.commit();
 }
