@@ -7,8 +7,8 @@ Dispatch helps **Managers** assign event roles/tasks to **Workers**, track progr
 - Role-based onboarding (`Manager` or `Worker`)
 - Upcoming Events screen (vertical list)
 - Today's Events screen with expandable task checklist
-- Teams & Chat placeholder screen wired for team data
-- Event detail modal (roles, assignments, tasks)
+- Teams screen with manager/worker team visibility + linked event load
+- Event detail modal (roles, assignments, tasks, completion indicators)
 - Firebase integration scaffolding (Auth + Firestore)
 - Real-time listeners for events/teams via Firestore snapshots
 
@@ -47,6 +47,6 @@ npx expo start
 2. Team invite flow (email/invite code)
 3. Role + Task templates editor
 4. Open role self-assignment by workers
-5. Task completion persistence + manager real-time alerts
+5. Manager real-time alerts for behind-schedule / blocked tasks
 6. Push notifications for event start / behind-schedule tasks
-7. In-app team/event chat
+7. In-app team/event chat UI + send pipeline (messages collection)

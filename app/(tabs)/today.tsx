@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '@/context/session';
-import { watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
+import { toggleTaskCompletion, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent } from '@/types/dispatch';
 
 export default function TodayScreen() {
   const { profile } = useSession();
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [openEventId, setOpenEventId] = useState<string | null>(null);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -26,6 +27,28 @@ export default function TodayScreen() {
     });
   }, [events]);
 
+  const roleTaskRows = (event: DispatchEvent) =>
+    event.roles.flatMap((role) => role.tasks.map((task) => ({ roleId: role.id, task })));
+
+  const onToggle = async (event: DispatchEvent, roleId: string, taskId: string, complete: boolean) => {
+    if (!profile) return;
+    const key = `${event.id}:${roleId}:${taskId}`;
+    setSavingKey(key);
+    try {
+      await toggleTaskCompletion({
+        eventId: event.id,
+        roleId,
+        taskId,
+        workerId: profile.uid,
+        complete,
+      });
+    } catch (error) {
+      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unable to update task.');
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.header}>Today's Events</Text>
@@ -42,15 +65,26 @@ export default function TodayScreen() {
 
             {openEventId === item.id ? (
               <View style={{ marginTop: 12 }}>
-                {item.roles.flatMap((r) => r.tasks).map((task) => (
-                  <Pressable
-                    key={task.id}
-                    style={styles.task}
-                    onPress={() => Alert.alert('Task update', `${task.name} marked complete (wire Firestore update in next iteration).`)}>
-                    <Text style={styles.taskText}>☐ {task.name}</Text>
-                    {task.dueAt ? <Text style={styles.taskMeta}>Due: {new Date(task.dueAt).toLocaleTimeString()}</Text> : null}
-                  </Pressable>
-                ))}
+                {roleTaskRows(item).map(({ roleId, task }) => {
+                  const doneByMe = !!profile && (task.completedBy ?? []).includes(profile.uid);
+                  const key = `${item.id}:${roleId}:${task.id}`;
+                  const busy = savingKey === key;
+                  return (
+                    <Pressable
+                      key={task.id}
+                      style={[styles.task, doneByMe && styles.taskDone]}
+                      onPress={() => onToggle(item, roleId, task.id, !doneByMe)}>
+                      <View style={styles.taskRow}>
+                        <Text style={[styles.taskText, doneByMe && styles.taskDoneText]}>{doneByMe ? '☑' : '☐'} {task.name}</Text>
+                        {busy ? <ActivityIndicator size="small" color="#a7f3d0" /> : null}
+                      </View>
+                      <Text style={styles.taskMeta}>
+                        {(task.completedBy?.length ?? 0)} completed
+                        {task.dueAt ? ` · Due: ${new Date(task.dueAt).toLocaleTimeString()}` : ''}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             ) : null}
           </View>
@@ -68,6 +102,9 @@ const styles = StyleSheet.create({
   title: { color: 'white', fontWeight: '700', fontSize: 16 },
   meta: { color: '#9aa7d1', marginTop: 3 },
   task: { backgroundColor: '#0f1730', borderRadius: 10, padding: 10, marginBottom: 8 },
+  taskDone: { backgroundColor: '#0f2a22', borderWidth: 1, borderColor: '#1f8f6f' },
+  taskRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   taskText: { color: '#e6ecff', fontWeight: '600' },
+  taskDoneText: { color: '#a7f3d0' },
   taskMeta: { color: '#8c9ac8', fontSize: 12, marginTop: 3 },
 });
