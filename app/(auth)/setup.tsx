@@ -16,6 +16,15 @@ export default function SetupScreen() {
     router.replace('/(tabs)');
   };
 
+  const quickDemoLogin = async (demoRole: AppRole) => {
+    await setProfile({
+      uid: demoRole === 'manager' ? 'demo-manager-001' : 'demo-worker-001',
+      displayName: demoRole === 'manager' ? 'Demo Manager' : 'Demo Worker',
+      role: demoRole,
+    });
+    router.replace('/(tabs)');
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Dispatch</Text>
@@ -31,6 +40,18 @@ export default function SetupScreen() {
       <Pressable style={styles.btn} onPress={createAccount}>
         <Text style={styles.btnText}>Continue</Text>
       </Pressable>
+
+      <View style={styles.demoWrap}>
+        <Text style={styles.demoLabel}>Quick demo login</Text>
+        <View style={styles.row}>
+          <Pressable style={[styles.pill, styles.demoPill]} onPress={() => quickDemoLogin('manager')}>
+            <Text style={styles.pillText}>Demo Manager</Text>
+          </Pressable>
+          <Pressable style={[styles.pill, styles.demoPill]} onPress={() => quickDemoLogin('worker')}>
+            <Text style={styles.pillText}>Demo Worker</Text>
+          </Pressable>
+        </View>
+      </View>
     </View>
   );
 }
@@ -46,4 +67,7 @@ const styles = StyleSheet.create({
   pillText: { color: 'white', fontWeight: '600' },
   btn: { backgroundColor: '#21c67a', borderRadius: 12, padding: 14, alignItems: 'center' },
   btnText: { color: '#07130d', fontWeight: '700' },
+  demoWrap: { marginTop: 20 },
+  demoLabel: { color: '#9fb0df', marginBottom: 8, fontWeight: '600' },
+  demoPill: { backgroundColor: '#22305d' },
 });
