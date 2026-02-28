@@ -37,16 +37,19 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const colorScheme = useColorScheme();
-  const { profile, loading } = useSession();
+  const { authUser, profile, needsProfile, loading } = useSession();
 
   if (loading) return null;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      {!profile ? <Redirect href="/(auth)/setup" /> : null}
+      {!authUser ? <Redirect href="/(auth)/signin" /> : null}
+      {authUser && needsProfile && !profile ? <Redirect href="/(auth)/setup" /> : null}
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="(auth)/setup" options={{ title: 'Welcome to Dispatch' }} />
+        <Stack.Screen name="(auth)/signin" options={{ title: 'Sign In' }} />
+        <Stack.Screen name="(auth)/signup" options={{ title: 'Sign Up' }} />
+        <Stack.Screen name="(auth)/setup" options={{ title: 'Complete Profile' }} />
         <Stack.Screen name="event/[id]" options={{ presentation: 'modal', title: 'Event Details' }} />
       </Stack>
     </ThemeProvider>

@@ -9,7 +9,7 @@ export default function TabLayout() {
 
   const switchProfile = async () => {
     await signOut();
-    router.replace('/(auth)/setup');
+    router.replace('/(auth)/signin');
   };
 
   return (

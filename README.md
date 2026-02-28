@@ -10,7 +10,7 @@ Dispatch helps **Managers** assign event roles/tasks to **Workers**, track progr
 - Teams screen with manager/worker team visibility + linked event load
 - One-tap "Load Demo Data" button in Teams tab for manual testing
 - Event detail modal (roles, assignments, tasks, completion indicators)
-- Firebase integration scaffolding (Auth + Firestore)
+- Firebase email/password auth with sign-up and sign-in screens
 - Real-time listeners for events/teams via Firestore snapshots
 
 ## Stack
@@ -19,7 +19,7 @@ Dispatch helps **Managers** assign event roles/tasks to **Workers**, track progr
 - TypeScript
 - Firebase
   - Firestore (events, teams, templates, invitations)
-  - Auth (ready; currently local role profile bootstrap)
+  - Auth (email/password + profile completion)
 
 ## Run
 
