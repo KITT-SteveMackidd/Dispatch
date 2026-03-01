@@ -132,6 +132,36 @@ export default function TodayScreen() {
     return `${minutes}m remaining`;
   };
 
+  const getEventChecklist = (event: DispatchEvent): EventTask[] => event.roles.flatMap((role) => role.tasks);
+
+  const renderWorkerChecklist = (event: DispatchEvent) => {
+    if (profile?.role !== 'worker') return null;
+
+    const tasks = getEventChecklist(event);
+    if (!tasks.length) return <Text style={styles.emptyChecklist}>No tasks have been added to this event yet.</Text>;
+
+    return (
+      <View style={styles.checklistContainer}>
+        {tasks.map((task) => {
+          const isComplete = task.completedBy?.includes(profile.uid) ?? false;
+          return (
+            <View key={task.id} style={styles.checklistItem}>
+              <View style={[styles.checkbox, isComplete && styles.checkboxComplete]}>
+                {isComplete ? <Text style={styles.checkboxMark}>✓</Text> : null}
+              </View>
+              <View style={styles.checklistContent}>
+                <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>{task.name}</Text>
+                {task.dueAt ? (
+                  <Text style={styles.checklistMeta}>Due {new Date(task.dueAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text>
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const toggleExpand = (eventId: string) => {
     setExpandedEventIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
@@ -156,10 +186,10 @@ export default function TodayScreen() {
           const timeRemaining = formatTimeRemaining(nextTask?.dueAt);
 
           return (
-            <Pressable style={styles.card} onPress={() => (isManager ? toggleExpand(item.id) : undefined)}>
+            <Pressable style={styles.card} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
                 <Text style={styles.title}>{item.name}</Text>
-                {isManager ? <Text style={styles.expandHint}>{isExpanded ? 'Hide' : 'Expand'}</Text> : null}
+                <Text style={styles.expandHint}>{isExpanded ? 'Hide' : 'Expand'}</Text>
               </View>
 
               <Text style={styles.meta}>{item.location} • {eventTime}</Text>
@@ -218,6 +248,8 @@ export default function TodayScreen() {
                   )}
                 </View>
               ) : null}
+
+              {!isManager && isExpanded ? renderWorkerChecklist(item) : null}
             </Pressable>
           );
         }}
@@ -253,4 +285,14 @@ const styles = StyleSheet.create({
   workerName: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
   workerMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
   emptyWorkers: { color: '#64748b', fontSize: 12 },
+  checklistContainer: { marginTop: 12, gap: 10 },
+  checklistItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', justifyContent: 'center', marginTop: 1, backgroundColor: '#f8fafc' },
+  checkboxComplete: { borderColor: '#15803d', backgroundColor: '#dcfce7' },
+  checkboxMark: { color: '#15803d', fontWeight: '800', fontSize: 12 },
+  checklistContent: { flex: 1 },
+  checklistTask: { color: '#0f172a', fontWeight: '600', fontSize: 14 },
+  checklistTaskComplete: { color: '#166534', textDecorationLine: 'line-through' },
+  checklistMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  emptyChecklist: { color: '#64748b', marginTop: 10, fontSize: 13 },
 });
