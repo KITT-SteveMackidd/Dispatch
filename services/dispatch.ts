@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  documentId,
   getDocs,
   onSnapshot,
   query,
@@ -42,6 +43,33 @@ export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
   const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
   const snap = await getDocs(q);
   return mapTeams(snap);
+}
+
+export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProfile[]> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return [];
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 10) chunks.push(ids.slice(i, i + 10));
+
+  const snapshots = await Promise.all(
+    chunks.map((chunk) =>
+      getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk)))
+    )
+  );
+
+  return snapshots.flatMap((snap) =>
+    snap.docs.map((d) => {
+      const data = d.data() as Partial<UserProfile>;
+      return {
+        uid: d.id,
+        displayName: data.displayName || 'Dispatch User',
+        role: (data.role as UserProfile['role']) || 'worker',
+        phoneNumber: data.phoneNumber,
+        avatarUrl: data.avatarUrl,
+      };
+    })
+  );
 }
 
 export async function toggleTaskCompletion(params: {

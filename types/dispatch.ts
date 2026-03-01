@@ -4,6 +4,8 @@ export type UserProfile = {
   uid: string;
   displayName: string;
   role: AppRole;
+  phoneNumber?: string;
+  avatarUrl?: string;
 };
 
 export type EventTask = {

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
-import { DispatchEvent } from '@/types/dispatch';
+import { loadUserProfilesByIds, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
+import { DispatchEvent, EventTask } from '@/types/dispatch';
+
+type ManagerInfo = { displayName: string; phoneNumber?: string };
 
 type TaskProgress = {
   total: number;
@@ -35,11 +37,49 @@ export default function TodayScreen() {
   const router = useRouter();
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
+  const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
 
   useEffect(() => {
     if (!profile) return;
     return profile.role === 'manager' ? watchManagerEvents(profile.uid, setEvents) : watchWorkerEvents(profile.uid, setEvents);
   }, [profile]);
+
+  useEffect(() => {
+    if (!profile || profile.role !== 'worker') {
+      setManagerInfoById({});
+      return;
+    }
+
+    const managerIds = [...new Set(events.map((event) => event.managerId).filter(Boolean))];
+    if (!managerIds.length) {
+      setManagerInfoById({});
+      return;
+    }
+
+    let active = true;
+    loadUserProfilesByIds(managerIds)
+      .then((profiles) => {
+        if (!active) return;
+
+        const next = profiles.reduce<Record<string, ManagerInfo>>((acc, manager) => {
+          acc[manager.uid] = {
+            displayName: manager.displayName || 'Manager',
+            phoneNumber: manager.phoneNumber,
+          };
+          return acc;
+        }, {});
+
+        setManagerInfoById(next);
+      })
+      .catch(() => {
+        if (!active) return;
+        setManagerInfoById({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [events, profile]);
 
   const today = useMemo(() => {
     const now = new Date();
@@ -61,6 +101,37 @@ export default function TodayScreen() {
     return { text: `${Math.max(total - done, 1)} Tasks Behind`, bg: '#ffedd5', fg: '#c2410c' };
   };
 
+  const workerNextTask = (event: DispatchEvent, workerId: string): EventTask | null => {
+    const remaining = event.roles
+      .filter((role) => role.assignedWorkerIds.includes(workerId))
+      .flatMap((role) => role.tasks)
+      .filter((task) => !(task.completedBy ?? []).includes(workerId));
+
+    if (!remaining.length) return null;
+
+    return [...remaining].sort((a, b) => {
+      if (a.dueAt && b.dueAt) return +new Date(a.dueAt) - +new Date(b.dueAt);
+      if (a.dueAt) return -1;
+      if (b.dueAt) return 1;
+      return a.name.localeCompare(b.name);
+    })[0];
+  };
+
+  const formatTimeRemaining = (dueAt?: string) => {
+    if (!dueAt) return null;
+
+    const msRemaining = +new Date(dueAt) - Date.now();
+    if (msRemaining <= 0) return 'Due now';
+
+    const totalMinutes = Math.ceil(msRemaining / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m remaining`;
+    if (hours > 0) return `${hours}h remaining`;
+    return `${minutes}m remaining`;
+  };
+
   const toggleExpand = (eventId: string) => {
     setExpandedEventIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
@@ -76,10 +147,13 @@ export default function TodayScreen() {
         renderItem={({ item }) => {
           const progress = getProgress(item);
           const b = badge(progress);
-          const formattedTime = new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const eventTime = new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
           const isManager = profile?.role === 'manager';
           const isExpanded = !!expandedEventIds[item.id];
           const workers = isManager ? getWorkerSummaries(item) : [];
+          const managerInfo = managerInfoById[item.managerId];
+          const nextTask = profile?.role === 'worker' ? workerNextTask(item, profile.uid) : null;
+          const timeRemaining = formatTimeRemaining(nextTask?.dueAt);
 
           return (
             <Pressable style={styles.card} onPress={() => (isManager ? toggleExpand(item.id) : undefined)}>
@@ -88,7 +162,7 @@ export default function TodayScreen() {
                 {isManager ? <Text style={styles.expandHint}>{isExpanded ? 'Hide' : 'Expand'}</Text> : null}
               </View>
 
-              <Text style={styles.meta}>{item.location} • {formattedTime}</Text>
+              <Text style={styles.meta}>{item.location} • {eventTime}</Text>
 
               {isManager ? (
                 <View style={styles.progressSection}>
@@ -101,9 +175,15 @@ export default function TodayScreen() {
                   </View>
                 </View>
               ) : (
-                <View style={[styles.badge, { backgroundColor: b.bg }]}>
-                  <Text style={[styles.badgeText, { color: b.fg }]}>{b.text}</Text>
-                </View>
+                <>
+                  <View style={[styles.badge, { backgroundColor: b.bg }]}>
+                    <Text style={[styles.badgeText, { color: b.fg }]}>{b.text}</Text>
+                  </View>
+                  <Text style={styles.meta}>Assigned by {managerInfo?.displayName || 'Manager'}</Text>
+                  <Text style={styles.meta}>Manager phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
+                  <Text style={styles.nextTaskLabel}>Next task: {nextTask?.name || 'All assigned tasks complete'}</Text>
+                  {timeRemaining && <Text style={styles.timeRemaining}>{timeRemaining}</Text>}
+                </>
               )}
 
               {isManager && isExpanded ? (
@@ -154,7 +234,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { color: '#0f172a', fontWeight: '700', fontSize: 20, marginBottom: 6, flex: 1 },
   expandHint: { color: '#2563eb', fontSize: 12, fontWeight: '700', marginLeft: 8 },
-  meta: { color: '#64748b', fontSize: 13 },
+  meta: { color: '#64748b', fontSize: 12, marginBottom: 2 },
   badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginTop: 10 },
   badgeText: { fontWeight: '700', fontSize: 12 },
   progressSection: { marginTop: 12 },
@@ -163,6 +243,8 @@ const styles = StyleSheet.create({
   progressCount: { color: '#334155', fontWeight: '700', fontSize: 12 },
   progressTrack: { height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#2563eb', borderRadius: 999 },
+  nextTaskLabel: { color: '#0f172a', fontSize: 13, fontWeight: '600', marginTop: 6 },
+  timeRemaining: { color: '#2563eb', fontSize: 12, fontWeight: '600', marginTop: 2 },
   workerSection: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10, gap: 10 },
   workerCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center' },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
