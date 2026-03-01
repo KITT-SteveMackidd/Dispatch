@@ -6,8 +6,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '@/components/useColorScheme';
 import { SessionProvider, useSession } from '@/context/session';
+import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
 
 export { ErrorBoundary } from 'expo-router';
 SplashScreen.preventAutoHideAsync();
@@ -30,19 +30,21 @@ export default function RootLayout() {
 
   return (
     <SessionProvider>
-      <RootNavigator />
+      <AppThemeProvider>
+        <RootNavigator />
+      </AppThemeProvider>
     </SessionProvider>
   );
 }
 
 function RootNavigator() {
-  const colorScheme = useColorScheme();
+  const { themeMode, isLoaded } = useThemeMode();
   const { authUser, profile, needsProfile, loading } = useSession();
 
-  if (loading) return null;
+  if (loading || !isLoaded) return null;
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={themeMode === 'dark' ? DarkTheme : DefaultTheme}>
       {!authUser ? <Redirect href="/(auth)/signin" /> : null}
       {authUser && needsProfile && !profile ? <Redirect href="/(auth)/setup" /> : null}
       <Stack>
@@ -50,6 +52,7 @@ function RootNavigator() {
         <Stack.Screen name="(auth)/signin" options={{ title: 'Sign In' }} />
         <Stack.Screen name="(auth)/signup" options={{ title: 'Sign Up' }} />
         <Stack.Screen name="(auth)/setup" options={{ title: 'Complete Profile' }} />
+        <Stack.Screen name="account-settings" options={{ title: 'Account Settings' }} />
         <Stack.Screen name="event/[id]" options={{ presentation: 'modal', title: 'Event Details' }} />
       </Stack>
     </ThemeProvider>

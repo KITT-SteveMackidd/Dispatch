@@ -2,10 +2,13 @@ import { Feather, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icon
 import { Tabs, useRouter } from 'expo-router';
 import { Pressable, Text } from 'react-native';
 import { useSession } from '@/context/session';
+import { useThemeMode } from '@/context/theme';
 
 export default function TabLayout() {
   const router = useRouter();
   const { signOut } = useSession();
+  const { themeMode } = useThemeMode();
+  const isDarkMode = themeMode === 'dark';
 
   const switchProfile = async () => {
     await signOut();
@@ -16,12 +19,12 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#64748b',
-        headerStyle: { backgroundColor: '#f8fafc' },
-        headerTintColor: '#0f172a',
+        tabBarInactiveTintColor: isDarkMode ? '#94a3b8' : '#64748b',
+        headerStyle: { backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' },
+        headerTintColor: isDarkMode ? '#f8fafc' : '#0f172a',
         headerShadowVisible: false,
-        tabBarStyle: { backgroundColor: '#ffffff', borderTopColor: '#e2e8f0' },
-        sceneStyle: { backgroundColor: '#eef2ff' },
+        tabBarStyle: { backgroundColor: isDarkMode ? '#0f172a' : '#ffffff', borderTopColor: isDarkMode ? '#1e293b' : '#e2e8f0' },
+        sceneStyle: { backgroundColor: isDarkMode ? '#020617' : '#eef2ff' },
       }}>
       <Tabs.Screen
         name="today"
@@ -30,7 +33,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Feather name="clock" size={18} color={color} />,
           headerRight: () => (
             <Pressable style={{ marginRight: 14 }}>
-              <Feather name="bell" size={18} color="#334155" />
+              <Feather name="bell" size={18} color={isDarkMode ? '#cbd5e1' : '#334155'} />
             </Pressable>
           ),
         }}
