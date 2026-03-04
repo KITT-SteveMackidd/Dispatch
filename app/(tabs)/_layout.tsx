@@ -38,7 +38,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dispatches',
+          title: 'Events',
           tabBarIcon: ({ color }) => <FontAwesome5 name="clipboard-list" size={16} color={color} />,
           headerRight: () => (
             <Pressable style={{ marginRight: 14, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}>
