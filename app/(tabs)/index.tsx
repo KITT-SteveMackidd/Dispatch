@@ -28,6 +28,7 @@ export default function DispatchesScreen() {
   const [teamWorkerIds, setTeamWorkerIds] = useState<string[]>([]);
   const [replaceDrawer, setReplaceDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
+  const [createEventDrawerOpen, setCreateEventDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -223,7 +224,18 @@ export default function DispatchesScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.filter}>All Assignments ▾</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.filter}>All Assignments ▾</Text>
+        {profile?.role === 'manager' ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Create event"
+            style={styles.createButton}
+            onPress={() => setCreateEventDrawerOpen(true)}>
+            <Text style={styles.createButtonText}>+</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <FlatList
         data={upcoming}
         keyExtractor={(i) => i.id}
@@ -309,13 +321,35 @@ export default function DispatchesScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={() => setCreateEventDrawerOpen(false)}>
+        <Pressable style={styles.drawerBackdrop} onPress={() => setCreateEventDrawerOpen(false)}>
+          <Pressable style={styles.drawer} onPress={() => null}>
+            <Text style={styles.drawerTitle}>Create Event</Text>
+            <Text style={styles.drawerSub}>Start a new event dispatch.</Text>
+            <Pressable style={styles.drawerClose} onPress={() => setCreateEventDrawerOpen(false)}>
+              <Text style={styles.drawerCloseText}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
-  filter: { color: '#334155', fontWeight: '600', marginBottom: 10 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  filter: { color: '#334155', fontWeight: '600' },
+  createButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#1d4ed8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
   empty: { marginTop: 20, color: '#64748b' },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
