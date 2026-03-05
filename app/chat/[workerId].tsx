@@ -2,22 +2,30 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export default function WorkerChatScreen() {
-  const params = useLocalSearchParams<{ workerId?: string; workerLabel?: string; eventName?: string }>();
+  const params = useLocalSearchParams<{
+    workerId?: string;
+    workerLabel?: string;
+    eventName?: string;
+    teamName?: string;
+    isTeamAll?: string;
+  }>();
   const workerId = params.workerId ?? 'worker';
   const workerLabel = params.workerLabel ?? workerId;
+  const isTeamAll = params.isTeamAll === '1';
 
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: `Chat: ${workerLabel}` }} />
 
       <Text style={styles.title}>{workerLabel}</Text>
-      <Text style={styles.subtitle}>Direct manager ↔ worker thread</Text>
+      <Text style={styles.subtitle}>{isTeamAll ? 'Team broadcast thread' : 'Direct manager ↔ worker thread'}</Text>
 
       {params.eventName ? <Text style={styles.context}>From Today event: {params.eventName}</Text> : null}
+      {params.teamName ? <Text style={styles.context}>Team: {params.teamName}</Text> : null}
 
       <View style={styles.mockThread}>
         <Text style={styles.mockMessageLabel}>Thread</Text>
-        <Text style={styles.mockMessage}>Start coordinating with {workerLabel} for this event.</Text>
+        <Text style={styles.mockMessage}>{isTeamAll ? `Send an update to everyone in ${params.teamName || 'this team'}.` : `Start coordinating with ${workerLabel} for this event.`}</Text>
       </View>
 
       <Pressable style={styles.sendButton}>
