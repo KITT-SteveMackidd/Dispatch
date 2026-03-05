@@ -61,6 +61,17 @@ export default function DispatchesScreen() {
     setExpandedIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
 
+  const getWorkerSignupRatio = (event: DispatchEvent) => {
+    const assignedCount = event.roles.reduce((total, role) => total + role.assignedWorkerIds.length, 0);
+    const requiredCount = event.roles.reduce((total, role) => total + role.assignedWorkerIds.length + role.openSlots, 0);
+
+    return {
+      assignedCount,
+      requiredCount,
+      label: `${assignedCount}/${requiredCount} workers signed up`,
+    };
+  };
+
   const renderWorkerTaskList = (event: DispatchEvent) => {
     if (!profile) return null;
 
@@ -102,6 +113,8 @@ export default function DispatchesScreen() {
         renderItem={({ item }) => {
           const expanded = !!expandedIds[item.id];
           const managerLabel = managerNames[item.managerId] || item.managerId;
+          const eventTime = new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const signupRatio = getWorkerSignupRatio(item);
 
           return (
             <Pressable
@@ -112,7 +125,7 @@ export default function DispatchesScreen() {
                 <View style={styles.statusPill}><Text style={styles.statusText}>Upcoming</Text></View>
               </View>
 
-              <Text style={styles.meta}>Due {new Date(item.startsAt).toLocaleString()}</Text>
+              <Text style={styles.meta}>{item.location} • {eventTime}</Text>
 
               {profile?.role === 'worker' ? (
                 <>
@@ -121,7 +134,7 @@ export default function DispatchesScreen() {
                   {expanded && renderWorkerTaskList(item)}
                 </>
               ) : (
-                <Text style={styles.meta}>Assigned to: Team {item.teamIds[0] ? 'A' : '-'}</Text>
+                <Text style={styles.meta}>{signupRatio.label}</Text>
               )}
             </Pressable>
           );
