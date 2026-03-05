@@ -2,10 +2,17 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export default function WorkerChatScreen() {
-  const params = useLocalSearchParams<{ workerId?: string; workerLabel?: string; eventName?: string; teamName?: string; teamMemberIds?: string }>();
+  const params = useLocalSearchParams<{
+    workerId?: string;
+    workerLabel?: string;
+    eventName?: string;
+    teamName?: string;
+    teamMemberIds?: string;
+    isTeamAll?: string;
+  }>();
   const workerId = params.workerId ?? 'worker';
   const workerLabel = params.workerLabel ?? workerId;
-  const isTeamBroadcast = workerId.startsWith('all:') || workerLabel.toLowerCase() === 'all';
+  const isTeamBroadcast = params.isTeamAll === '1' || workerId.startsWith('all:') || workerId.startsWith('team:') || workerLabel.toLowerCase() === 'all';
   const broadcastCount = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean).length;
 
   return (

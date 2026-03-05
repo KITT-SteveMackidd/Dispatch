@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { createTeam, inviteWorkerToTeam, loadWorkerTeams, seedDemoData, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
-import { DispatchEvent, Team } from '@/types/dispatch';
+import {
+  createTeam,
+  inviteWorkerToTeam,
+  loadUserProfilesByIds,
+  loadWorkerTeams,
+  seedDemoData,
+  watchManagerEvents,
+  watchManagerTeams,
+  watchWorkerEvents,
+} from '@/services/dispatch';
+import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 
 type DrawerMode = 'add-team' | 'invite-worker';
 
 export default function TeamsScreen() {
   const { profile } = useSession();
+  const router = useRouter();
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [seeding, setSeeding] = useState(false);
@@ -18,6 +29,7 @@ export default function TeamsScreen() {
   const [inviteTeamId, setInviteTeamId] = useState('');
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
+  const [memberInfoById, setMemberInfoById] = useState<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -39,6 +51,42 @@ export default function TeamsScreen() {
     if (!inviteTeamId && teams.length) setInviteTeamId(teams[0].id);
   }, [teams, inviteTeamId]);
 
+  useEffect(() => {
+    if (!profile || !teams.length) {
+      setMemberInfoById({});
+      return;
+    }
+
+    const ids = [...new Set(teams.flatMap((team) => [team.managerId, ...team.workerIds]).filter((id) => id && id !== profile.uid))];
+
+    if (!ids.length) {
+      setMemberInfoById({});
+      return;
+    }
+
+    let active = true;
+    loadUserProfilesByIds(ids)
+      .then((members) => {
+        if (!active) return;
+        const next = members.reduce<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>((acc, member) => {
+          acc[member.uid] = {
+            displayName: member.displayName || 'Dispatch User',
+            phoneNumber: member.phoneNumber,
+          };
+          return acc;
+        }, {});
+        setMemberInfoById(next);
+      })
+      .catch(() => {
+        if (!active) return;
+        setMemberInfoById({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [teams, profile]);
+
   const eventCountsByTeam = useMemo(() => {
     const counts = new Map<string, number>();
     events.forEach((event) => {
@@ -48,6 +96,40 @@ export default function TeamsScreen() {
     });
     return counts;
   }, [events]);
+
+  const getOtherMemberIds = (team: Team) => {
+    if (!profile) return [];
+    return [...new Set([team.managerId, ...team.workerIds].filter((memberId) => memberId && memberId !== profile.uid))];
+  };
+
+  const handleTeamPress = (team: Team) => {
+    if (!profile) return;
+
+    const otherMemberIds = getOtherMemberIds(team);
+    if (!otherMemberIds.length) return;
+
+    if (otherMemberIds.length === 1) {
+      const memberId = otherMemberIds[0];
+      router.push({
+        pathname: '/chat/[workerId]',
+        params: {
+          workerId: memberId,
+          workerLabel: memberInfoById[memberId]?.displayName || memberId,
+          teamName: team.name,
+        },
+      });
+      return;
+    }
+
+    router.push({
+      pathname: '/team/[teamId]',
+      params: {
+        teamId: team.id,
+        teamName: team.name,
+        memberIds: otherMemberIds.join(','),
+      },
+    });
+  };
 
   const handleSeedDemo = async () => {
     if (!profile) return;
@@ -108,16 +190,22 @@ export default function TeamsScreen() {
         data={teams}
         keyExtractor={(i) => i.id}
         ListEmptyComponent={<Text style={styles.empty}>No teams found yet. Tap Add Demo Team Data.</Text>}
-        renderItem={({ item }) => (
-          <Pressable style={styles.card}>
-            <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>{item.name}</Text>
-              <Text style={styles.meta}>{item.workerIds.length} workers</Text>
-            </View>
-            <Text style={styles.status}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const otherCount = getOtherMemberIds(item).length;
+          return (
+            <Pressable style={styles.card} onPress={() => handleTeamPress(item)}>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.title}>{item.name}</Text>
+                <Text style={styles.meta}>{item.workerIds.length} workers</Text>
+              </View>
+              <View style={styles.rightSide}>
+                <Text style={styles.status}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
+                <Text style={styles.hint}>{otherCount > 1 ? 'Choose member' : otherCount === 1 ? 'Open chat' : 'No members'}</Text>
+              </View>
+            </Pressable>
+          );
+        }}
       />
 
       <Pressable style={styles.addBtn} onPress={handleSeedDemo} disabled={seeding || !profile}>
@@ -188,7 +276,9 @@ const styles = StyleSheet.create({
   avatarText: { fontWeight: '700', color: '#1d4ed8' },
   title: { color: '#0f172a', fontWeight: '700', fontSize: 16 },
   meta: { color: '#64748b', marginTop: 2, fontSize: 12 },
+  rightSide: { alignItems: 'flex-end' },
   status: { color: '#475569', fontSize: 12, fontWeight: '600' },
+  hint: { color: '#2563eb', fontSize: 11, fontWeight: '600', marginTop: 4 },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   addText: { color: 'white', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
