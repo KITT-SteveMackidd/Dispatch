@@ -18,6 +18,15 @@ type WorkerSummary = {
   roleNames: string[];
 };
 
+type WorkerChecklistItem = {
+  id: string;
+  roleName: string;
+  assignedToMe: boolean;
+  completedCount: number;
+  completedByMe: boolean;
+  task: EventTask;
+};
+
 function getWorkerSummaries(event: DispatchEvent): WorkerSummary[] {
   const map = new Map<string, WorkerSummary>();
 
@@ -132,7 +141,23 @@ export default function TodayScreen() {
     return `${minutes}m remaining`;
   };
 
-  const getEventChecklist = (event: DispatchEvent): EventTask[] => event.roles.flatMap((role) => role.tasks);
+  const getEventChecklist = (event: DispatchEvent): WorkerChecklistItem[] => {
+    if (!profile || profile.role !== 'worker') return [];
+
+    return event.roles.flatMap((role) =>
+      role.tasks.map((task) => {
+        const completedBy = task.completedBy ?? [];
+        return {
+          id: `${role.id}:${task.id}`,
+          roleName: role.name,
+          assignedToMe: role.assignedWorkerIds.includes(profile.uid),
+          completedCount: completedBy.length,
+          completedByMe: completedBy.includes(profile.uid),
+          task,
+        };
+      })
+    );
+  };
 
   const renderWorkerChecklist = (event: DispatchEvent) => {
     if (profile?.role !== 'worker') return null;
@@ -142,17 +167,32 @@ export default function TodayScreen() {
 
     return (
       <View style={styles.checklistContainer}>
-        {tasks.map((task) => {
-          const isComplete = task.completedBy?.includes(profile.uid) ?? false;
+        {tasks.map((item) => {
+          const isComplete = item.completedCount > 0;
+
           return (
-            <View key={task.id} style={styles.checklistItem}>
+            <View key={item.id} style={styles.checklistItem}>
               <View style={[styles.checkbox, isComplete && styles.checkboxComplete]}>
                 {isComplete ? <Text style={styles.checkboxMark}>✓</Text> : null}
               </View>
               <View style={styles.checklistContent}>
-                <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>{task.name}</Text>
-                {task.dueAt ? (
-                  <Text style={styles.checklistMeta}>Due {new Date(task.dueAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text>
+                <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>
+                  {item.task.name}
+                  {item.task.optional ? ' (optional)' : ''}
+                </Text>
+                <Text style={styles.checklistMeta}>Role: {item.roleName}</Text>
+                <Text style={styles.checklistMeta}>{item.assignedToMe ? 'Assigned to you' : 'Not assigned to you'}</Text>
+                <Text style={styles.checklistMeta}>
+                  {item.completedByMe
+                    ? 'Completed by you'
+                    : item.completedCount > 0
+                      ? `Completed by ${item.completedCount} worker${item.completedCount > 1 ? 's' : ''}`
+                      : 'Not completed yet'}
+                </Text>
+                {item.task.dueAt ? (
+                  <Text style={styles.checklistMeta}>
+                    Due {new Date(item.task.dueAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </Text>
                 ) : null}
               </View>
             </View>
