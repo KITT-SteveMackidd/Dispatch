@@ -1,0 +1,554 @@
+[
+  {
+    "id": "evt-jody-refresh-20260226T203818Z",
+    "ts": "2026-02-26T20:38:18Z",
+    "agent": "Jody",
+    "state": "working",
+    "zone": "computer",
+    "task": "Jody refresh attempted for jobPostings mirror; web_search blocked (missing BRAVE_API_KEY), so retained existing 6 Calgary/Canada-eligible postings without content changes."
+  },
+  {
+    "id": "evt-jody-refresh-20260226T2103Z",
+    "ts": "2026-02-26T21:03:00Z",
+    "agent": "Jody",
+    "state": "working",
+    "zone": "computer",
+    "task": "Jody refresh rerun using file-backed mirror workflow. Source limit persists (missing BRAVE_API_KEY), so mission-control/src/lib/jobPostings.ts was kept unchanged at 6 Calgary/Canada-eligible postings (up to 50 target not reachable this run)."
+  },
+  {
+    "id": "evt-heartbeat-20260226T212126Z",
+    "ts": "2026-02-26T21:21:26Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control mirror reviewed; no queued job postings needing resume drafts, approvals queue unchanged, and kanban in-progress items remain source-blocked/unmoved."
+  },
+  {
+    "id": "evt-jody-refresh-20260226T2203Z",
+    "ts": "2026-02-26T22:03:00Z",
+    "agent": "Jody",
+    "state": "working",
+    "zone": "computer",
+    "task": "Jody refresh rerun with file-backed mirror workflow. Strict Calgary/Canada-eligible refresh target (up to 50 postings) could not be completed because web_search is blocked by missing BRAVE_API_KEY; mission-control/src/lib/jobPostings.ts retained current vetted 6 postings unchanged."
+  },
+  {
+    "id": "evt-jody-refresh-20260226T2303Z",
+    "ts": "2026-02-26T23:03:00Z",
+    "agent": "Jody",
+    "state": "working",
+    "zone": "computer",
+    "task": "Jody refresh rerun using file-backed mirror workflow. Source limitation persists (missing BRAVE_API_KEY for web_search), so strict Calgary/Canada-eligible refresh (up to 50 postings) was not possible; mission-control/src/lib/jobPostings.ts remains at the current vetted 6 postings with no list changes."
+  },
+  {
+    "id": "evt-heartbeat-20260226T233213Z",
+    "ts": "2026-02-26T23:32:13Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content reviewed; no queued job postings needing resume drafts, approvals queue unchanged, and in-progress kanban items checked (external crawl tasks remain source-blocked pending BRAVE_API_KEY)."
+  },
+  {
+    "id": "evt-jody-refresh-20260227T0003Z",
+    "ts": "2026-02-27T00:03:00Z",
+    "agent": "Jody",
+    "state": "working",
+    "zone": "computer",
+    "task": "Jody refresh rerun using file-backed mirror workflow. Source limitation persists (missing BRAVE_API_KEY for web_search), so strict Calgary/Canada-eligible refresh (up to 50 postings) could not be completed; mission-control/src/lib/jobPostings.ts was retained at the current vetted 6 postings with no list changes."
+  },
+  {
+    "id": "evt-heartbeat-20260227T001600Z",
+    "ts": "2026-02-27T00:16:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync reviewed; queued postings JP-007/JP-010 already have resume drafts in approvals, approvals queue unchanged (no new items to notify), and kanban in-progress items checked with external crawl tasks still blocked by missing BRAVE_API_KEY."
+  },
+  {
+    "id": "evt-heartbeat-20260227T004732Z",
+    "ts": "2026-02-27T00:47:32Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync reviewed; queued postings (JP-007/JP-010/JP-026) already have resume drafts in approvals, approvals queue unchanged (no new items to notify), and in-progress kanban tasks reviewed with external crawl work still blocked by missing BRAVE_API_KEY."
+  },
+  {
+    "id": "evt-heartbeat-20260227T011600Z",
+    "ts": "2026-02-27T01:16:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync reviewed; queued postings (JP-007/JP-010/JP-026) already have resume drafts in approvals, approvals queue unchanged (no new items to notify), and in-progress kanban tasks remain actionable with no backlog move needed."
+  },
+  {
+    "id": "evt-heartbeat-20260227T014600Z",
+    "ts": "2026-02-27T01:46:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued job postings (JP-007/JP-010/JP-026) all already have resume drafts in approvals, approvals queue has no new items to notify, and kanban in-progress tasks were reviewed with no status changes required."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T020027Z",
+    "ts": "2026-02-27T02:00:27Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker checked queued postings; no new resume keyword drafts were needed because all queued jobs already have approvals drafts."
+  },
+  {
+    "id": "evt-heartbeat-20260227T021600Z",
+    "ts": "2026-02-27T02:16:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks were reviewed with no status changes required."
+  },
+  {
+    "id": "evt-heartbeat-20260227T024600Z",
+    "ts": "2026-02-27T02:46:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings reviewed with existing resume drafts present, approvals queue unchanged (no new items to notify), and kanban in-progress review found no actionable status changes."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T030000Z",
+    "ts": "2026-02-27T03:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T031600Z",
+    "ts": "2026-02-27T03:16:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks were reviewed with no actionable status changes."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T033000Z",
+    "ts": "2026-02-27T03:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T034724Z",
+    "ts": "2026-02-27T03:47:24Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban/action queues show no actionable status changes."
+  },
+  {
+    "id": "evt-heartbeat-20260227T041600Z",
+    "ts": "2026-02-27T04:16:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks remain blocked/actionable with no status change required."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T043018Z",
+    "ts": "2026-02-27T04:30:18Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs; no new resume keyword drafts were created because matching approvals drafts already exist."
+  },
+  {
+    "id": "evt-heartbeat-20260227T044600Z",
+    "ts": "2026-02-27T04:46:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks reviewed with no actionable status change."
+  },
+  {
+    "id": "evt-heartbeat-20260227T050000Z",
+    "ts": "2026-02-27T05:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain actionable/blocked with no status change, and SaaS research tracks reviewed with no new source updates this cycle."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T050000Z",
+    "ts": "2026-02-27T05:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T053000Z",
+    "ts": "2026-02-27T05:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T053000Z",
+    "ts": "2026-02-27T05:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks remain actionable with no backlog move needed."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T060000Z",
+    "ts": "2026-02-27T06:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T060000Z",
+    "ts": "2026-02-27T06:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks remain actionable/blocked with no status change required."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T063029.936Z",
+    "ts": "2026-02-27T06:30:29.936Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist."
+  },
+  {
+    "id": "evt-heartbeat-20260227T063000Z",
+    "ts": "2026-02-27T06:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain actionable/blocked with no status changes, and SaaS research tracks remain in progress."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T070000Z",
+    "ts": "2026-02-27T07:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T070000Z",
+    "ts": "2026-02-27T07:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks reviewed with no actionable status changes."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T080000Z",
+    "ts": "2026-02-27T08:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T083000Z",
+    "ts": "2026-02-27T08:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T083000Z",
+    "ts": "2026-02-27T08:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks remain actionable/blocked with no status change required."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T090000Z",
+    "ts": "2026-02-27T09:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T090000Z",
+    "ts": "2026-02-27T09:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue unchanged (no newly-added items to notify), and kanban in-progress tasks reviewed with no actionable status changes."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T093000Z",
+    "ts": "2026-02-27T09:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T093000Z",
+    "ts": "2026-02-27T09:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks reviewed with no status change required, and SaaS research continued (job-search SaaS competitors and resume-tailoring AI market scan)."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T103000Z",
+    "ts": "2026-02-27T10:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T103000Z",
+    "ts": "2026-02-27T10:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks reviewed with no status changes, and SaaS research continued (resume-builder pricing and job-tracker competitor scan)."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T113000Z",
+    "ts": "2026-02-27T11:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T113000Z",
+    "ts": "2026-02-27T11:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress tasks remain active/blocked with no status changes required."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T120000Z",
+    "ts": "2026-02-27T12:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T120000Z",
+    "ts": "2026-02-27T12:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain active/blocked with no status changes, and SaaS research tracks continue with no new publishable deltas this cycle."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T123000Z",
+    "ts": "2026-02-27T12:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T123000Z",
+    "ts": "2026-02-27T12:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress items remain actionable/blocked, and SaaS research tasks remain in-progress with no new deliverable committed this cycle."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T130000Z",
+    "ts": "2026-02-27T13:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T130000Z",
+    "ts": "2026-02-27T13:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue unchanged (no new items to notify), kanban in-progress tasks reviewed, and SaaS/re\u0301sume\u0301-automation market scan continued with no immediate queue/state changes."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T140000Z",
+    "ts": "2026-02-27T14:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T140000Z",
+    "ts": "2026-02-27T14:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain actionable/blocked with no status changes, and SaaS/resume-posting research tracks continue with no new queue updates this cycle."
+  },
+  {
+    "id": "evt-heartbeat-20260227T143000Z",
+    "ts": "2026-02-27T14:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain actionable/blocked with no status change, and SaaS/resume-posting research tracks continue with no new queue updates this cycle."
+  },
+  {
+    "id": "evt-heartbeat-20260227T143100Z",
+    "ts": "2026-02-27T14:31:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue unchanged with no newly-added items to notify, and kanban in-progress/SaaS research tracks reviewed with no actionable status change required."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T143100Z-run2",
+    "ts": "2026-02-27T14:31:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T150000Z",
+    "ts": "2026-02-27T15:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T150100Z",
+    "ts": "2026-02-27T15:01:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain actionable/blocked with no status changes, and SaaS/resume-posting research continued (competitor scan + parser/keyword tool surface map)."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T153000Z",
+    "ts": "2026-02-27T15:30:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T153100Z",
+    "ts": "2026-02-27T15:31:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, kanban in-progress tasks remain actionable/blocked, and SaaS/resume-postings research tracks were advanced with no new queue/state changes this cycle."
+  },
+  {
+    "id": "evt-app-queue-draft-20260227T160000Z",
+    "ts": "2026-02-27T16:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed queued jobs (JP-007, JP-010, JP-026); no new resume keyword drafts were created because matching approvals drafts already exist (R-JP-007, R-JP-010, R-JP-026)."
+  },
+  {
+    "id": "evt-heartbeat-20260227T160100Z",
+    "ts": "2026-02-27T16:01:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and in-progress kanban/research items remain active with no actionable status change required."
+  },
+  {
+    "id": "evt-heartbeat-20260227T163100Z",
+    "ts": "2026-02-27T16:31:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Heartbeat check: mission-control content sync completed; queued postings (JP-007/JP-010/JP-026) already have resume drafts, approvals queue has no newly-added items to notify, and kanban in-progress/research tracks remain active with no actionable status changes this cycle."
+  },
+  {
+    "id": "evt-app-queue-draft-20260305T030000Z",
+    "ts": "2026-03-05T03:00:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Application queue draft worker reviewed file-backed mission-control queue; no queued non-removed jobs were missing approvals draft IDs (R-<jobId>), so no Resume drafts were created (no-op review)."
+  },
+  {
+    "id": "evt-heartbeat-dispatch-20260305T164000Z",
+    "ts": "2026-03-05T16:40:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch heartbeat: claimed next backlog tasks DSP-008 and DSP-009, spawned two non-threaded subagents to implement/test/merge/push from dispatch/DISPATCH_BIBLE.md scope, and updated dispatch-todos statuses to In Progress."
+  },
+  {
+    "id": "evt-heartbeat-dispatch-20260305T164200Z",
+    "ts": "2026-03-05T16:42:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch heartbeat: claimed next backlog tasks DSP-010 and DSP-011, spawned two non-threaded subagents to implement/test/merge/push per dispatch bible, and updated dispatch-todos statuses to In Progress."
+  },
+  {
+    "id": "evt-dispatch-dsp008-011-results-20260305T164800Z",
+    "ts": "2026-03-05T16:48:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch subagents finished DSP-008/010/011 with local implementation+merge complete, but pushes to origin/master blocked by missing GitHub credentials; DSP-009 verified already implemented on origin/master (no-op)."
+  },
+  {
+    "id": "evt-heartbeat-dispatch-20260305T171200Z",
+    "ts": "2026-03-05T17:12:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch heartbeat: claimed next backlog tasks DSP-012 and DSP-013, spawned two non-threaded subagents to implement/test/merge/push per dispatch bible, and updated dispatch-todos statuses to In Progress."
+  },
+  {
+    "id": "evt-heartbeat-dispatch-20260305T171500Z",
+    "ts": "2026-03-05T17:15:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch heartbeat: claimed next backlog tasks DSP-014 and DSP-015, spawned two non-threaded subagents to implement/test/merge/push per dispatch bible, and updated dispatch-todos statuses to In Progress."
+  },
+  {
+    "id": "evt-dispatch-dsp012-015-results-20260305T172400Z",
+    "ts": "2026-03-05T17:24:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch subagents completed DSP-012/013/014/015 implementations with local merges; all four blocked at push step due missing GitHub credentials/auth for origin master."
+  },
+  {
+    "id": "evt-heartbeat-dispatch-20260305T174900Z",
+    "ts": "2026-03-05T17:49:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch heartbeat: claimed backlog tasks DSP-015 and DSP-016, spawned two non-threaded subagents for implementation/test/merge/push, and updated dispatch-todos statuses to In Progress."
+  },
+  {
+    "id": "evt-dispatch-dsp016-complete-20260305T175800Z",
+    "ts": "2026-03-05T17:58:00Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Completed DSP-016 heartbeat automation by adding a lock-safe self-claim script for backlog tasks and updating HEARTBEAT.md to require 2-agent self-claim execution before implementation/merge/push."
+  }
+]

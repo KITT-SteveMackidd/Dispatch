@@ -1,0 +1,130 @@
+[
+  {
+    "id": "DSP-001",
+    "area": "Cleanup",
+    "title": "Restyle auth + event details to match redesigned main style",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-002",
+    "area": "Cleanup",
+    "title": "Rename Dispatches tab to Events",
+    "status": "Done",
+    "priority": "Medium",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-003",
+    "area": "Theme",
+    "title": "Implement dark mode system across all screens",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-004",
+    "area": "Profile",
+    "title": "Add Light/Dark mode picker in Account Settings",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-005",
+    "area": "Today-Manager",
+    "title": "Manager Today card: title/location/time + task progress graph",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-006",
+    "area": "Today-Manager",
+    "title": "Manager Today expand: worker phone/role/progress/next-task countdown",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-007",
+    "area": "Today-Manager",
+    "title": "Worker avatar tap opens chat thread",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-008",
+    "area": "Today-Worker",
+    "title": "Worker Today card: manager phone + next task + optional time remaining",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-009",
+    "area": "Today-Worker",
+    "title": "Worker Today expand shows full event task checklist",
+    "status": "Done",
+    "priority": "Medium",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-010",
+    "area": "Events-Manager",
+    "title": "Manager Events card: title/location/time + worker signup ratio",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-011",
+    "area": "Events-Manager",
+    "title": "Manager Events expand: roles/tasks/assigned worker/avatar + replace/invite drawers",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-012",
+    "area": "Events-Manager",
+    "title": "Add + button to open create-event drawer",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Manager Events screen now shows a top + button that opens the create-event drawer."
+  },
+  {
+    "id": "DSP-013",
+    "area": "Events-Worker",
+    "title": "Worker Events card: manager attribution + expandable task list",
+    "status": "Done",
+    "priority": "Medium",
+    "statusReason": "Implemented in Events worker card/expand task list and merged to master."
+  },
+  {
+    "id": "DSP-014",
+    "area": "Team",
+    "title": "Team list tap logic: member list+All for multi-member; direct chat for single-member",
+    "status": "In Progress",
+    "priority": "High",
+    "statusReason": "Active agent run is implementing team tap routing + All recipient logic."
+  },
+  {
+    "id": "DSP-015",
+    "area": "Team-Manager",
+    "title": "Manager + button for add team / invite worker drawer",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Manager Team screen now includes a top + action that opens an add-team / invite-worker drawer and is merged to master."
+  },
+  {
+    "id": "DSP-016",
+    "area": "Automation",
+    "title": "Heartbeat automation: spawn 2 agents, each claims next backlog task, merges to master, and pushes",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Implemented file-lock-backed task claim script (mission-control/scripts/dispatch-claim-task.mjs) and updated HEARTBEAT.md to enforce 2-agent self-claim automation flow."
+  }
+]
