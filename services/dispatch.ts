@@ -1,4 +1,5 @@
 import {
+  addDoc,
   collection,
   doc,
   documentId,
@@ -6,6 +7,7 @@ import {
   onSnapshot,
   query,
   runTransaction,
+  serverTimestamp,
   where,
   writeBatch,
 } from 'firebase/firestore';
@@ -43,6 +45,58 @@ export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
   const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
   const snap = await getDocs(q);
   return mapTeams(snap);
+}
+
+export async function createTeam(managerId: string, name: string) {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('Team name is required');
+
+  await addDoc(collection(db, 'teams'), {
+    managerId,
+    name: trimmed,
+    workerIds: [],
+  });
+}
+
+export async function inviteWorkerToTeam(params: { managerId: string; teamId: string; phoneNumber: string }) {
+  const { managerId, teamId, phoneNumber } = params;
+  const normalizedPhone = phoneNumber.trim();
+  if (!normalizedPhone) throw new Error('Worker phone number is required');
+
+  const usersSnap = await getDocs(query(
+    collection(db, 'users'),
+    where('phoneNumber', '==', normalizedPhone),
+    where('role', '==', 'worker')
+  ));
+
+  const foundWorker = usersSnap.docs[0];
+  const foundWorkerId = foundWorker?.id;
+
+  await runTransaction(db, async (tx) => {
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await tx.get(teamRef);
+
+    if (!teamSnap.exists()) throw new Error('Team not found');
+
+    const team = teamSnap.data() as Omit<Team, 'id'>;
+    if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
+
+    if (foundWorkerId) {
+      const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
+      tx.update(teamRef, { workerIds: nextWorkerIds });
+    }
+  });
+
+  await addDoc(collection(db, 'workerInvites'), {
+    managerId,
+    teamId,
+    phoneNumber: normalizedPhone,
+    workerId: foundWorkerId || null,
+    status: foundWorkerId ? 'linked' : 'pending',
+    createdAt: serverTimestamp(),
+  });
+
+  return { linked: !!foundWorkerId };
 }
 
 export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProfile[]> {
