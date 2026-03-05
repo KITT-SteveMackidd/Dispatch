@@ -2,22 +2,33 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export default function WorkerChatScreen() {
-  const params = useLocalSearchParams<{ workerId?: string; workerLabel?: string; eventName?: string }>();
+  const params = useLocalSearchParams<{ workerId?: string; workerLabel?: string; eventName?: string; teamName?: string; teamMemberIds?: string }>();
   const workerId = params.workerId ?? 'worker';
   const workerLabel = params.workerLabel ?? workerId;
+  const isTeamBroadcast = workerId.startsWith('all:') || workerLabel.toLowerCase() === 'all';
+  const broadcastCount = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean).length;
 
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: `Chat: ${workerLabel}` }} />
 
       <Text style={styles.title}>{workerLabel}</Text>
-      <Text style={styles.subtitle}>Direct manager ↔ worker thread</Text>
+      <Text style={styles.subtitle}>{isTeamBroadcast ? 'Team broadcast thread' : 'Direct manager ↔ worker thread'}</Text>
 
       {params.eventName ? <Text style={styles.context}>From Today event: {params.eventName}</Text> : null}
+      {params.teamName ? (
+        <Text style={styles.context}>
+          Team: {params.teamName}{isTeamBroadcast && broadcastCount ? ` (${broadcastCount} recipients)` : ''}
+        </Text>
+      ) : null}
 
       <View style={styles.mockThread}>
         <Text style={styles.mockMessageLabel}>Thread</Text>
-        <Text style={styles.mockMessage}>Start coordinating with {workerLabel} for this event.</Text>
+        <Text style={styles.mockMessage}>
+          {isTeamBroadcast
+            ? `Send a single message to all members of ${params.teamName || 'this team'}.`
+            : `Start coordinating with ${workerLabel} for this event.`}
+        </Text>
       </View>
 
       <Pressable style={styles.sendButton}>
