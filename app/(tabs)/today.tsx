@@ -3,9 +3,10 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { loadUserProfilesByIds, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
-import { DispatchEvent, EventTask } from '@/types/dispatch';
+import { AppRole, DispatchEvent, EventTask } from '@/types/dispatch';
 
 type ManagerInfo = { displayName: string; phoneNumber?: string };
+type UserInfo = { displayName: string; phoneNumber?: string; role: AppRole };
 
 type TaskProgress = {
   total: number;
@@ -47,6 +48,7 @@ export default function TodayScreen() {
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
+  const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -54,35 +56,60 @@ export default function TodayScreen() {
   }, [profile]);
 
   useEffect(() => {
-    if (!profile || profile.role !== 'worker') {
+    if (!profile) {
       setManagerInfoById({});
+      setUserInfoById({});
       return;
     }
 
-    const managerIds = [...new Set(events.map((event) => event.managerId).filter(Boolean))];
-    if (!managerIds.length) {
+    const idsToLoad =
+      profile.role === 'worker'
+        ? [...new Set(events.map((event) => event.managerId).filter(Boolean))]
+        : [
+            ...new Set(
+              events.flatMap((event) => event.roles.flatMap((role) => role.assignedWorkerIds || [])).filter(Boolean)
+            ),
+          ];
+
+    if (!idsToLoad.length) {
       setManagerInfoById({});
+      setUserInfoById({});
       return;
     }
 
     let active = true;
-    loadUserProfilesByIds(managerIds)
+    loadUserProfilesByIds(idsToLoad)
       .then((profiles) => {
         if (!active) return;
 
-        const next = profiles.reduce<Record<string, ManagerInfo>>((acc, manager) => {
-          acc[manager.uid] = {
-            displayName: manager.displayName || 'Manager',
-            phoneNumber: manager.phoneNumber,
+        const nextUsers = profiles.reduce<Record<string, UserInfo>>((acc, user) => {
+          acc[user.uid] = {
+            displayName: user.displayName || 'Dispatch User',
+            phoneNumber: user.phoneNumber,
+            role: user.role,
           };
           return acc;
         }, {});
 
-        setManagerInfoById(next);
+        setUserInfoById(nextUsers);
+
+        if (profile.role === 'worker') {
+          const nextManagers = profiles.reduce<Record<string, ManagerInfo>>((acc, manager) => {
+            acc[manager.uid] = {
+              displayName: manager.displayName || 'Manager',
+              phoneNumber: manager.phoneNumber,
+            };
+            return acc;
+          }, {});
+          setManagerInfoById(nextManagers);
+        } else {
+          setManagerInfoById({});
+        }
       })
       .catch(() => {
         if (!active) return;
         setManagerInfoById({});
+        setUserInfoById({});
       });
 
     return () => {
@@ -100,6 +127,18 @@ export default function TodayScreen() {
     const total = tasks.length;
     const done = tasks.filter((t) => (t.completedBy?.length ?? 0) > 0).length;
     const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+    return { total, done, percent };
+  };
+
+  const getWorkerProgress = (event: DispatchEvent, workerId: string): TaskProgress => {
+    const tasks = event.roles
+      .filter((role) => role.assignedWorkerIds.includes(workerId))
+      .flatMap((role) => role.tasks);
+
+    const total = tasks.length;
+    const done = tasks.filter((task) => (task.completedBy ?? []).includes(workerId)).length;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+
     return { total, done, percent };
   };
 
@@ -261,13 +300,22 @@ export default function TodayScreen() {
                   {workers.length ? (
                     workers.map((worker) => {
                       const initial = worker.workerId.replace(/[^A-Za-z0-9]/g, '').slice(0, 1).toUpperCase() || 'W';
+                      const workerInfo = userInfoById[worker.workerId];
+                      const workerProgress = getWorkerProgress(item, worker.workerId);
+                      const workerNext = workerNextTask(item, worker.workerId);
+                      const workerTimeRemaining = formatTimeRemaining(workerNext?.dueAt);
+
                       return (
                         <View key={worker.workerId} style={styles.workerCard}>
                           <Pressable
                             onPress={() => {
                               router.push({
                                 pathname: '/chat/[workerId]',
-                                params: { workerId: worker.workerId, workerLabel: worker.workerId, eventName: item.name },
+                                params: {
+                                  workerId: worker.workerId,
+                                  workerLabel: workerInfo?.displayName || worker.workerId,
+                                  eventName: item.name,
+                                },
                               });
                             }}
                             style={styles.avatar}
@@ -277,8 +325,28 @@ export default function TodayScreen() {
                           </Pressable>
 
                           <View style={styles.workerDetails}>
-                            <Text style={styles.workerName}>{worker.workerId}</Text>
-                            <Text style={styles.workerMeta}>Role: {worker.roleNames.join(', ')}</Text>
+                            <Text style={styles.workerName}>{workerInfo?.displayName || worker.workerId}</Text>
+                            <Text style={styles.workerMeta}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
+                            <Text style={styles.workerMeta}>Role: {worker.roleNames.join(', ') || 'Unassigned'}</Text>
+
+                            <View style={styles.workerProgressSection}>
+                              <View style={styles.progressHeader}>
+                                <Text style={styles.progressLabel}>Task progress</Text>
+                                <Text style={styles.progressCount}>{workerProgress.done}/{workerProgress.total}</Text>
+                              </View>
+                              <View style={styles.progressTrack}>
+                                <View style={[styles.progressFill, { width: `${workerProgress.percent}%` }]} />
+                              </View>
+                            </View>
+
+                            {workerNext ? (
+                              <>
+                                <Text style={styles.workerMeta}>Next task: {workerNext.name}</Text>
+                                {workerTimeRemaining ? <Text style={styles.timeRemaining}>{workerTimeRemaining}</Text> : null}
+                              </>
+                            ) : (
+                              <Text style={styles.workerMeta}>Next task: All assigned tasks complete</Text>
+                            )}
                           </View>
                         </View>
                       );
@@ -318,12 +386,13 @@ const styles = StyleSheet.create({
   nextTaskLabel: { color: '#0f172a', fontSize: 13, fontWeight: '600', marginTop: 6 },
   timeRemaining: { color: '#2563eb', fontSize: 12, fontWeight: '600', marginTop: 2 },
   workerSection: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10, gap: 10 },
-  workerCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center' },
+  workerCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'flex-start' },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
   avatarText: { fontWeight: '700', color: '#1d4ed8' },
   workerDetails: { flex: 1 },
   workerName: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
   workerMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  workerProgressSection: { marginTop: 8 },
   emptyWorkers: { color: '#64748b', fontSize: 12 },
   checklistContainer: { marginTop: 12, gap: 10 },
   checklistItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
