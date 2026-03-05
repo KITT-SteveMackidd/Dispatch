@@ -1,24 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSession } from '@/context/session';
-import {
-  createTeam,
-  inviteWorkerToTeam,
-  loadWorkerTeams,
-  seedDemoData,
-  watchManagerEvents,
-  watchManagerTeams,
-  watchWorkerEvents,
-} from '@/services/dispatch';
+import { createTeam, inviteWorkerToTeam, loadWorkerTeams, seedDemoData, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent, Team } from '@/types/dispatch';
 
 type DrawerMode = 'add-team' | 'invite-worker';
@@ -28,7 +11,6 @@ export default function TeamsScreen() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [seeding, setSeeding] = useState(false);
-
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('add-team');
   const [teamName, setTeamName] = useState('');
@@ -39,7 +21,6 @@ export default function TeamsScreen() {
 
   useEffect(() => {
     if (!profile) return;
-
     if (profile.role === 'manager') {
       const unsubTeams = watchManagerTeams(profile.uid, setTeams);
       const unsubEvents = watchManagerEvents(profile.uid, setEvents);
@@ -55,9 +36,7 @@ export default function TeamsScreen() {
   }, [profile]);
 
   useEffect(() => {
-    if (!inviteTeamId && teams.length) {
-      setInviteTeamId(teams[0].id);
-    }
+    if (!inviteTeamId && teams.length) setInviteTeamId(teams[0].id);
   }, [teams, inviteTeamId]);
 
   const eventCountsByTeam = useMemo(() => {
@@ -90,7 +69,6 @@ export default function TeamsScreen() {
 
   const handleSubmitDrawer = async () => {
     if (!profile || profile.role !== 'manager') return;
-
     setSaving(true);
     setDrawerMessage(null);
 
@@ -104,11 +82,7 @@ export default function TeamsScreen() {
           setDrawerMessage('Choose a team first.');
           return;
         }
-        const result = await inviteWorkerToTeam({
-          managerId: profile.uid,
-          teamId: inviteTeamId,
-          phoneNumber: invitePhone,
-        });
+        const result = await inviteWorkerToTeam({ managerId: profile.uid, teamId: inviteTeamId, phoneNumber: invitePhone });
         setInvitePhone('');
         setDrawerMessage(result.linked ? 'Worker added to team and invite saved.' : 'Invite saved.');
       }
@@ -157,20 +131,10 @@ export default function TeamsScreen() {
             <Text style={styles.drawerSub}>Add teams or invite workers to your app.</Text>
 
             <View style={styles.modeRow}>
-              <Pressable
-                style={[styles.modeButton, drawerMode === 'add-team' && styles.modeButtonActive]}
-                onPress={() => {
-                  setDrawerMode('add-team');
-                  setDrawerMessage(null);
-                }}>
+              <Pressable style={[styles.modeButton, drawerMode === 'add-team' && styles.modeButtonActive]} onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); }}>
                 <Text style={[styles.modeText, drawerMode === 'add-team' && styles.modeTextActive]}>Add Team</Text>
               </Pressable>
-              <Pressable
-                style={[styles.modeButton, drawerMode === 'invite-worker' && styles.modeButtonActive]}
-                onPress={() => {
-                  setDrawerMode('invite-worker');
-                  setDrawerMessage(null);
-                }}>
+              <Pressable style={[styles.modeButton, drawerMode === 'invite-worker' && styles.modeButtonActive]} onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); }}>
                 <Text style={[styles.modeText, drawerMode === 'invite-worker' && styles.modeTextActive]}>Invite Worker</Text>
               </Pressable>
             </View>
@@ -178,37 +142,21 @@ export default function TeamsScreen() {
             {drawerMode === 'add-team' ? (
               <>
                 <Text style={styles.fieldLabel}>Team name</Text>
-                <TextInput
-                  value={teamName}
-                  onChangeText={setTeamName}
-                  placeholder="Example: Night Shift Crew"
-                  placeholderTextColor="#94a3b8"
-                  style={styles.input}
-                />
+                <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor="#94a3b8" style={styles.input} />
               </>
             ) : (
               <>
                 <Text style={styles.fieldLabel}>Choose team</Text>
                 <View style={styles.teamChipWrap}>
                   {teams.length ? teams.map((team) => (
-                    <Pressable
-                      key={team.id}
-                      style={[styles.teamChip, inviteTeamId === team.id && styles.teamChipActive]}
-                      onPress={() => setInviteTeamId(team.id)}>
+                    <Pressable key={team.id} style={[styles.teamChip, inviteTeamId === team.id && styles.teamChipActive]} onPress={() => setInviteTeamId(team.id)}>
                       <Text style={[styles.teamChipText, inviteTeamId === team.id && styles.teamChipTextActive]}>{team.name}</Text>
                     </Pressable>
                   )) : <Text style={styles.emptyHint}>Create a team first.</Text>}
                 </View>
 
                 <Text style={styles.fieldLabel}>Worker phone number</Text>
-                <TextInput
-                  value={invitePhone}
-                  onChangeText={setInvitePhone}
-                  placeholder="+1 555 123 4567"
-                  placeholderTextColor="#94a3b8"
-                  style={styles.input}
-                  keyboardType="phone-pad"
-                />
+                <TextInput value={invitePhone} onChangeText={setInvitePhone} placeholder="+1 555 123 4567" placeholderTextColor="#94a3b8" style={styles.input} keyboardType="phone-pad" />
               </>
             )}
 
@@ -232,14 +180,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   subhead: { color: '#334155', fontWeight: '600' },
-  createButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#1d4ed8',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  createButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1d4ed8', alignItems: 'center', justifyContent: 'center' },
   createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
   empty: { marginTop: 20, color: '#64748b' },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -250,7 +191,6 @@ const styles = StyleSheet.create({
   status: { color: '#475569', fontSize: 12, fontWeight: '600' },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   addText: { color: 'white', fontWeight: '700' },
-
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   drawer: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '76%' },
   drawerTitle: { color: '#0f172a', fontWeight: '700', fontSize: 18 },
