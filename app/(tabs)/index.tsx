@@ -242,7 +242,7 @@ export default function DispatchesScreen() {
         ListEmptyComponent={<Text style={styles.empty}>No upcoming assignments.</Text>}
         renderItem={({ item }) => {
           const expanded = !!expandedIds[item.id];
-          const managerLabel = managerNames[item.managerId] || item.managerId;
+          const managerLabel = managerNames[item.managerId] || 'Manager';
           const eventTime = new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
           const signupRatio = getWorkerSignupRatio(item);
 
