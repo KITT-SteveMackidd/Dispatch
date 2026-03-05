@@ -29,6 +29,7 @@ export default function DispatchesScreen() {
   const [replaceDrawer, setReplaceDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [createEventDrawerOpen, setCreateEventDrawerOpen] = useState(false);
+  const canCreateEvent = profile?.role === 'manager';
 
   useEffect(() => {
     if (!profile) return;
@@ -103,6 +104,22 @@ export default function DispatchesScreen() {
       cancelled = true;
     };
   }, [events, profile?.role, teamWorkerIds]);
+
+  useEffect(() => {
+    if (canCreateEvent) return;
+    setCreateEventDrawerOpen(false);
+  }, [canCreateEvent]);
+
+  const openCreateEventDrawer = () => {
+    if (!canCreateEvent) return;
+    setReplaceDrawer(INITIAL_DRAWER);
+    setInviteDrawer(INITIAL_DRAWER);
+    setCreateEventDrawerOpen(true);
+  };
+
+  const closeCreateEventDrawer = () => {
+    setCreateEventDrawerOpen(false);
+  };
 
   const upcoming = useMemo(
     () => events.filter((e) => new Date(e.startsAt).getTime() >= Date.now()).sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt)),
@@ -226,12 +243,12 @@ export default function DispatchesScreen() {
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.filter}>All Assignments ▾</Text>
-        {profile?.role === 'manager' ? (
+        {canCreateEvent ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Create event"
             style={styles.createButton}
-            onPress={() => setCreateEventDrawerOpen(true)}>
+            onPress={openCreateEventDrawer}>
             <Text style={styles.createButtonText}>+</Text>
           </Pressable>
         ) : null}
@@ -322,12 +339,12 @@ export default function DispatchesScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={() => setCreateEventDrawerOpen(false)}>
-        <Pressable style={styles.drawerBackdrop} onPress={() => setCreateEventDrawerOpen(false)}>
+      <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateEventDrawer}>
+        <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventDrawer}>
           <Pressable style={styles.drawer} onPress={() => null}>
             <Text style={styles.drawerTitle}>Create Event</Text>
             <Text style={styles.drawerSub}>Start a new event dispatch.</Text>
-            <Pressable style={styles.drawerClose} onPress={() => setCreateEventDrawerOpen(false)}>
+            <Pressable style={styles.drawerClose} onPress={closeCreateEventDrawer}>
               <Text style={styles.drawerCloseText}>Close</Text>
             </Pressable>
           </Pressable>
