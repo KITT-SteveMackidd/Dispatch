@@ -131,9 +131,9 @@
     "id": "DSP-017",
     "area": "Theme",
     "title": "Apply dark-mode styling coverage to every screen when dark mode is selected",
-    "status": "In Progress",
+    "status": "Done",
     "priority": "High",
-    "statusReason": "New requirement: ensure all screens follow dark mode selection consistently."
+    "statusReason": "Expanded dark-mode styling across auth, tabs, event details, chat, team/member views, and drawers/modals; validated app scope compiles while existing mission-control TS errors remain unrelated."
   },
   {
     "id": "DSP-018",
