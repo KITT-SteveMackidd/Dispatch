@@ -13,12 +13,15 @@ import {
   watchWorkerEvents,
 } from '@/services/dispatch';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
+import { useThemeMode } from '@/context/theme';
 
 type DrawerMode = 'add-team' | 'invite-worker';
 
 export default function TeamsScreen() {
   const { profile } = useSession();
   const router = useRouter();
+  const { themeMode } = useThemeMode();
+  const isDarkMode = themeMode === 'dark';
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [seeding, setSeeding] = useState(false);
@@ -176,9 +179,9 @@ export default function TeamsScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={styles.headerRow}>
-        <Text style={styles.subhead}>Manage Your Team</Text>
+        <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>Manage Your Team</Text>
         {profile?.role === 'manager' ? (
           <Pressable style={styles.createButton} onPress={openDrawer}>
             <Text style={styles.createButtonText}>+</Text>
@@ -189,19 +192,19 @@ export default function TeamsScreen() {
       <FlatList
         data={teams}
         keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={styles.empty}>No teams found yet. Tap Add Demo Team Data.</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No teams found yet. Tap Add Demo Team Data.</Text>}
         renderItem={({ item }) => {
           const otherCount = getOtherMemberIds(item).length;
           return (
-            <Pressable style={styles.card} onPress={() => handleTeamPress(item)}>
+            <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => handleTeamPress(item)}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.title}>{item.name}</Text>
-                <Text style={styles.meta}>{item.workerIds.length} workers</Text>
+                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
+                <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.workerIds.length} workers</Text>
               </View>
               <View style={styles.rightSide}>
-                <Text style={styles.status}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
-                <Text style={styles.hint}>{otherCount > 1 ? 'Choose member' : otherCount === 1 ? 'Open chat' : 'No members'}</Text>
+                <Text style={[styles.status, isDarkMode ? styles.statusDark : styles.statusLight]}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
+                <Text style={[styles.hint, isDarkMode ? styles.hintDark : styles.hintLight]}>{otherCount > 1 ? 'Choose member' : otherCount === 1 ? 'Open chat' : 'No members'}</Text>
               </View>
             </Pressable>
           );
@@ -214,9 +217,9 @@ export default function TeamsScreen() {
 
       <Modal visible={drawerOpen} animationType="slide" transparent onRequestClose={() => setDrawerOpen(false)}>
         <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)}>
-          <Pressable style={styles.drawer} onPress={() => null}>
-            <Text style={styles.drawerTitle}>Team Actions</Text>
-            <Text style={styles.drawerSub}>Add teams or invite workers to your app.</Text>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Team Actions</Text>
+            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
 
             <View style={styles.modeRow}>
               <Pressable style={[styles.modeButton, drawerMode === 'add-team' && styles.modeButtonActive]} onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); }}>
@@ -229,22 +232,22 @@ export default function TeamsScreen() {
 
             {drawerMode === 'add-team' ? (
               <>
-                <Text style={styles.fieldLabel}>Team name</Text>
-                <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor="#94a3b8" style={styles.input} />
+                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Team name</Text>
+                <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
               </>
             ) : (
               <>
-                <Text style={styles.fieldLabel}>Choose team</Text>
+                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Choose team</Text>
                 <View style={styles.teamChipWrap}>
                   {teams.length ? teams.map((team) => (
-                    <Pressable key={team.id} style={[styles.teamChip, inviteTeamId === team.id && styles.teamChipActive]} onPress={() => setInviteTeamId(team.id)}>
-                      <Text style={[styles.teamChipText, inviteTeamId === team.id && styles.teamChipTextActive]}>{team.name}</Text>
+                    <Pressable key={team.id} style={[styles.teamChip, isDarkMode ? styles.teamChipDark : styles.teamChipLight, inviteTeamId === team.id && styles.teamChipActive]} onPress={() => setInviteTeamId(team.id)}>
+                      <Text style={[styles.teamChipText, isDarkMode ? styles.teamChipTextDark : styles.teamChipTextLight, inviteTeamId === team.id && styles.teamChipTextActive]}>{team.name}</Text>
                     </Pressable>
                   )) : <Text style={styles.emptyHint}>Create a team first.</Text>}
                 </View>
 
-                <Text style={styles.fieldLabel}>Worker phone number</Text>
-                <TextInput value={invitePhone} onChangeText={setInvitePhone} placeholder="+1 555 123 4567" placeholderTextColor="#94a3b8" style={styles.input} keyboardType="phone-pad" />
+                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker phone number</Text>
+                <TextInput value={invitePhone} onChangeText={setInvitePhone} placeholder="+1 555 123 4567" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} keyboardType="phone-pad" />
               </>
             )}
 
@@ -265,37 +268,67 @@ export default function TeamsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
+  container: { flex: 1, padding: 16 },
+  containerLight: { backgroundColor: '#eef2ff' },
+  containerDark: { backgroundColor: '#020617' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  subhead: { color: '#334155', fontWeight: '600' },
+  subhead: { fontWeight: '600' },
+  subheadLight: { color: '#334155' },
+  subheadDark: { color: '#cbd5e1' },
   createButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1d4ed8', alignItems: 'center', justifyContent: 'center' },
   createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
-  empty: { marginTop: 20, color: '#64748b' },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  empty: { marginTop: 20 },
+  emptyLight: { color: '#64748b' },
+  emptyDark: { color: '#94a3b8' },
+  card: { borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontWeight: '700', color: '#1d4ed8' },
-  title: { color: '#0f172a', fontWeight: '700', fontSize: 16 },
-  meta: { color: '#64748b', marginTop: 2, fontSize: 12 },
+  title: { fontWeight: '700', fontSize: 16 },
+  titleLight: { color: '#0f172a' },
+  titleDark: { color: '#f8fafc' },
+  meta: { marginTop: 2, fontSize: 12 },
+  metaLight: { color: '#64748b' },
+  metaDark: { color: '#94a3b8' },
   rightSide: { alignItems: 'flex-end' },
-  status: { color: '#475569', fontSize: 12, fontWeight: '600' },
-  hint: { color: '#2563eb', fontSize: 11, fontWeight: '600', marginTop: 4 },
+  status: { fontSize: 12, fontWeight: '600' },
+  statusLight: { color: '#475569' },
+  statusDark: { color: '#cbd5e1' },
+  hint: { fontSize: 11, fontWeight: '600', marginTop: 4 },
+  hintLight: { color: '#2563eb' },
+  hintDark: { color: '#93c5fd' },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   addText: { color: 'white', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  drawer: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '76%' },
-  drawerTitle: { color: '#0f172a', fontWeight: '700', fontSize: 18 },
-  drawerSub: { color: '#64748b', fontSize: 12, marginTop: 4 },
+  drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '76%' },
+  drawerLight: { backgroundColor: '#fff' },
+  drawerDark: { backgroundColor: '#0f172a' },
+  drawerTitle: { fontWeight: '700', fontSize: 18 },
+  drawerTitleLight: { color: '#0f172a' },
+  drawerTitleDark: { color: '#f8fafc' },
+  drawerSub: { fontSize: 12, marginTop: 4 },
+  drawerSubLight: { color: '#64748b' },
+  drawerSubDark: { color: '#94a3b8' },
   modeRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
   modeButton: { flex: 1, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 10, alignItems: 'center', backgroundColor: '#f8fafc' },
   modeButtonActive: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
   modeText: { color: '#334155', fontWeight: '600' },
   modeTextActive: { color: '#1e40af' },
-  fieldLabel: { marginTop: 14, color: '#334155', fontSize: 12, fontWeight: '700' },
-  input: { marginTop: 6, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: '#0f172a' },
+  fieldLabel: { marginTop: 14, fontSize: 12, fontWeight: '700' },
+  fieldLabelLight: { color: '#334155' },
+  fieldLabelDark: { color: '#cbd5e1' },
+  input: { marginTop: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  inputLight: { borderColor: '#cbd5e1', color: '#0f172a', backgroundColor: '#fff' },
+  inputDark: { borderColor: '#334155', color: '#e2e8f0', backgroundColor: '#111827' },
   teamChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  teamChip: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f8fafc' },
+  teamChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  teamChipLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  teamChipDark: { borderColor: '#334155', backgroundColor: '#1f2937' },
   teamChipActive: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
-  teamChipText: { color: '#475569', fontSize: 12, fontWeight: '600' },
+  teamChipText: { fontSize: 12, fontWeight: '600' },
+  teamChipTextLight: { color: '#475569' },
+  teamChipTextDark: { color: '#cbd5e1' },
   teamChipTextActive: { color: '#1e3a8a' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
   message: { marginTop: 12, color: '#1e40af', fontSize: 12, fontWeight: '600' },

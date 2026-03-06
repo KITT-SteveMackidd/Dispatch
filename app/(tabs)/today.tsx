@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { loadUserProfilesByIds, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
 import { AppRole, DispatchEvent, EventTask } from '@/types/dispatch';
+import { useThemeMode } from '@/context/theme';
 
 type ManagerInfo = { displayName: string; phoneNumber?: string };
 type UserInfo = { displayName: string; phoneNumber?: string; role: AppRole };
@@ -45,6 +46,8 @@ function getWorkerSummaries(event: DispatchEvent): WorkerSummary[] {
 export default function TodayScreen() {
   const { profile } = useSession();
   const router = useRouter();
+  const { themeMode } = useThemeMode();
+  const isDarkMode = themeMode === 'dark';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
@@ -246,13 +249,13 @@ export default function TodayScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.subhead}>You have {today.length} active dispatches.</Text>
+    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
+      <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} active dispatches.</Text>
       <FlatList
         data={today}
         keyExtractor={(i) => i.id}
         contentContainerStyle={{ paddingTop: 10 }}
-        ListEmptyComponent={<Text style={styles.empty}>No dispatches for today.</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No dispatches for today.</Text>}
         renderItem={({ item }) => {
           const progress = getProgress(item);
           const b = badge(progress);
@@ -265,13 +268,13 @@ export default function TodayScreen() {
           const timeRemaining = formatTimeRemaining(nextTask?.dueAt);
 
           return (
-            <Pressable style={styles.card} onPress={() => toggleExpand(item.id)}>
+            <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
-                <Text style={styles.title}>{item.name}</Text>
-                <Text style={styles.expandHint}>{isExpanded ? 'Hide' : 'Expand'}</Text>
+                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
+                <Text style={[styles.expandHint, isDarkMode ? styles.expandHintDark : styles.expandHintLight]}>{isExpanded ? 'Hide' : 'Expand'}</Text>
               </View>
 
-              <Text style={styles.meta}>{item.location} • {eventTime}</Text>
+              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventTime}</Text>
 
               {isManager ? (
                 <View style={styles.progressSection}>
@@ -367,14 +370,28 @@ export default function TodayScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
-  subhead: { color: '#475569', fontWeight: '500' },
-  empty: { marginTop: 20, color: '#64748b' },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  container: { flex: 1, padding: 16 },
+  containerLight: { backgroundColor: '#eef2ff' },
+  containerDark: { backgroundColor: '#020617' },
+  subhead: { fontWeight: '500' },
+  subheadLight: { color: '#475569' },
+  subheadDark: { color: '#94a3b8' },
+  empty: { marginTop: 20 },
+  emptyLight: { color: '#64748b' },
+  emptyDark: { color: '#94a3b8' },
+  card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
+  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { color: '#0f172a', fontWeight: '700', fontSize: 20, marginBottom: 6, flex: 1 },
-  expandHint: { color: '#2563eb', fontSize: 12, fontWeight: '700', marginLeft: 8 },
-  meta: { color: '#64748b', fontSize: 12, marginBottom: 2 },
+  title: { fontWeight: '700', fontSize: 20, marginBottom: 6, flex: 1 },
+  titleLight: { color: '#0f172a' },
+  titleDark: { color: '#f8fafc' },
+  expandHint: { fontSize: 12, fontWeight: '700', marginLeft: 8 },
+  expandHintLight: { color: '#2563eb' },
+  expandHintDark: { color: '#93c5fd' },
+  meta: { fontSize: 12, marginBottom: 2 },
+  metaLight: { color: '#64748b' },
+  metaDark: { color: '#94a3b8' },
   badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginTop: 10 },
   badgeText: { fontWeight: '700', fontSize: 12 },
   progressSection: { marginTop: 12 },

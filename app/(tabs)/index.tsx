@@ -3,6 +3,7 @@ import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from '
 import { useSession } from '@/context/session';
 import { loadUserProfilesByIds, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
+import { useThemeMode } from '@/context/theme';
 
 type ManagerNamesMap = Record<string, string>;
 type UserMap = Record<string, UserProfile>;
@@ -21,6 +22,8 @@ const INITIAL_DRAWER: DrawerState = {
 
 export default function DispatchesScreen() {
   const { profile } = useSession();
+  const { themeMode } = useThemeMode();
+  const isDarkMode = themeMode === 'dark';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [managerNames, setManagerNames] = useState<ManagerNamesMap>({});
@@ -240,9 +243,9 @@ export default function DispatchesScreen() {
   const inviteTarget = findRoleForDrawer(inviteDrawer);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={styles.headerRow}>
-        <Text style={styles.filter}>All Assignments ▾</Text>
+        <Text style={[styles.filter, isDarkMode ? styles.filterDark : styles.filterLight]}>All Assignments ▾</Text>
         {canCreateEvent ? (
           <Pressable
             accessibilityRole="button"
@@ -256,7 +259,7 @@ export default function DispatchesScreen() {
       <FlatList
         data={upcoming}
         keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={styles.empty}>No upcoming assignments.</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No upcoming assignments.</Text>}
         renderItem={({ item }) => {
           const expanded = !!expandedIds[item.id];
           const managerLabel = managerNames[item.managerId] || 'Manager';
@@ -265,14 +268,14 @@ export default function DispatchesScreen() {
 
           return (
             <Pressable
-              style={styles.card}
+              style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}
               onPress={() => toggleExpanded(item.id)}>
               <View style={styles.row}>
-                <Text style={styles.title}>{item.name}</Text>
-                <View style={styles.statusPill}><Text style={styles.statusText}>Upcoming</Text></View>
+                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
+                <View style={[styles.statusPill, isDarkMode ? styles.statusPillDark : styles.statusPillLight]}><Text style={[styles.statusText, isDarkMode ? styles.statusTextDark : styles.statusTextLight]}>Upcoming</Text></View>
               </View>
 
-              <Text style={styles.meta}>{item.location} • {eventTime}</Text>
+              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventTime}</Text>
 
               {profile?.role === 'worker' ? (
                 <>
@@ -298,8 +301,8 @@ export default function DispatchesScreen() {
 
       <Modal visible={replaceDrawer.open} animationType="slide" transparent onRequestClose={() => setReplaceDrawer(INITIAL_DRAWER)}>
         <Pressable style={styles.drawerBackdrop} onPress={() => setReplaceDrawer(INITIAL_DRAWER)}>
-          <Pressable style={styles.drawer} onPress={() => null}>
-            <Text style={styles.drawerTitle}>Replace Worker</Text>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Replace Worker</Text>
             <Text style={styles.drawerSub}>Role: {replaceTarget?.role.name || 'Unknown role'}</Text>
             <ScrollView style={styles.drawerList}>
               {teamWorkerIds.length ? teamWorkerIds.map((workerId) => (
@@ -318,8 +321,8 @@ export default function DispatchesScreen() {
 
       <Modal visible={inviteDrawer.open} animationType="slide" transparent onRequestClose={() => setInviteDrawer(INITIAL_DRAWER)}>
         <Pressable style={styles.drawerBackdrop} onPress={() => setInviteDrawer(INITIAL_DRAWER)}>
-          <Pressable style={styles.drawer} onPress={() => null}>
-            <Text style={styles.drawerTitle}>Invite Worker</Text>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Invite Worker</Text>
             <Text style={styles.drawerSub}>Role: {inviteTarget?.role.name || 'Unknown role'}</Text>
             <ScrollView style={styles.drawerList}>
               {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
@@ -341,8 +344,8 @@ export default function DispatchesScreen() {
 
       <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateEventDrawer}>
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventDrawer}>
-          <Pressable style={styles.drawer} onPress={() => null}>
-            <Text style={styles.drawerTitle}>Create Event</Text>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Event</Text>
             <Text style={styles.drawerSub}>Start a new event dispatch.</Text>
             <Pressable style={styles.drawerClose} onPress={closeCreateEventDrawer}>
               <Text style={styles.drawerCloseText}>Close</Text>
@@ -355,9 +358,13 @@ export default function DispatchesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#eef2ff', padding: 16 },
+  container: { flex: 1, padding: 16 },
+  containerLight: { backgroundColor: '#eef2ff' },
+  containerDark: { backgroundColor: '#020617' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  filter: { color: '#334155', fontWeight: '600' },
+  filter: { fontWeight: '600' },
+  filterLight: { color: '#334155' },
+  filterDark: { color: '#cbd5e1' },
   createButton: {
     width: 34,
     height: 34,
@@ -367,13 +374,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
-  empty: { marginTop: 20, color: '#64748b' },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  empty: { marginTop: 20 },
+  emptyLight: { color: '#64748b' },
+  emptyDark: { color: '#94a3b8' },
+  card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
+  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { color: '#0f172a', fontWeight: '700', fontSize: 20, flex: 1, marginRight: 8 },
-  statusPill: { backgroundColor: '#e2e8f0', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
-  statusText: { color: '#475569', fontSize: 11, fontWeight: '700' },
-  meta: { color: '#64748b', marginTop: 6, fontSize: 12 },
+  title: { fontWeight: '700', fontSize: 20, flex: 1, marginRight: 8 },
+  titleLight: { color: '#0f172a' },
+  titleDark: { color: '#f8fafc' },
+  statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
+  statusPillLight: { backgroundColor: '#e2e8f0' },
+  statusPillDark: { backgroundColor: '#334155' },
+  statusText: { fontSize: 11, fontWeight: '700' },
+  statusTextLight: { color: '#475569' },
+  statusTextDark: { color: '#cbd5e1' },
+  meta: { marginTop: 6, fontSize: 12 },
+  metaLight: { color: '#64748b' },
+  metaDark: { color: '#94a3b8' },
   expandHint: { color: '#2563eb', marginTop: 8, fontSize: 12, fontWeight: '600' },
   managerExpanded: { marginTop: 10, gap: 10 },
   roleCard: { borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc', borderRadius: 10, padding: 10 },
@@ -396,8 +415,12 @@ const styles = StyleSheet.create({
   taskEmpty: { color: '#64748b', marginTop: 8, fontSize: 12 },
   roleEmpty: { color: '#64748b', fontSize: 12 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  drawer: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
-  drawerTitle: { color: '#0f172a', fontWeight: '700', fontSize: 18 },
+  drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
+  drawerLight: { backgroundColor: '#fff' },
+  drawerDark: { backgroundColor: '#0f172a' },
+  drawerTitle: { fontWeight: '700', fontSize: 18 },
+  drawerTitleLight: { color: '#0f172a' },
+  drawerTitleDark: { color: '#f8fafc' },
   drawerSub: { color: '#64748b', fontSize: 12, marginTop: 4 },
   drawerList: { marginTop: 12 },
   drawerRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },

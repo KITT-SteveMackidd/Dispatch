@@ -5,10 +5,13 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '@/context/session';
 import { db } from '@/lib/firebase';
 import { DispatchEvent } from '@/types/dispatch';
+import { useThemeMode } from '@/context/theme';
 
 export default function EventDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { profile } = useSession();
+  const { themeMode } = useThemeMode();
+  const isDarkMode = themeMode === 'dark';
   const [event, setEvent] = useState<DispatchEvent | null>(null);
 
   useEffect(() => {
@@ -31,37 +34,37 @@ export default function EventDetailsScreen() {
 
   if (!event) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.empty}>Event not found.</Text>
+      <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
+        <Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>Event not found.</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
-      <View style={styles.card}>
-        <Text style={styles.title}>{event.name}</Text>
-        <Text style={styles.meta}>{event.location}</Text>
-        <Text style={styles.meta}>Starts: {new Date(event.startsAt).toLocaleString()}</Text>
+    <ScrollView style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]} contentContainerStyle={{ padding: 16 }}>
+      <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+        <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{event.name}</Text>
+        <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{event.location}</Text>
+        <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Starts: {new Date(event.startsAt).toLocaleString()}</Text>
 
-        <View style={styles.progressWrap}>
+        <View style={[styles.progressWrap, isDarkMode ? styles.progressWrapDark : styles.progressWrapLight]}>
           <View style={[styles.progressFill, { width: `${completion.pct}%` }]} />
         </View>
-        <Text style={styles.progressText}>{completion.done}/{completion.total} tasks complete ({completion.pct}%)</Text>
+        <Text style={[styles.progressText, isDarkMode ? styles.progressTextDark : styles.progressTextLight]}>{completion.done}/{completion.total} tasks complete ({completion.pct}%)</Text>
       </View>
 
       {event.roles.map((role) => (
-        <View key={role.id} style={styles.section}>
-          <Text style={styles.role}>{role.name}</Text>
-          <Text style={styles.meta}>Assigned: {role.assignedWorkerIds.length} · Open Slots: {role.openSlots}</Text>
+        <View key={role.id} style={[styles.section, isDarkMode ? styles.sectionDark : styles.sectionLight]}>
+          <Text style={[styles.role, isDarkMode ? styles.roleDark : styles.roleLight]}>{role.name}</Text>
+          <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Assigned: {role.assignedWorkerIds.length} · Open Slots: {role.openSlots}</Text>
 
           {role.tasks.map((task) => {
             const doneCount = task.completedBy?.length ?? 0;
             const doneByMe = !!profile && (task.completedBy ?? []).includes(profile.uid);
             return (
               <View key={task.id} style={styles.taskRow}>
-                <Text style={styles.task}>• {task.name}{task.optional ? ' (optional)' : ''}</Text>
-                <Text style={[styles.taskStatus, doneByMe && styles.taskStatusMine]}>
+                <Text style={[styles.task, isDarkMode ? styles.taskDark : styles.taskLight]}>• {task.name}{task.optional ? ' (optional)' : ''}</Text>
+                <Text style={[styles.taskStatus, isDarkMode ? styles.taskStatusDark : styles.taskStatusLight, doneByMe && styles.taskStatusMine]}>
                   {doneByMe ? 'You completed this' : `${doneCount} complete`}
                 </Text>
               </View>
@@ -74,18 +77,40 @@ export default function EventDetailsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#eef2ff' },
-  empty: { color: '#64748b', padding: 24 },
-  card: { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 14 },
-  title: { color: '#0f172a', fontSize: 24, fontWeight: '700' },
-  meta: { color: '#64748b', marginTop: 4 },
-  progressWrap: { height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', marginTop: 12, overflow: 'hidden' },
+  container: { flex: 1 },
+  containerLight: { backgroundColor: '#eef2ff' },
+  containerDark: { backgroundColor: '#020617' },
+  empty: { padding: 24 },
+  emptyLight: { color: '#64748b' },
+  emptyDark: { color: '#94a3b8' },
+  card: { borderRadius: 12, borderWidth: 1, padding: 14 },
+  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
+  title: { fontSize: 24, fontWeight: '700' },
+  titleLight: { color: '#0f172a' },
+  titleDark: { color: '#f8fafc' },
+  meta: { marginTop: 4 },
+  metaLight: { color: '#64748b' },
+  metaDark: { color: '#94a3b8' },
+  progressWrap: { height: 8, borderRadius: 999, marginTop: 12, overflow: 'hidden' },
+  progressWrapLight: { backgroundColor: '#e2e8f0' },
+  progressWrapDark: { backgroundColor: '#334155' },
   progressFill: { height: 8, backgroundColor: '#2563eb' },
-  progressText: { color: '#334155', marginTop: 8, fontWeight: '600' },
-  section: { marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0' },
-  role: { color: '#0f172a', fontSize: 16, fontWeight: '700' },
+  progressText: { marginTop: 8, fontWeight: '600' },
+  progressTextLight: { color: '#334155' },
+  progressTextDark: { color: '#cbd5e1' },
+  section: { marginTop: 12, padding: 12, borderRadius: 12, borderWidth: 1 },
+  sectionLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  sectionDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
+  role: { fontSize: 16, fontWeight: '700' },
+  roleLight: { color: '#0f172a' },
+  roleDark: { color: '#f8fafc' },
   taskRow: { marginTop: 8 },
-  task: { color: '#1e293b' },
-  taskStatus: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  task: {},
+  taskLight: { color: '#1e293b' },
+  taskDark: { color: '#e2e8f0' },
+  taskStatus: { fontSize: 12, marginTop: 2 },
+  taskStatusLight: { color: '#64748b' },
+  taskStatusDark: { color: '#94a3b8' },
   taskStatusMine: { color: '#15803d' },
 });
