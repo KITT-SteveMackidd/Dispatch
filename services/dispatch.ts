@@ -14,6 +14,11 @@ import {
 import { db } from '@/lib/firebase';
 import { DispatchEvent, EventRole, Team, UserProfile } from '@/types/dispatch';
 
+export type TeamUnreadCount = {
+  teamId: string;
+  unreadCount: number;
+};
+
 function mapEvents(snap: { docs: Array<{ id: string; data: () => unknown }> }): DispatchEvent[] {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DispatchEvent, 'id'>) }));
 }
@@ -45,6 +50,25 @@ export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
   const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
   const snap = await getDocs(q);
   return mapTeams(snap);
+}
+
+
+export function watchUserTeamUnreadCounts(userId: string, cb: (items: TeamUnreadCount[]) => void) {
+  const q = query(collection(db, 'chatUnread'), where('userId', '==', userId));
+  return onSnapshot(q, (snap) => {
+    const items = snap.docs
+      .map((d) => {
+        const data = d.data() as Partial<{ teamId: string; unreadCount: number }>;
+        if (!data.teamId) return null;
+        return {
+          teamId: data.teamId,
+          unreadCount: Math.max(0, Number(data.unreadCount ?? 0)),
+        } satisfies TeamUnreadCount;
+      })
+      .filter((item): item is TeamUnreadCount => !!item);
+
+    cb(items);
+  });
 }
 
 export async function createTeam(managerId: string, name: string) {
@@ -247,6 +271,20 @@ export async function seedDemoData(profile: UserProfile) {
         ],
       },
     ],
+  });
+
+  batch.set(doc(db, 'chatUnread', `demo-unread-${profile.uid}-${teamAId}`), {
+    userId: profile.uid,
+    teamId: teamAId,
+    unreadCount: 3,
+    updatedAt: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'chatUnread', `demo-unread-${profile.uid}-${teamBId}`), {
+    userId: profile.uid,
+    teamId: teamBId,
+    unreadCount: 1,
+    updatedAt: serverTimestamp(),
   });
 
   await batch.commit();
