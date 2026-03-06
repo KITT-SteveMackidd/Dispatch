@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
   createTeam,
-  inviteWorkerToTeam,
+  inviteWorkerByEmailToTeam,
   loadUserProfilesByIds,
   loadWorkerTeams,
   seedDemoData,
@@ -25,7 +25,7 @@ export default function TeamsScreen() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('add-team');
   const [teamName, setTeamName] = useState('');
-  const [invitePhone, setInvitePhone] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
   const [inviteTeamId, setInviteTeamId] = useState('');
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
@@ -145,7 +145,7 @@ export default function TeamsScreen() {
     setDrawerMode('add-team');
     setDrawerMessage(null);
     setTeamName('');
-    setInvitePhone('');
+    setInviteEmail('');
     setDrawerOpen(true);
   };
 
@@ -164,9 +164,14 @@ export default function TeamsScreen() {
           setDrawerMessage('Choose a team first.');
           return;
         }
-        const result = await inviteWorkerToTeam({ managerId: profile.uid, teamId: inviteTeamId, phoneNumber: invitePhone });
-        setInvitePhone('');
-        setDrawerMessage(result.linked ? 'Worker added to team and invite saved.' : 'Invite saved.');
+        const result = await inviteWorkerByEmailToTeam({
+          managerId: profile.uid,
+          teamId: inviteTeamId,
+          email: inviteEmail,
+          managerName: profile.displayName,
+        });
+        setInviteEmail('');
+        setDrawerMessage(result.linked ? 'Worker added to team and invite email sent.' : 'Invite email sent.');
       }
     } catch (error) {
       setDrawerMessage(error instanceof Error ? error.message : 'Unable to complete this action.');
@@ -243,8 +248,16 @@ export default function TeamsScreen() {
                   )) : <Text style={styles.emptyHint}>Create a team first.</Text>}
                 </View>
 
-                <Text style={styles.fieldLabel}>Worker phone number</Text>
-                <TextInput value={invitePhone} onChangeText={setInvitePhone} placeholder="+1 555 123 4567" placeholderTextColor="#94a3b8" style={styles.input} keyboardType="phone-pad" />
+                <Text style={styles.fieldLabel}>Worker email</Text>
+                <TextInput
+                  value={inviteEmail}
+                  onChangeText={setInviteEmail}
+                  placeholder="worker@example.com"
+                  placeholderTextColor="#94a3b8"
+                  style={styles.input}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
               </>
             )}
 

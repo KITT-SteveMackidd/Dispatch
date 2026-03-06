@@ -26,6 +26,18 @@ function sortByStartAsc(items: DispatchEvent[]) {
   return [...items].sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
 }
 
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function getInviteAppLink() {
+  return process.env.EXPO_PUBLIC_APP_INVITE_URL?.trim() || 'https://dispatchapp.ca/download';
+}
+
 export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[]) => void) {
   const q = query(collection(db, 'events'), where('managerId', '==', managerId));
   return onSnapshot(q, (snap) => cb(sortByStartAsc(mapEvents(snap))));
@@ -97,6 +109,100 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
   });
 
   return { linked: !!foundWorkerId };
+}
+
+export async function inviteWorkerByEmailToTeam(params: {
+  managerId: string;
+  teamId: string;
+  email: string;
+  managerName?: string;
+}) {
+  const { managerId, teamId, managerName } = params;
+  const normalizedEmail = normalizeEmail(params.email);
+  if (!normalizedEmail) throw new Error('Worker email is required');
+  if (!isValidEmail(normalizedEmail)) throw new Error('Enter a valid email address');
+
+  const usersSnap = await getDocs(query(
+    collection(db, 'users'),
+    where('email', '==', normalizedEmail),
+    where('role', '==', 'worker')
+  ));
+
+  const foundWorker = usersSnap.docs[0];
+  const foundWorkerId = foundWorker?.id;
+
+  await runTransaction(db, async (tx) => {
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await tx.get(teamRef);
+
+    if (!teamSnap.exists()) throw new Error('Team not found');
+
+    const team = teamSnap.data() as Omit<Team, 'id'>;
+    if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
+
+    if (foundWorkerId) {
+      const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
+      tx.update(teamRef, { workerIds: nextWorkerIds });
+    }
+  });
+
+  await addDoc(collection(db, 'workerInvites'), {
+    managerId,
+    teamId,
+    email: normalizedEmail,
+    workerId: foundWorkerId || null,
+    status: foundWorkerId ? 'linked' : 'pending',
+    createdAt: serverTimestamp(),
+  });
+
+  const appLink = getInviteAppLink();
+  const inviterLabel = managerName?.trim() || 'A Dispatch manager';
+
+  await addDoc(collection(db, 'mail'), {
+    to: [normalizedEmail],
+    message: {
+      subject: `${inviterLabel} invited you to Dispatch`,
+      text: `${inviterLabel} invited you to join Dispatch. Download the app and sign in with this email to get connected automatically: ${appLink}`,
+      html: `<p>${inviterLabel} invited you to join Dispatch.</p><p>Download the app and sign in with this email to get connected automatically.</p><p><a href="${appLink}">Open Dispatch app link</a></p>`,
+    },
+    createdAt: serverTimestamp(),
+  });
+
+  return { linked: !!foundWorkerId };
+}
+
+export async function linkPendingEmailInvites(params: { workerId: string; email: string }) {
+  const normalizedEmail = normalizeEmail(params.email);
+  if (!normalizedEmail) return;
+
+  const invitesSnap = await getDocs(query(
+    collection(db, 'workerInvites'),
+    where('email', '==', normalizedEmail),
+    where('status', '==', 'pending')
+  ));
+
+  if (!invitesSnap.docs.length) return;
+
+  await runTransaction(db, async (tx) => {
+    for (const inviteDoc of invitesSnap.docs) {
+      const invite = inviteDoc.data() as { teamId?: string };
+      if (!invite.teamId) continue;
+
+      const teamRef = doc(db, 'teams', invite.teamId);
+      const teamSnap = await tx.get(teamRef);
+      if (!teamSnap.exists()) continue;
+
+      const team = teamSnap.data() as Omit<Team, 'id'>;
+      const nextWorkerIds = [...new Set([...(team.workerIds || []), params.workerId])];
+      tx.update(teamRef, { workerIds: nextWorkerIds });
+
+      tx.update(inviteDoc.ref, {
+        workerId: params.workerId,
+        status: 'linked',
+        linkedAt: serverTimestamp(),
+      });
+    }
+  });
 }
 
 export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProfile[]> {

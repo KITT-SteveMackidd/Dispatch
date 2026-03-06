@@ -3,6 +3,7 @@ import { User } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut as firebaseSignOut, updateProfile } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
+import { linkPendingEmailInvites } from '@/services/dispatch';
 import { AppRole, UserProfile } from '@/types/dispatch';
 
 type SessionContextType = {
@@ -49,6 +50,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const p = await loadProfile(user.uid);
+        if (p?.role === 'worker' && user.email) {
+          await linkPendingEmailInvites({ workerId: user.uid, email: user.email });
+        }
         setProfile(p);
         setNeedsProfile(!p);
       } catch {
@@ -67,17 +71,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signUp = async (params: { email: string; password: string; displayName: string; role: AppRole }) => {
-    const cred = await createUserWithEmailAndPassword(auth, params.email.trim(), params.password);
+    const normalizedEmail = params.email.trim().toLowerCase();
+    const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, params.password);
     await updateProfile(cred.user, { displayName: params.displayName.trim() });
 
     await setDoc(doc(db, 'users', cred.user.uid), {
       uid: cred.user.uid,
       displayName: params.displayName.trim(),
       role: params.role,
-      email: params.email.trim(),
+      email: normalizedEmail,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+
+    if (params.role === 'worker') {
+      await linkPendingEmailInvites({
+        workerId: cred.user.uid,
+        email: normalizedEmail,
+      });
+    }
 
     setProfile({ uid: cred.user.uid, displayName: params.displayName.trim(), role: params.role });
     setNeedsProfile(false);
