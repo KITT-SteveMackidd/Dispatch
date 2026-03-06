@@ -1,14 +1,31 @@
 import { Feather, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs, useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text } from 'react-native';
 import { useSession } from '@/context/session';
+import { watchUserTeamUnreadCounts } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
 
 export default function TabLayout() {
   const router = useRouter();
-  const { signOut } = useSession();
+  const { signOut, profile } = useSession();
   const { themeMode } = useThemeMode();
   const isDarkMode = themeMode === 'dark';
+  const [teamTabUnreadCount, setTeamTabUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!profile) {
+      setTeamTabUnreadCount(0);
+      return;
+    }
+
+    return watchUserTeamUnreadCounts(profile.uid, (items) => {
+      const total = items.reduce((sum, item) => sum + item.unreadCount, 0);
+      setTeamTabUnreadCount(total);
+    });
+  }, [profile]);
+
+  const teamTabBadge = useMemo(() => (teamTabUnreadCount > 0 ? teamTabUnreadCount : undefined), [teamTabUnreadCount]);
 
   const switchProfile = async () => {
     await signOut();
@@ -53,7 +70,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="teams"
         options={{
-          title: 'Team',
+          title: 'Teams',
+          tabBarBadge: teamTabBadge,
           tabBarIcon: ({ color }) => <MaterialCommunityIcons name="account-group-outline" size={21} color={color} />,
         }}
       />

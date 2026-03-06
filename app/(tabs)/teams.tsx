@@ -10,6 +10,7 @@ import {
   seedDemoData,
   watchManagerEvents,
   watchManagerTeams,
+  watchUserTeamUnreadCounts,
   watchWorkerEvents,
 } from '@/services/dispatch';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
@@ -30,6 +31,7 @@ export default function TeamsScreen() {
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
   const [memberInfoById, setMemberInfoById] = useState<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>({});
+  const [unreadCountByTeamId, setUnreadCountByTeamId] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -50,6 +52,21 @@ export default function TeamsScreen() {
   useEffect(() => {
     if (!inviteTeamId && teams.length) setInviteTeamId(teams[0].id);
   }, [teams, inviteTeamId]);
+
+  useEffect(() => {
+    if (!profile) {
+      setUnreadCountByTeamId({});
+      return;
+    }
+
+    return watchUserTeamUnreadCounts(profile.uid, (items) => {
+      const next = items.reduce<Record<string, number>>((acc, item) => {
+        acc[item.teamId] = item.unreadCount;
+        return acc;
+      }, {});
+      setUnreadCountByTeamId(next);
+    });
+  }, [profile]);
 
   useEffect(() => {
     if (!profile || !teams.length) {
@@ -197,6 +214,7 @@ export default function TeamsScreen() {
         ListEmptyComponent={<Text style={styles.empty}>No teams found yet. Tap Add Demo Team Data.</Text>}
         renderItem={({ item }) => {
           const otherCount = getOtherMemberIds(item).length;
+          const unreadCount = unreadCountByTeamId[item.id] ?? 0;
           return (
             <Pressable style={styles.card} onPress={() => handleTeamPress(item)}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
@@ -207,6 +225,11 @@ export default function TeamsScreen() {
               <View style={styles.rightSide}>
                 <Text style={styles.status}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
                 <Text style={styles.hint}>{otherCount > 1 ? 'Choose member' : otherCount === 1 ? 'Open chat' : 'No members'}</Text>
+                {unreadCount > 0 ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
+                  </View>
+                ) : null}
               </View>
             </Pressable>
           );
@@ -292,6 +315,8 @@ const styles = StyleSheet.create({
   rightSide: { alignItems: 'flex-end' },
   status: { color: '#475569', fontSize: 12, fontWeight: '600' },
   hint: { color: '#2563eb', fontSize: 11, fontWeight: '600', marginTop: 4 },
+  unreadBadge: { marginTop: 8, minWidth: 22, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, backgroundColor: '#dc2626', alignItems: 'center' },
+  unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   addText: { color: 'white', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
