@@ -126,5 +126,45 @@
     "status": "Done",
     "priority": "High",
     "statusReason": "Implemented file-lock-backed task claim script (mission-control/scripts/dispatch-claim-task.mjs) and updated HEARTBEAT.md to enforce 2-agent self-claim automation flow."
+  },
+  {
+    "id": "DSP-017",
+    "area": "Theme",
+    "title": "Apply dark-mode styling coverage to every screen when dark mode is selected",
+    "status": "In Progress",
+    "priority": "High",
+    "statusReason": "New requirement: ensure all screens follow dark mode selection consistently."
+  },
+  {
+    "id": "DSP-018",
+    "area": "Chat-UI",
+    "title": "Redesign chat screen to WhatsApp/Telegram style with bottom input and chat bubbles",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Chat screen now uses Telegram/WhatsApp-style conversation header, message bubbles, bottom composer, send action, and auto-scroll behavior while preserving team/direct routing params."
+  },
+  {
+    "id": "DSP-019",
+    "area": "Notifications",
+    "title": "Implement unread chat badges on Teams tab and per-team cards",
+    "status": "Backlog",
+    "priority": "High",
+    "statusReason": "New requirement: show pending chat counts globally and per team."
+  },
+  {
+    "id": "DSP-020",
+    "area": "Invites",
+    "title": "Add email-based invite flow in Add Member drawer and send app-link invite email",
+    "status": "Backlog",
+    "priority": "High",
+    "statusReason": "New requirement: manager invites by email instead of phone."
+  },
+  {
+    "id": "DSP-021",
+    "area": "Onboarding/Chat",
+    "title": "Auto-connect newly signed-in invited user to manager chat thread",
+    "status": "Backlog",
+    "priority": "High",
+    "statusReason": "New requirement: invited users should be auto-linked to manager chat after sign-in."
   }
 ]
