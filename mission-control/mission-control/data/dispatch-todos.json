@@ -1,0 +1,170 @@
+[
+  {
+    "id": "DSP-001",
+    "area": "Cleanup",
+    "title": "Restyle auth + event details to match redesigned main style",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-002",
+    "area": "Cleanup",
+    "title": "Rename Dispatches tab to Events",
+    "status": "Done",
+    "priority": "Medium",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-003",
+    "area": "Theme",
+    "title": "Implement dark mode system across all screens",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-004",
+    "area": "Profile",
+    "title": "Add Light/Dark mode picker in Account Settings",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-005",
+    "area": "Today-Manager",
+    "title": "Manager Today card: title/location/time + task progress graph",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-006",
+    "area": "Today-Manager",
+    "title": "Manager Today expand: worker phone/role/progress/next-task countdown",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-007",
+    "area": "Today-Manager",
+    "title": "Worker avatar tap opens chat thread",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-008",
+    "area": "Today-Worker",
+    "title": "Worker Today card: manager phone + next task + optional time remaining",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-009",
+    "area": "Today-Worker",
+    "title": "Worker Today expand shows full event task checklist",
+    "status": "Done",
+    "priority": "Medium",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-010",
+    "area": "Events-Manager",
+    "title": "Manager Events card: title/location/time + worker signup ratio",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-011",
+    "area": "Events-Manager",
+    "title": "Manager Events expand: roles/tasks/assigned worker/avatar + replace/invite drawers",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Merged to master and pushed."
+  },
+  {
+    "id": "DSP-012",
+    "area": "Events-Manager",
+    "title": "Add + button to open create-event drawer",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Manager Events screen now shows a top + button that opens the create-event drawer."
+  },
+  {
+    "id": "DSP-013",
+    "area": "Events-Worker",
+    "title": "Worker Events card: manager attribution + expandable task list",
+    "status": "Done",
+    "priority": "Medium",
+    "statusReason": "Implemented in Events worker card/expand task list and merged to master."
+  },
+  {
+    "id": "DSP-014",
+    "area": "Team",
+    "title": "Team list tap logic: member list+All for multi-member; direct chat for single-member",
+    "status": "In Progress",
+    "priority": "High",
+    "statusReason": "Active agent run is implementing team tap routing + All recipient logic."
+  },
+  {
+    "id": "DSP-015",
+    "area": "Team-Manager",
+    "title": "Manager + button for add team / invite worker drawer",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Manager Team screen now includes a top + action that opens an add-team / invite-worker drawer and is merged to master."
+  },
+  {
+    "id": "DSP-016",
+    "area": "Automation",
+    "title": "Heartbeat automation: spawn 2 agents, each claims next backlog task, merges to master, and pushes",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Implemented file-lock-backed task claim script (mission-control/scripts/dispatch-claim-task.mjs) and updated HEARTBEAT.md to enforce 2-agent self-claim automation flow."
+  },
+  {
+    "id": "DSP-017",
+    "area": "Theme",
+    "title": "Apply dark-mode styling coverage to every screen when dark mode is selected",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Expanded dark-mode styling across auth, tabs, event details, chat, team/member views, and drawers/modals; validated app scope compiles while existing mission-control TS errors remain unrelated."
+  },
+  {
+    "id": "DSP-018",
+    "area": "Chat-UI",
+    "title": "Redesign chat screen to WhatsApp/Telegram style with bottom input and chat bubbles",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Implemented real chat-style UI in dispatch/app/chat/[workerId].tsx with threaded message bubbles, context header, and fixed bottom composer/send interaction for direct and team-broadcast modes."
+  },
+  {
+    "id": "DSP-019",
+    "area": "Notifications",
+    "title": "Implement unread chat badges on Teams tab and per-team cards",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Implemented, merged into master, and pushed to origin/master successfully (commit 25d01acc)."
+  },
+  {
+    "id": "DSP-020",
+    "area": "Invites",
+    "title": "Add email-based invite flow in Add Member drawer and send app-link invite email",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Invite drawer now collects email and calls configured email transport (EXPO_PUBLIC_INVITE_EMAIL_ENDPOINT). On failure, invite is persisted with send_failed + statusReason and UI surfaces explicit error; worker is not linked to team until post-login acceptance flow."
+  },
+  {
+    "id": "DSP-021",
+    "area": "Onboarding/Chat",
+    "title": "Auto-connect newly signed-in invited user to manager chat thread",
+    "status": "In Progress",
+    "priority": "High",
+    "statusReason": "Claimed by automation: heartbeat-agent-1 at 2026-03-06T01:27:24.400Z"
+  }
+]
