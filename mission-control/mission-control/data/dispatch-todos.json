@@ -211,8 +211,8 @@
     "id": "DSP-027",
     "area": "Invites/Onboarding",
     "title": "Email invite must send app link and auto-connect new signed-in user to manager chat",
-    "status": "To Do",
+    "status": "Done",
     "priority": "High",
-    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+    "statusReason": "Implemented invite acceptance on sign-in/sign-up via acceptPendingInvitesForUser (dispatch/services/dispatch.ts): links invited worker into team, marks invite accepted, and creates chatThreads doc for manager-worker auto-connect; dispatch typecheck passed."
   }
 ]

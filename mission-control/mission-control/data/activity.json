@@ -694,5 +694,21 @@
     "state": "working",
     "zone": "computer",
     "task": "Dispatch full-drain blocked DSP-026: unread badge parity requires persistent chat data model; marked Blocked with dependency note."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-027-20260309T222049Z",
+    "ts": "2026-03-09T22:20:49.443Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-full-drain claimed DSP-027 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-full-drain-dsp-027-20260309T222155Z",
+    "ts": "2026-03-09T22:21:55.148Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch full-drain completed DSP-027: added invite acceptance + manager chat auto-connect bootstrap on auth and marked Done."
   }
 ]

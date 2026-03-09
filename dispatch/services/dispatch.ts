@@ -1,5 +1,6 @@
 import {
   addDoc,
+  arrayUnion,
   collection,
   doc,
   documentId,
@@ -9,6 +10,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -148,6 +150,58 @@ async function sendInviteEmail(params: {
   if (!response.ok) {
     const raw = await response.text();
     throw new Error(raw || `Transport HTTP ${response.status}`);
+  }
+}
+
+export async function acceptPendingInvitesForUser(params: { userId: string; email: string }) {
+  const normalizedEmail = params.email.trim().toLowerCase();
+  if (!normalizedEmail) return;
+
+  const inviteStatuses = ['pending', 'sent', 'send_failed'] as const;
+
+  for (const status of inviteStatuses) {
+    const invitesSnap = await getDocs(
+      query(
+        collection(db, 'workerInvites'),
+        where('email', '==', normalizedEmail),
+        where('status', '==', status)
+      )
+    );
+
+    for (const inviteDoc of invitesSnap.docs) {
+      const invite = inviteDoc.data() as {
+        teamId?: string;
+        managerId?: string;
+      };
+
+      if (!invite.teamId || !invite.managerId) continue;
+
+      await updateDoc(doc(db, 'teams', invite.teamId), {
+        workerIds: arrayUnion(params.userId),
+      });
+
+      await updateDoc(inviteDoc.ref, {
+        workerId: params.userId,
+        status: 'accepted',
+        statusReason: 'Accepted automatically after worker sign-in.',
+        acceptedAt: serverTimestamp(),
+      });
+
+      const threadId = [invite.managerId, params.userId].sort().join('__');
+      await setDoc(
+        doc(db, 'chatThreads', threadId),
+        {
+          id: threadId,
+          managerId: invite.managerId,
+          workerId: params.userId,
+          teamId: invite.teamId,
+          participants: [invite.managerId, params.userId],
+          updatedAt: serverTimestamp(),
+          createdByInvite: true,
+        },
+        { merge: true }
+      );
+    }
   }
 }
 
