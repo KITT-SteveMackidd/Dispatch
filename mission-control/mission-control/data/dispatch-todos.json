@@ -203,9 +203,9 @@
     "id": "DSP-026",
     "area": "Notifications",
     "title": "Unread badges on Teams tab title and per-team cards for new chat messages",
-    "status": "To Do",
+    "status": "Blocked",
     "priority": "High",
-    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+    "statusReason": "Current dispatch app has no persisted chat-message store/thread service (messages are local component state), so unread badge counts cannot be computed reliably for Teams tab/per-team cards without first implementing backend chat persistence."
   },
   {
     "id": "DSP-027",
