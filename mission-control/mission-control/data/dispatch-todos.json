@@ -179,9 +179,9 @@
     "id": "DSP-023",
     "area": "Team",
     "title": "Parity pass: team tap routing for multi-member (member list + All) vs single-member direct chat",
-    "status": "To Do",
+    "status": "Done",
     "priority": "High",
-    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+    "statusReason": "Validated team tap routing in dispatch/app/(tabs)/teams.tsx: single-member opens direct chat and multi-member opens team member list with All option; dispatch typecheck passed."
   },
   {
     "id": "DSP-024",
