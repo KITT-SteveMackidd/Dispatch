@@ -662,5 +662,21 @@
     "state": "working",
     "zone": "computer",
     "task": "Dispatch full-drain completed DSP-024: confirmed manager + button drawer behavior for add-team/invite-worker parity and marked Done."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-025-20260309T222001Z",
+    "ts": "2026-03-09T22:20:01.404Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-full-drain claimed DSP-025 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-full-drain-dsp-025-20260309T222015Z",
+    "ts": "2026-03-09T22:20:15.083Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch full-drain completed DSP-025: validated chat layout/composer refinement parity and marked Done."
   }
 ]
