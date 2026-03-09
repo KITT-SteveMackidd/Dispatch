@@ -166,5 +166,53 @@
     "status": "In Progress",
     "priority": "High",
     "statusReason": "Claimed by automation: heartbeat-agent-1 at 2026-03-06T01:27:24.400Z"
+  },
+  {
+    "id": "DSP-022",
+    "area": "Events-Worker",
+    "title": "Parity pass: worker Events must list all assigned events with manager attribution + expandable task list",
+    "status": "Done",
+    "priority": "High",
+    "statusReason": "Validated worker Events parity in dispatch/app/(tabs)/index.tsx (manager attribution + expandable assigned task list) and typecheck passed via `npx tsc --noEmit`."
+  },
+  {
+    "id": "DSP-023",
+    "area": "Team",
+    "title": "Parity pass: team tap routing for multi-member (member list + All) vs single-member direct chat",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+  },
+  {
+    "id": "DSP-024",
+    "area": "Team-Manager",
+    "title": "Manager team + action opens drawer for add team / invite worker flows",
+    "status": "To Do",
+    "priority": "Medium",
+    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+  },
+  {
+    "id": "DSP-025",
+    "area": "Chat-UI",
+    "title": "Refinement pass: WhatsApp/Telegram chat layout and composer behavior",
+    "status": "To Do",
+    "priority": "Medium",
+    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+  },
+  {
+    "id": "DSP-026",
+    "area": "Notifications",
+    "title": "Unread badges on Teams tab title and per-team cards for new chat messages",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+  },
+  {
+    "id": "DSP-027",
+    "area": "Invites/Onboarding",
+    "title": "Email invite must send app link and auto-connect new signed-in user to manager chat",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
   }
 ]
