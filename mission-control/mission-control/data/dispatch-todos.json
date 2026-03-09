@@ -187,9 +187,9 @@
     "id": "DSP-024",
     "area": "Team-Manager",
     "title": "Manager team + action opens drawer for add team / invite worker flows",
-    "status": "To Do",
+    "status": "Done",
     "priority": "Medium",
-    "statusReason": "Added from latest Dispatch Bible update (2026-03-09)."
+    "statusReason": "Validated manager Team + action in dispatch/app/(tabs)/teams.tsx opens Team Actions drawer with Add Team and Invite Worker flows; dispatch typecheck passed."
   },
   {
     "id": "DSP-025",

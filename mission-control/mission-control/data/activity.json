@@ -646,5 +646,21 @@
     "state": "working",
     "zone": "computer",
     "task": "Dispatch full-drain completed DSP-023: verified team tap routing parity for single vs multi-member teams and marked Done."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-024-20260309T221943Z",
+    "ts": "2026-03-09T22:19:43.581Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-full-drain claimed DSP-024 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-full-drain-dsp-024-20260309T221955Z",
+    "ts": "2026-03-09T22:19:55.708Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch full-drain completed DSP-024: confirmed manager + button drawer behavior for add-team/invite-worker parity and marked Done."
   }
 ]
