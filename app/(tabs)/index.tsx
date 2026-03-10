@@ -48,6 +48,12 @@ type CreateEventRoleDraft = {
   assignedWorkerId: string | null;
 };
 
+type TemplateRoleDraft = {
+  id: string;
+  name: string;
+  tasks: TemplateTaskPreview[];
+};
+
 const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
   {
     id: 'street-team',
@@ -174,6 +180,7 @@ export default function EventsScreen() {
   const [createTemplateDrawerOpen, setCreateTemplateDrawerOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState('');
+  const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
   const [eventDateDraft, setEventDateDraft] = useState('');
@@ -303,9 +310,15 @@ export default function EventsScreen() {
     if (template) {
       setEditingTemplateId(template.id);
       setTemplateNameDraft(template.name);
+      setTemplateRolesDraft((template.roles || []).map((role, index) => ({
+        id: role.id || `role-${index + 1}`,
+        name: role.name || `Role ${index + 1}`,
+        tasks: role.tasks || [],
+      })));
     } else {
       setEditingTemplateId(null);
       setTemplateNameDraft('');
+      setTemplateRolesDraft([]);
     }
     setCreateTemplateDrawerOpen(true);
   };
@@ -314,6 +327,7 @@ export default function EventsScreen() {
     setCreateTemplateDrawerOpen(false);
     setEditingTemplateId(null);
     setTemplateNameDraft('');
+    setTemplateRolesDraft([]);
   };
 
   useEffect(() => {
@@ -336,8 +350,19 @@ export default function EventsScreen() {
     const name = templateNameDraft.trim();
     if (!name) return;
 
+    const sanitizedRoles = templateRolesDraft
+      .map((role, index) => ({
+        ...role,
+        name: role.name.trim() || `Role ${index + 1}`,
+      }))
+      .filter((role) => role.name.length > 0);
+
     if (editingTemplateId) {
-      setTemplateOptions((prev) => prev.map((template) => (template.id === editingTemplateId ? { ...template, name } : template)));
+      setTemplateOptions((prev) => prev.map((template) => (
+        template.id === editingTemplateId
+          ? { ...template, name, roles: sanitizedRoles }
+          : template
+      )));
       closeCreateTemplateDrawer();
       return;
     }
@@ -346,12 +371,31 @@ export default function EventsScreen() {
     const nextTemplate: EventTemplateOption = {
       id,
       name,
-      roles: [],
+      roles: sanitizedRoles,
     };
 
     setTemplateOptions((prev) => [nextTemplate, ...prev]);
     setSelectedTemplateId(id);
     closeCreateTemplateDrawer();
+  };
+
+  const addTemplateRoleDraft = () => {
+    setTemplateRolesDraft((prev) => [
+      ...prev,
+      {
+        id: `role-${Date.now()}-${prev.length + 1}`,
+        name: `Role ${prev.length + 1}`,
+        tasks: [],
+      },
+    ]);
+  };
+
+  const updateTemplateRoleDraftName = (roleId: string, name: string) => {
+    setTemplateRolesDraft((prev) => prev.map((role) => (role.id === roleId ? { ...role, name } : role)));
+  };
+
+  const removeTemplateRoleDraft = (roleId: string) => {
+    setTemplateRolesDraft((prev) => prev.filter((role) => role.id !== roleId));
   };
 
   const deleteTemplate = (template: EventTemplateOption) => {
@@ -927,6 +971,41 @@ export default function EventsScreen() {
                 placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
+            </View>
+
+            <View style={styles.formField}>
+              <View style={styles.templateHeaderRow}>
+                <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Roles</Text>
+                <Pressable
+                  accessibilityLabel="Add role to template"
+                  style={[styles.templateAddButton, isDarkMode ? styles.templateAddButtonDark : styles.templateAddButtonLight]}
+                  onPress={addTemplateRoleDraft}>
+                  <Text style={[styles.templateAddButtonText, isDarkMode ? styles.templateAddButtonTextDark : styles.templateAddButtonTextLight]}>+ Add Role</Text>
+                </Pressable>
+              </View>
+              <View style={[styles.rolePreviewContainer, isDarkMode ? styles.rolePreviewContainerDark : styles.rolePreviewContainerLight]}>
+                {templateRolesDraft.length ? templateRolesDraft.map((role, index) => (
+                  <View key={role.id} style={styles.rolePreviewRow}>
+                    <View style={styles.rolePreviewLeft}>
+                      <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>Role {index + 1}</Text>
+                      <TextInput
+                        value={role.name}
+                        onChangeText={(value) => updateTemplateRoleDraftName(role.id, value)}
+                        placeholder={`Role ${index + 1}`}
+                        placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                        style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+                      />
+                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>{role.tasks.length} tasks configured</Text>
+                    </View>
+                    <Pressable
+                      accessibilityLabel={`Delete role ${role.name || index + 1}`}
+                      style={[styles.templateActionButton, isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight]}
+                      onPress={() => removeTemplateRoleDraft(role.id)}>
+                      <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
+                    </Pressable>
+                  </View>
+                )) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No roles yet. Add at least one role for this template.</Text>}
+              </View>
             </View>
 
             <Pressable
