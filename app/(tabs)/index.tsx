@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
@@ -842,17 +842,25 @@ export default function EventsScreen() {
                 <View style={styles.pendingNotificationActions}>
                   <Pressable
                     disabled={busy}
-                    style={[styles.drawerButton, isDarkMode ? styles.drawerButtonDark : styles.drawerButtonLight]}
+                    style={[
+                      styles.pendingActionButton,
+                      isDarkMode ? styles.pendingActionDeclineDark : styles.pendingActionDeclineLight,
+                      busy && styles.drawerCloseDisabled,
+                    ]}
                     onPress={() => handleRoleNotificationResponse(notification.id, 'decline')}>
-                    <Text style={[styles.drawerButtonText, isDarkMode ? styles.drawerButtonTextDark : styles.drawerButtonTextLight]}>
+                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionDeclineTextDark : styles.pendingActionDeclineTextLight]}>
                       {busy ? '…' : 'Decline'}
                     </Text>
                   </Pressable>
                   <Pressable
                     disabled={busy}
-                    style={styles.drawerClose}
+                    style={[
+                      styles.pendingActionButton,
+                      isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight,
+                      busy && styles.drawerCloseDisabled,
+                    ]}
                     onPress={() => handleRoleNotificationResponse(notification.id, 'accept')}>
-                    <Text style={styles.drawerCloseText}>{busy ? '…' : 'Accept'}</Text>
+                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight]}>{busy ? '…' : 'Accept'}</Text>
                   </Pressable>
                 </View>
               </View>
@@ -981,11 +989,20 @@ export default function EventsScreen() {
 
       <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateEventDrawer}>
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventDrawer}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+          <KeyboardAvoidingView
+            style={styles.keyboardAvoidingFill}
+            behavior={Platform.select({ ios: 'padding', android: 'height' })}
+            keyboardVerticalOffset={Platform.select({ ios: 20, android: 0 })}>
+            <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={Keyboard.dismiss}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Event</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Choose a template to start your event setup.</Text>
 
-            <ScrollView style={styles.createEventScroll} contentContainerStyle={styles.createEventScrollContent} showsVerticalScrollIndicator>
+            <ScrollView
+              style={styles.createEventScroll}
+              contentContainerStyle={styles.createEventScrollContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator>
             <View style={styles.templateSection}>
               <View style={styles.templateHeaderRow}>
                 <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event template</Text>
@@ -1091,6 +1108,8 @@ export default function EventsScreen() {
                 autoCapitalize="none"
                 placeholder="2026-06-15"
                 placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                returnKeyType="next"
+                blurOnSubmit={false}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
@@ -1103,6 +1122,8 @@ export default function EventsScreen() {
                 autoCapitalize="none"
                 placeholder="14:30"
                 placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                returnKeyType="next"
+                blurOnSubmit={false}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
@@ -1114,6 +1135,8 @@ export default function EventsScreen() {
                 onChangeText={setEventLocationDraft}
                 placeholder="Downtown"
                 placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                returnKeyType="next"
+                blurOnSubmit={false}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
@@ -1126,9 +1149,18 @@ export default function EventsScreen() {
                 placeholder="Describe this event for workers"
                 placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
                 multiline
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
+                blurOnSubmit
                 style={[styles.templateTextArea, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
+
+            <Pressable
+              style={[styles.drawerKeyboardDismiss, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]}
+              onPress={Keyboard.dismiss}>
+              <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Done typing</Text>
+            </Pressable>
 
             <Pressable
               style={[styles.drawerClose, !canCreateEventNow && styles.drawerCloseDisabled]}
@@ -1141,6 +1173,7 @@ export default function EventsScreen() {
             </Pressable>
             </ScrollView>
           </Pressable>
+          </KeyboardAvoidingView>
         </Pressable>
       </Modal>
 
@@ -1209,10 +1242,20 @@ export default function EventsScreen() {
 
       <Modal visible={createTemplateDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateTemplateDrawer}>
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateTemplateDrawer}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+          <KeyboardAvoidingView
+            style={styles.keyboardAvoidingFill}
+            behavior={Platform.select({ ios: 'padding', android: 'height' })}
+            keyboardVerticalOffset={Platform.select({ ios: 20, android: 0 })}>
+            <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={Keyboard.dismiss}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>{isEditingTemplate ? 'Edit Template' : 'Create Template'}</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>{isEditingTemplate ? 'Update this template. Changes are saved permanently.' : 'Add a template you can reuse while creating events.'}</Text>
 
+            <ScrollView
+              style={styles.createEventScroll}
+              contentContainerStyle={styles.createEventScrollContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator>
             <View style={styles.formField}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Template name</Text>
               <TextInput
@@ -1233,6 +1276,9 @@ export default function EventsScreen() {
                 autoCapitalize="none"
                 placeholder="14:30"
                 placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
+                blurOnSubmit
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
@@ -1314,6 +1360,9 @@ export default function EventsScreen() {
                           value={`${task.expectedOffsetMinutes}`}
                           onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: Number.parseInt(value || '0', 10) || 0 })}
                           keyboardType="numeric"
+                          returnKeyType="done"
+                          onSubmitEditing={Keyboard.dismiss}
+                          blurOnSubmit
                           placeholder="Minutes from event start"
                           placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
                           style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
@@ -1334,6 +1383,12 @@ export default function EventsScreen() {
             </View>
 
             <Pressable
+              style={[styles.drawerKeyboardDismiss, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]}
+              onPress={Keyboard.dismiss}>
+              <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Done typing</Text>
+            </Pressable>
+
+            <Pressable
               style={[styles.drawerClose, (!templateNameDraft.trim().length) && styles.drawerCloseDisabled]}
               onPress={saveTemplate}
               disabled={!templateNameDraft.trim().length}>
@@ -1342,7 +1397,9 @@ export default function EventsScreen() {
             <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateTemplateDrawer}>
               <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
             </Pressable>
+            </ScrollView>
           </Pressable>
+          </KeyboardAvoidingView>
         </Pressable>
       </Modal>
     </View>
@@ -1378,6 +1435,16 @@ const styles = StyleSheet.create({
   pendingNotificationRow: { gap: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#334155' },
   pendingNotificationText: { fontSize: 12 },
   pendingNotificationActions: { flexDirection: 'row', gap: 8 },
+  pendingActionButton: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
+  pendingActionButtonText: { fontSize: 13, fontWeight: '700' },
+  pendingActionDeclineLight: { borderColor: '#fecaca', backgroundColor: '#fff1f2' },
+  pendingActionDeclineDark: { borderColor: '#7f1d1d', backgroundColor: '#3f0b0b' },
+  pendingActionDeclineTextLight: { color: '#b91c1c' },
+  pendingActionDeclineTextDark: { color: '#fecaca' },
+  pendingActionAcceptLight: { borderColor: '#93c5fd', backgroundColor: '#dbeafe' },
+  pendingActionAcceptDark: { borderColor: '#1d4ed8', backgroundColor: '#1e3a8a' },
+  pendingActionAcceptTextLight: { color: '#1d4ed8' },
+  pendingActionAcceptTextDark: { color: '#dbeafe' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
   cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
@@ -1467,6 +1534,7 @@ const styles = StyleSheet.create({
   templateTaskRowDark: { borderColor: '#334155', backgroundColor: '#111827' },
   templateTaskLabel: { fontSize: 12, fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
+  keyboardAvoidingFill: { width: '100%' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
   createEventScroll: { marginTop: 8 },
   createEventScrollContent: { paddingBottom: 16 },
@@ -1534,6 +1602,7 @@ const styles = StyleSheet.create({
   drawerClose: { marginTop: 12, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerCloseDisabled: { opacity: 0.45 },
   drawerCloseText: { color: '#fff', fontWeight: '700' },
+  drawerKeyboardDismiss: { marginTop: 12, borderWidth: 1, borderRadius: 10, alignItems: 'center', paddingVertical: 10 },
   drawerSecondaryButton: { marginTop: 10, borderWidth: 1, borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerSecondaryButtonLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
   drawerSecondaryButtonDark: { borderColor: '#334155', backgroundColor: '#111827' },
