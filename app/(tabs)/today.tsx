@@ -52,11 +52,17 @@ export default function TodayScreen() {
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (!profile) return;
     return profile.role === 'manager' ? watchManagerEvents(profile.uid, setEvents) : watchWorkerEvents(profile.uid, setEvents);
   }, [profile]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!profile) {
@@ -120,10 +126,19 @@ export default function TodayScreen() {
     };
   }, [events, profile]);
 
+  const occursToday = (event: DispatchEvent, timestamp: number) => {
+    const now = new Date(timestamp);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - 1;
+    const startsAtMs = +new Date(event.startsAt);
+    const endsAtMs = event.endsAt ? +new Date(event.endsAt) : startsAtMs;
+
+    return startsAtMs <= dayEnd && endsAtMs >= dayStart;
+  };
+
   const today = useMemo(() => {
-    const now = new Date();
-    return events.filter((e) => new Date(e.startsAt).toDateString() === now.toDateString());
-  }, [events]);
+    return events.filter((event) => occursToday(event, nowMs));
+  }, [events, nowMs]);
 
   const getProgress = (event: DispatchEvent): TaskProgress => {
     const tasks = event.roles.flatMap((r) => r.tasks);
@@ -168,19 +183,21 @@ export default function TodayScreen() {
     })[0];
   };
 
-  const formatTimeRemaining = (dueAt?: string) => {
+  const formatCountdownClock = (dueAt?: string) => {
     if (!dueAt) return null;
 
-    const msRemaining = +new Date(dueAt) - Date.now();
-    if (msRemaining <= 0) return 'Due now';
+    const msRemaining = +new Date(dueAt) - nowMs;
+    const totalSeconds = Math.floor(Math.abs(msRemaining) / 1000);
+    const hours = Math.floor(totalSeconds / 3600)
+      .toString()
+      .padStart(2, '0');
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+      .toString()
+      .padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
 
-    const totalMinutes = Math.ceil(msRemaining / 60000);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-
-    if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m remaining`;
-    if (hours > 0) return `${hours}h remaining`;
-    return `${minutes}m remaining`;
+    if (msRemaining <= 0) return `${hours}:${minutes}:${seconds} overdue`;
+    return `${hours}:${minutes}:${seconds} remaining`;
   };
 
   const getEventChecklist = (event: DispatchEvent): WorkerChecklistItem[] => {
@@ -267,7 +284,7 @@ export default function TodayScreen() {
           const workers = isManager ? getWorkerSummaries(item) : [];
           const managerInfo = managerInfoById[item.managerId];
           const nextTask = profile?.role === 'worker' ? workerNextTask(item, profile.uid) : null;
-          const timeRemaining = formatTimeRemaining(nextTask?.dueAt);
+          const countdownClock = formatCountdownClock(nextTask?.dueAt);
 
           return (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
@@ -296,7 +313,7 @@ export default function TodayScreen() {
                   <Text style={styles.meta}>Assigned by {managerInfo?.displayName || 'Manager'}</Text>
                   <Text style={styles.meta}>Manager phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
                   <Text style={styles.nextTaskLabel}>Next task: {nextTask?.name || 'All assigned tasks complete'}</Text>
-                  {timeRemaining && <Text style={styles.timeRemaining}>{timeRemaining}</Text>}
+                  {countdownClock && <Text style={styles.timeRemaining}>Countdown: {countdownClock}</Text>}
                 </>
               )}
 
@@ -308,7 +325,7 @@ export default function TodayScreen() {
                       const workerInfo = userInfoById[worker.workerId];
                       const workerProgress = getWorkerProgress(item, worker.workerId);
                       const workerNext = workerNextTask(item, worker.workerId);
-                      const workerTimeRemaining = formatTimeRemaining(workerNext?.dueAt);
+                      const workerCountdownClock = formatCountdownClock(workerNext?.dueAt);
 
                       return (
                         <View key={worker.workerId} style={styles.workerCard}>
@@ -347,7 +364,7 @@ export default function TodayScreen() {
                             {workerNext ? (
                               <>
                                 <Text style={styles.workerMeta}>Next task: {workerNext.name}</Text>
-                                {workerTimeRemaining ? <Text style={styles.timeRemaining}>{workerTimeRemaining}</Text> : null}
+                                {workerCountdownClock ? <Text style={styles.timeRemaining}>Countdown: {workerCountdownClock}</Text> : null}
                               </>
                             ) : (
                               <Text style={styles.workerMeta}>Next task: All assigned tasks complete</Text>
