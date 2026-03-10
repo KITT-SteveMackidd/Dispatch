@@ -219,17 +219,17 @@
     "id": "DSP-028",
     "area": "Events-Templates",
     "title": "Create Event: template dropdown selector",
-    "status": "To Do",
+    "status": "Done",
     "priority": "High",
-    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+    "statusReason": "Implemented Create Event template selector in drawer with selectable template list/cards and selected-state feedback (dispatch/app/(tabs)/index.tsx). Validated with dispatch npx tsc --noEmit."
   },
   {
     "id": "DSP-029",
     "area": "Events-Templates",
     "title": "Create Event: + button to create a new template",
-    "status": "To Do",
+    "status": "In Progress",
     "priority": "High",
-    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+    "statusReason": "Claimed by automation: dispatch-heartbeat-agent-1 at 2026-03-10T03:17:55.736Z"
   },
   {
     "id": "DSP-030",

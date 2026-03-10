@@ -766,5 +766,29 @@
     "state": "working",
     "zone": "computer",
     "task": "Revalidated reopened DSP-020 and DSP-025 with code-level fixes (invite send path + clearer drawer feedback + chat composer reliability), updated todo reasons, and reran dispatch typecheck."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-028-20260310T031753Z",
+    "ts": "2026-03-10T03:17:53.615Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-heartbeat-agent-2 claimed DSP-028 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-029-20260310T031755Z",
+    "ts": "2026-03-10T03:17:55.736Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-heartbeat-agent-1 claimed DSP-029 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-heartbeat-agent-2-20260310T032034409Z",
+    "ts": "2026-03-10T03:20:34.409Z",
+    "agent": "dispatch-heartbeat-agent-2",
+    "state": "working",
+    "zone": "computer",
+    "task": "Claimed DSP-028 and implemented Create Event template dropdown/selector UI in dispatch/app/(tabs)/index.tsx; validated with npx tsc --noEmit."
   }
 ]

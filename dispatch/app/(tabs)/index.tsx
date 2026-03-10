@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSession } from '@/context/session';
 import { loadUserProfilesByIds, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
@@ -20,6 +20,20 @@ const INITIAL_DRAWER: DrawerState = {
   roleId: null,
 };
 
+type EventTemplateOption = {
+  id: string;
+  name: string;
+  roleCount: number;
+  taskCount: number;
+  defaultLocation?: string;
+};
+
+const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
+  { id: 'street-team', name: 'Street Team Activation', roleCount: 3, taskCount: 9, defaultLocation: 'Downtown' },
+  { id: 'mall-pop-up', name: 'Mall Pop-Up', roleCount: 2, taskCount: 6, defaultLocation: 'City Mall' },
+  { id: 'festival-booth', name: 'Festival Booth', roleCount: 4, taskCount: 12, defaultLocation: 'Festival Grounds' },
+];
+
 export default function EventsScreen() {
   const { profile } = useSession();
   const { resolvedThemeMode } = useThemeMode();
@@ -32,6 +46,10 @@ export default function EventsScreen() {
   const [replaceDrawer, setReplaceDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [createEventDrawerOpen, setCreateEventDrawerOpen] = useState(false);
+  const [createTemplateDrawerOpen, setCreateTemplateDrawerOpen] = useState(false);
+  const [templateNameDraft, setTemplateNameDraft] = useState('');
+  const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
   const canCreateEvent = profile?.role === 'manager';
 
   useEffect(() => {
@@ -122,6 +140,33 @@ export default function EventsScreen() {
 
   const closeCreateEventDrawer = () => {
     setCreateEventDrawerOpen(false);
+  };
+
+  const openCreateTemplateDrawer = () => {
+    setTemplateNameDraft('');
+    setCreateTemplateDrawerOpen(true);
+  };
+
+  const closeCreateTemplateDrawer = () => {
+    setCreateTemplateDrawerOpen(false);
+    setTemplateNameDraft('');
+  };
+
+  const createTemplate = () => {
+    const name = templateNameDraft.trim();
+    if (!name) return;
+
+    const id = `custom-${Date.now()}`;
+    const nextTemplate: EventTemplateOption = {
+      id,
+      name,
+      roleCount: 0,
+      taskCount: 0,
+    };
+
+    setTemplateOptions((prev) => [nextTemplate, ...prev]);
+    setSelectedTemplateId(id);
+    closeCreateTemplateDrawer();
   };
 
   const upcoming = useMemo(
@@ -241,6 +286,7 @@ export default function EventsScreen() {
 
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
+  const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
 
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
@@ -346,7 +392,45 @@ export default function EventsScreen() {
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventDrawer}>
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Event</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Start a new event dispatch.</Text>
+            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Choose a template to start your event setup.</Text>
+
+            <View style={styles.templateSection}>
+              <View style={styles.templateHeaderRow}>
+                <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event template</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Create new template"
+                  style={[styles.templateAddButton, isDarkMode ? styles.templateAddButtonDark : styles.templateAddButtonLight]}
+                  onPress={openCreateTemplateDrawer}>
+                  <Text style={[styles.templateAddButtonText, isDarkMode ? styles.templateAddButtonTextDark : styles.templateAddButtonTextLight]}>+ New Template</Text>
+                </Pressable>
+              </View>
+              {templateOptions.map((template) => {
+                const selected = template.id === selectedTemplate?.id;
+                return (
+                  <Pressable
+                    key={template.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${template.name} template`}
+                    style={[
+                      styles.templateOption,
+                      isDarkMode ? styles.templateOptionDark : styles.templateOptionLight,
+                      selected && (isDarkMode ? styles.templateOptionSelectedDark : styles.templateOptionSelectedLight),
+                    ]}
+                    onPress={() => setSelectedTemplateId(template.id)}>
+                    <View style={styles.templateOptionHeader}>
+                      <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>{template.name}</Text>
+                      <Text style={[styles.templateBadge, selected && styles.templateBadgeSelected]}>{selected ? 'Selected' : 'Select'}</Text>
+                    </View>
+                    <Text style={[styles.templateMeta, isDarkMode ? styles.templateMetaDark : styles.templateMetaLight]}>
+                      {template.roleCount} roles · {template.taskCount} tasks
+                      {template.defaultLocation ? ` · ${template.defaultLocation}` : ''}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
             <Pressable style={styles.drawerClose} onPress={closeCreateEventDrawer}>
               <Text style={styles.drawerCloseText}>Close</Text>
             </Pressable>
@@ -454,6 +538,24 @@ const styles = StyleSheet.create({
   drawerMeta: { marginTop: 4, fontSize: 12 },
   drawerMetaLight: { color: '#64748b' },
   drawerMetaDark: { color: '#94a3b8' },
+  templateSection: { marginTop: 14, gap: 8 },
+  templateLabel: { fontSize: 13, fontWeight: '700' },
+  templateLabelLight: { color: '#334155' },
+  templateLabelDark: { color: '#cbd5e1' },
+  templateOption: { borderRadius: 10, borderWidth: 1, padding: 10 },
+  templateOptionLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  templateOptionDark: { borderColor: '#334155', backgroundColor: '#111827' },
+  templateOptionSelectedLight: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
+  templateOptionSelectedDark: { borderColor: '#60a5fa', backgroundColor: '#1e3a8a' },
+  templateOptionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  templateName: { fontWeight: '700', flex: 1 },
+  templateNameLight: { color: '#0f172a' },
+  templateNameDark: { color: '#e2e8f0' },
+  templateBadge: { fontSize: 11, fontWeight: '700', color: '#64748b' },
+  templateBadgeSelected: { color: '#bfdbfe' },
+  templateMeta: { marginTop: 4, fontSize: 12 },
+  templateMetaLight: { color: '#475569' },
+  templateMetaDark: { color: '#cbd5e1' },
   drawerClose: { marginTop: 12, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerCloseText: { color: '#fff', fontWeight: '700' },
 });
