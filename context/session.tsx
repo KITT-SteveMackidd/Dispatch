@@ -103,6 +103,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       { merge: true }
     );
 
+    if (user.email) {
+      await acceptPendingInvitesForUser({ userId: user.uid, email: user.email });
+    }
+
     setProfile({ uid: user.uid, displayName: params.displayName.trim(), role: params.role });
     setNeedsProfile(false);
   };
