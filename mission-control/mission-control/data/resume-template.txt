@@ -1,0 +1,132 @@
+Stephen Mackidd
+Calgary, AB | 403-829-7939 | stevemackidd@gmail.com
+EXPERTISE
+Highly motivated and focused Software Developer looking to support a team for the purpose of delivering successful software applications.
+20+ years experience working with and leading high performing teams in the Oil & Gas Industry as a Geophysical Technologist. Transferring careers to the Software Development space where my skills working with algorithms and big databases can be utilized more effectively.
+Passionate about building web and mobile applications that serve a purpose. I have built several applications on my own time. Most notably built a Freelance Management application for mobile devices that allows a Freelance Manager to book a team of freelancers and facilitates the monitoring of tasks.
+TECHNICAL COMPETENCY
+Operating Systems: Windows 20+yrs, Linux 10+yrs, OS X 15+yrs
+Databases: MS SQL SMS 5yrs, MongoDB 2yrs, Google Firestore 1yr
+Hardware: Arduino 1yr
+Software: Visual Studio Code 5yrs, Visual Studio 5yrs, Android Studio 5yrs, Azure DevOps 3yrs, AWS CI/CD 1yr, Jenkins 1yr, Figma 1yr, Jira 1yr, M1 ERP 1yr
+Languages: C# .NET 5yrs, HTML 5yrs,  CSS 5yrs, JavaScript 5yrs,  Java 2yrs, Python 2yrs, PHP 2yr, SQL 5yrs
+Frameworks: React 5yrs, React Native 5yrs, Unreal Engine 1yr
+PROFESSIONAL EXPERIENCE
+Dynamysk/AllNorth, Calgary, AB (remote), September 2022 to February 2026
+A multidisciplinary engineering, construction services, project delivery and digital solutions provider.
+Software Developer
+Responsibilities/Deliverables:
+General
+Designed, developed, and maintained a full-stack web application supporting asset and operations management for Oil & Gas facilities, including Construction, Completions, Commissioning, Maintenance & Operations, and Inspections & Compliance workflows.
+Built and enhanced a companion mobile application enabling field users to download, complete, and submit operational checklists in offline and online environments.
+Designed, implemented, and maintained RESTful APIs facilitating secure data synchronization between mobile and web platforms.
+Developed and optimized complex SQL queries, stored procedures, and database schemas to support scalable backend operations and reporting requirements.
+Collaborated within an Agile development environment, participating in sprint planning, backlog grooming, and iterative delivery using Azure DevOps.
+Software Developer and DevOps Engineer
+Engineered and supported applications built on C# ASP.NET and ASP.NET MVC, implementing modular architecture and reusable components using Telerik UI.
+Developed and maintained backend services in C#, enforcing structured exception handling, logging, and secure authentication patterns.
+Managed and maintained MS SQL Server environments, including indexing strategies, query performance tuning, backup management, and data integrity controls.
+Built and deployed a cross-platform mobile solution using React Native (Expo), managing build configurations, environment variables, and release distribution.
+Integrated external services, including the YouTube Data API, implementing secure API key management and dynamic content embedding within the application.
+Administered and maintained cloud infrastructure in Microsoft Azure, including application hosting, configuration management, SSL certificate management, monitoring, and uptime optimization.
+Supported deployment pipelines and environment management using Azure DevOps, Team City and Octopus, contributing to release coordination, version control strategy, and production stability.
+Performed ongoing system monitoring, issue triage, and incident resolution to ensure application reliability, security, and performance.
+Accomplishments:
+Designed and implemented a modular, object-oriented bulk data import framework enabling users to upload Excel spreadsheets directly into the application database. Designed the solution to support multiple application views, each with distinct schemas, while maintaining consistent import behavior across all modules.
+Engineered a dynamic column-mapping interface allowing users to map spreadsheet headers to database fields prior to import. Implemented intelligent auto-matching logic for identical column names and real-time UI updates to prevent duplicate mappings, significantly improving usability and reducing manual effort during large data imports.
+Enhanced bulk data processing performance by optimizing database triggers and transactional workflows, substantially reducing execution time for high-volume insert, update, and delete operations involving thousands of records.
+Canadian View Corp, Calgary, AB, September 2021 to September 2022
+Canada’s Projection & Audio Visual Specialists. CVC handles corporate audio/visual production for seminars and team meetings. CVC is also a leader in livestream event broadcasts.
+Freelance Video Livestream Technician
+Responsibilities/Deliverables:
+General
+Livestream events using a one or two camera shoot with remote control and switching on a Roland video switcher.
+Set up wireless microphones.
+Livestream control on the laptop with Livestream Studio 6
+Livestream events with iPhone connected through USB to a mixer controlling wireless microphones. The iPhone is steadied with a Zhiyun Crane M2 gimble.
+Worked with the owner on the side to build a mobile application to handle the management of Freelancers in his network. Built with React Native and Google Firestore.
+Software Developer
+Designed and developed a cross-platform Freelance Management mobile application from concept to deployment based on owner requirements.
+Translated business specifications into wireframes and high-fidelity UI designs using Figma, defining user flows and overall application architecture prior to development
+Implemented the mobile application using React Native (JavaScript, CSS) to support both iOS and Android platforms from a unified codebase.
+Designed and integrated backend services using Google Cloud Platform, leveraging Firestore for scalable NoSQL data storage and Firebase Cloud Functions to handle business logic, database operations, and server-side automation.
+Implemented secure data handling and structured client–server communication to ensure reliable application performance.
+Auxiun, Montreal, QC (remote), January 2021 to April 2021
+A start-up working to revolutionise in-game transactions focusing on in-game economics and media ownership through blockchain technology.
+Software Developer Intern
+Responsibilities/Deliverables:
+General
+Led a cross-functional team of six developers in the design and delivery of a blockchain-based web application enabling NFT tokenization of video game assets.
+Served as Scrum Master, facilitating Agile ceremonies, sprint planning, backlog prioritization, and task allocation using Jira.
+Designed and developed the complete front-end application, including user registration, authentication flows, and integration with backend REST services.
+Contributed to the design and implementation of REST APIs enabling secure communication between the application and blockchain services.
+Rapidly acquired proficiency in emerging blockchain technologies, including Solidity, smart contract architecture, Web3.js, and IPFS, to support system integration and team collaboration.
+Software Developer
+Built a responsive single-page application using JavaScript and React.js, leveraging Material UI for consistent, scalable component design.
+Developed backend RESTful services using Node.js, integrating with MongoDB for persistent data storage.
+Implemented secure authentication and authorization workflows using JSON Web Tokens (JWT).
+Integrated blockchain interaction logic via Web3.js to facilitate NFT minting and asset tokenization workflows.
+Quality Assurance
+Designed and implemented automated unit tests using Jest to validate user registration workflows and NFT token generation processes.
+Participated in end-to-end validation and defect resolution to ensure stable release delivery.
+Accomplishments:
+Successfully delivered a fully functional NFT tokenization platform within four months, transitioning the team from no prior blockchain experience to a production-ready solution.
+Developed cross-domain expertise in blockchain architecture to effectively support integration efforts between the web application and Ethereum smart contracts.
+Leveraged prior self-directed experience with the MERN stack to accelerate development timelines and reduce implementation risk during project execution.
+Absolute Imaging, Calgary, AB, April 2018 to March 2019
+A global provider of subsurface seismic imaging.
+Geophysical Technologist
+Responsibilities/Deliverables:
+General
+Loading seismic datasets, running and analysing database queries and plotting maps.
+Interactive seismic data analysis with an emphasis on improving speed and accuracy
+Demonstrated experience and expertise with the ProMax software suite and provided assistance to peers when needed.
+Accomplishments:
+Headed up the offshore front-end seismic data division, filling a need in the front-end team, and developed new tools and insights to handle the challenges of offshore seismic geometry.
+Talnea Technologies, Calgary, AB, January 2017 to March 2018
+A custom precision machine shop specializing in machined components for manufacturing companies around the world.
+Office Manager
+Responsibilities/Deliverables:
+General
+Purchasing, invoicing, accounts payable, accounts receivable, filing and payroll with M1 Enterprise Resource Planning Software
+Wrote SQL queries to manage and lookup inventory and clients in the database.
+Sensor Geophysical, Calgary, AB, 2009 to 2016
+A leading Seismic Data Processing company
+Geophysical Technologist
+Responsibilities/Deliverables:
+General
+Loading geological and geophysical datasets, geometry building and database management.
+Interactive First-Break Picking analysis
+Accomplishments:
+Took the initiative to improve efficiency on larger projects by re-sorting the data in a more optimal manner. The efficiency of the analysis was greatly improved with testing of different strategies on a smaller dataset upfront.
+Promoted to a junior Processor role, providing technical support to the processing teams in all stages of the processing flow, including interactive velocity analysis and database management.
+Geo-X Systems, Calgary, AB, 1996 to 2007
+Provides 2D, 3D and 4D seismic data processing and analysis
+Computer Operator / Geophysical Technologist
+Responsibilities/Deliverables:
+General
+Organized the distribution of computer workload across the network.
+Mounted 3480 and 9-track reels
+Managed plotters, including dark room maintenance for plotting on film.
+Accomplishments:
+Promoted to the front-end dataset loading and geometry team, providing support to the processors.
+EDUCATION AND CERITIFICATIONS
+Software Development Diploma, Bow Valley College, Calgary, AB, 2021
+Skills: HTML / CSS / JavaScript with a focus on React.JS framework, Arduino C, SQL Database Management, Project Management with focus on AGILE Scrum, C# .NET, Java with a focus on algorithms and object-oriented programming, Unreal Engine. 3.85 GPA
+PERSONAL PROJECTS
+Dispatch Freelance Manager
+Built a mobile application that connects managers to freelancers or volunteers, coordinates events and monitors tasks in real time.
+The mobile application was built in EXPO Go React Native.
+Technologies include JavaScript and CSS with the React.JS framework. Google Firebase and Firestore for authentication and database management.
+Link to GitHub: https://github.com/smackidd/Dispatch
+Spotify Playlist Generator
+Built a playlist generator using the Spotify API.
+The web application allows the user to choose an activity, mood, genre and other factors and then curate a list of songs based on the criteria selected. The user can save the final playlist to their Spotify account. The user can also click on a song in the web app and it will play on whatever device is active in the Spotify account (phone, computer, google hub, etc).
+Technologies include JavaScript and CSS with the React.JS framework. Node.JS and MongDB serve the backend.
+The application was deployed on AWS with CI/CD using Jenkins and Docker.
+Link to GitHub: https://github.com/smackidd/SpotOn
+Crazy 8’s
+A desktop single-player game of crazy 8’s.
+Built in C# and WPF.
+I was personally responsible for the Computer AI which chooses a random card based on all possible playable cards in their hand.
+Link to GitHub: https://github.com/bradkillins/CrazyEights
