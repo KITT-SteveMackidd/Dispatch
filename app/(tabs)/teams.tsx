@@ -136,6 +136,7 @@ export default function TeamsScreen() {
         params: {
           workerId: memberId,
           workerLabel: memberInfoById[memberId]?.displayName || memberId,
+          teamId: team.id,
           teamName: team.name,
         },
       });
@@ -233,6 +234,11 @@ export default function TeamsScreen() {
               </View>
               <View style={styles.rightSide}>
                 <Text style={[styles.status, isDarkMode ? styles.statusDark : styles.statusLight]}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
+                {unreadCount > 0 ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                  </View>
+                ) : null}
                 <Text style={[styles.hint, isDarkMode ? styles.hintDark : styles.hintLight]}>{otherCount > 1 ? 'Choose member' : otherCount === 1 ? 'Open chat' : 'No members'}</Text>
               </View>
             </Pressable>
@@ -334,6 +340,8 @@ const styles = StyleSheet.create({
   hint: { fontSize: 11, fontWeight: '600', marginTop: 4 },
   hintLight: { color: '#2563eb' },
   hintDark: { color: '#93c5fd' },
+  unreadBadge: { marginTop: 6, backgroundColor: '#dc2626', borderRadius: 999, minWidth: 20, paddingHorizontal: 6, height: 20, alignItems: 'center', justifyContent: 'center' },
+  unreadBadgeText: { color: '#fff', fontWeight: '700', fontSize: 11 },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   addText: { color: 'white', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },

@@ -55,6 +55,7 @@ export default function TeamMemberListScreen() {
       params: {
         workerId,
         workerLabel,
+        teamId,
         teamName,
         teamMemberIds: memberIds.join(','),
         isTeamAll: isTeamAll ? '1' : '0',

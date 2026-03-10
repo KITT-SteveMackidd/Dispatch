@@ -1,16 +1,19 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { buildChatThreadId, markTeamChatRead, sendChatMessage, watchChatMessages } from '@/services/dispatch';
 
 type ChatMessage = {
   id: string;
-  from: 'self' | 'other';
+  senderId: string;
   text: string;
   at: string;
 };
 
 export default function WorkerChatScreen() {
+  const { profile } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [draft, setDraft] = useState('');
@@ -19,6 +22,7 @@ export default function WorkerChatScreen() {
     workerId?: string;
     workerLabel?: string;
     eventName?: string;
+    teamId?: string;
     teamName?: string;
     teamMemberIds?: string;
     isTeamAll?: string;
@@ -27,27 +31,55 @@ export default function WorkerChatScreen() {
 
   const workerId = params.workerId ?? 'worker';
   const workerLabel = params.workerLabel ?? workerId;
+  const teamId = params.teamId;
   const isTeamBroadcast = params.isTeamAll === '1' || workerId.startsWith('all:') || workerId.startsWith('team:') || workerLabel.toLowerCase() === 'all';
-  const broadcastCount = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean).length;
+  const memberIds = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean);
+  const broadcastCount = memberIds.length;
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'm1',
-      from: 'other',
-      text: isTeamBroadcast ? 'Ready for tonight. Send one update here and I’ll share with everyone.' : 'On-site and ready. Any priorities before start?',
-      at: '09:14',
-    },
-    {
-      id: 'm2',
-      from: 'self',
-      text: isTeamBroadcast ? 'Perfect. I’ll post updates here for the whole team.' : 'Yes — check booth setup first, then ping me with photos.',
-      at: '09:16',
-    },
-  ]);
+  const threadId = useMemo(() => {
+    if (!profile) return null;
+    return buildChatThreadId({
+      teamId,
+      selfId: profile.uid,
+      otherUserId: isTeamBroadcast ? undefined : workerId,
+      isTeamBroadcast,
+    });
+  }, [isTeamBroadcast, profile, teamId, workerId]);
+
+  useEffect(() => {
+    if (!threadId) {
+      setMessages([]);
+      return;
+    }
+
+    return watchChatMessages(threadId, (items) => {
+      const mapped = items.map((item) => {
+        const date = item.createdAt instanceof Date
+          ? item.createdAt
+          : typeof item.createdAt === 'object' && item.createdAt && 'toDate' in item.createdAt && typeof item.createdAt.toDate === 'function'
+            ? item.createdAt.toDate()
+            : new Date();
+
+        return {
+          id: item.id,
+          senderId: item.senderId,
+          text: item.text,
+          at: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+      });
+      setMessages(mapped);
+    });
+  }, [threadId]);
 
   useEffect(() => {
     listRef.current?.scrollToEnd({ animated: true });
   }, [messages.length]);
+
+  useEffect(() => {
+    if (!profile || !teamId) return;
+    markTeamChatRead({ userId: profile.uid, teamId }).catch(() => undefined);
+  }, [profile, teamId, threadId]);
 
   const headerSubtitle = useMemo(() => {
     if (isTeamBroadcast) {
@@ -57,10 +89,22 @@ export default function WorkerChatScreen() {
   }, [broadcastCount, isTeamBroadcast]);
 
   const canSend = draft.trim().length > 0;
-  const sendMessage = () => {
+  const sendMessage = async () => {
     const text = draft.trim();
-    if (!text) return;
-    setMessages((prev) => [...prev, { id: `m-${Date.now()}`, from: 'self', text, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+    if (!text || !profile || !threadId) return;
+
+    const recipientIds = isTeamBroadcast
+      ? memberIds.filter((id) => id !== profile.uid)
+      : [workerId].filter((id) => id && id !== profile.uid);
+
+    await sendChatMessage({
+      threadId,
+      teamId,
+      senderId: profile.uid,
+      recipientIds,
+      text,
+    });
+
     setDraft('');
   };
 
@@ -88,7 +132,7 @@ export default function WorkerChatScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         renderItem={({ item: message }) => {
-          const mine = message.from === 'self';
+          const mine = !!profile && message.senderId === profile.uid;
           return (
             <View style={[styles.row, mine ? styles.rowSelf : styles.rowOther]}>
               <View style={[styles.bubble, mine ? styles.bubbleSelf : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
