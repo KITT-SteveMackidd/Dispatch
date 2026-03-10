@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSession } from '@/context/session';
-import { loadUserProfilesByIds, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
+import { loadUserProfilesByIds, updateEventRoleAssignment, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
@@ -91,6 +91,7 @@ export default function EventsScreen() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [expandedRoleTaskIds, setExpandedRoleTaskIds] = useState<Record<string, boolean>>({});
   const [managerNames, setManagerNames] = useState<ManagerNamesMap>({});
   const [workerProfiles, setWorkerProfiles] = useState<UserMap>({});
   const [teamWorkerIds, setTeamWorkerIds] = useState<string[]>([]);
@@ -108,6 +109,7 @@ export default function EventsScreen() {
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
   const [rolePickerRoleId, setRolePickerRoleId] = useState<string | null>(null);
+  const [assignmentBusyKey, setAssignmentBusyKey] = useState<string | null>(null);
   const canCreateEvent = profile?.role === 'manager';
 
   const buildCreateEventRolesDraft = (template?: EventTemplateOption): CreateEventRoleDraft[] => {
@@ -303,6 +305,11 @@ export default function EventsScreen() {
     setExpandedIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
 
+  const toggleRoleTaskExpanded = (eventId: string, roleId: string) => {
+    const key = `${eventId}:${roleId}`;
+    setExpandedRoleTaskIds((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const getWorkerSignupRatio = (event: DispatchEvent) => {
     const assignedCount = event.roles.reduce((total, role) => total + role.assignedWorkerIds.length, 0);
     const requiredCount = event.roles.reduce((total, role) => total + role.assignedWorkerIds.length + role.openSlots, 0);
@@ -359,6 +366,8 @@ export default function EventsScreen() {
   const renderManagerRole = (event: DispatchEvent, role: EventRole) => {
     const assignedIds = role.assignedWorkerIds || [];
     const openSlots = Math.max(0, role.openSlots || 0);
+    const roleExpandKey = `${event.id}:${role.id}`;
+    const roleTasksExpanded = !!expandedRoleTaskIds[roleExpandKey];
 
     return (
       <View key={role.id} style={[styles.roleCard, isDarkMode ? styles.roleCardDark : styles.roleCardLight]}>
@@ -385,13 +394,25 @@ export default function EventsScreen() {
           )}
         </View>
 
-        <View style={styles.taskList}>
-          {role.tasks.map((task) => (
-            <View key={task.id} style={styles.taskRow}>
-              <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name}{task.optional ? ' (optional)' : ''}</Text>
-            </View>
-          ))}
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${roleTasksExpanded ? 'Hide' : 'Show'} tasks for ${role.name}`}
+          style={styles.roleTaskToggle}
+          onPress={() => toggleRoleTaskExpanded(event.id, role.id)}>
+          <Text style={[styles.expandHint, isDarkMode ? styles.expandHintDark : styles.expandHintLight]}>
+            {roleTasksExpanded ? 'Hide tasks ▲' : `Show tasks (${role.tasks.length}) ▼`}
+          </Text>
+        </Pressable>
+
+        {roleTasksExpanded ? (
+          <View style={styles.taskList}>
+            {role.tasks.map((task) => (
+              <View key={task.id} style={styles.taskRow}>
+                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name}{task.optional ? ' (optional)' : ''}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         <View style={styles.roleActions}>
           <Pressable
@@ -419,6 +440,40 @@ export default function EventsScreen() {
     if (!rolePickerRoleId) return;
     setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === rolePickerRoleId ? { ...role, assignedWorkerId: workerId } : role)));
     setRolePickerRoleId(null);
+  };
+
+  const handleRoleAssignmentUpdate = async (params: {
+    eventId: string;
+    roleId: string;
+    workerId: string;
+    currentlyAssigned: boolean;
+  }) => {
+    if (!profile?.uid) return;
+
+    const busyKey = `${params.eventId}:${params.roleId}:${params.workerId}`;
+    if (assignmentBusyKey === busyKey) return;
+
+    const action = params.currentlyAssigned ? 'remove' : 'assign';
+
+    try {
+      setAssignmentBusyKey(busyKey);
+      await updateEventRoleAssignment({
+        eventId: params.eventId,
+        roleId: params.roleId,
+        managerId: profile.uid,
+        workerId: params.workerId,
+        action,
+      });
+
+      Alert.alert(
+        action === 'assign' ? 'Assignment sent' : 'Removal sent',
+        `${workerLabel(params.workerId)} can now accept or decline this ${action === 'assign' ? 'role assignment' : 'role removal'} notification.`
+      );
+    } catch (error) {
+      Alert.alert('Unable to update role', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setAssignmentBusyKey(null);
+    }
   };
 
   useEffect(() => {
@@ -495,12 +550,29 @@ export default function EventsScreen() {
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Replace Worker</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {replaceTarget?.role.name || 'Unknown role'}</Text>
             <ScrollView style={styles.drawerList}>
-              {teamWorkerIds.length ? teamWorkerIds.map((workerId) => (
-                <View key={`replace-${workerId}`} style={styles.drawerRow}>
-                  <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
-                  <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{replaceTarget?.role.assignedWorkerIds.includes(workerId) ? 'Already assigned' : 'Available'}</Text>
-                </View>
-              )) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
+              {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
+                const assigned = !!replaceTarget?.role.assignedWorkerIds.includes(workerId);
+                const busy = assignmentBusyKey === `${replaceTarget?.event.id}:${replaceTarget?.role.id}:${workerId}`;
+
+                return (
+                  <View key={`replace-${workerId}`} style={styles.drawerRow}>
+                    <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
+                    <Pressable
+                      disabled={assigned || busy || !replaceTarget}
+                      onPress={() => {
+                        if (!replaceTarget) return;
+                        handleRoleAssignmentUpdate({
+                          eventId: replaceTarget.event.id,
+                          roleId: replaceTarget.role.id,
+                          workerId,
+                          currentlyAssigned: false,
+                        });
+                      }}>
+                      <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{assigned ? 'Already assigned' : busy ? 'Sending…' : 'Assign + notify'}</Text>
+                    </Pressable>
+                  </View>
+                );
+              }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
             </ScrollView>
             <Pressable style={styles.drawerClose} onPress={() => setReplaceDrawer(INITIAL_DRAWER)}>
               <Text style={styles.drawerCloseText}>Close</Text>
@@ -517,10 +589,25 @@ export default function EventsScreen() {
             <ScrollView style={styles.drawerList}>
               {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
                 const assigned = !!inviteTarget?.role.assignedWorkerIds.includes(workerId);
+                const busy = assignmentBusyKey === `${inviteTarget?.event.id}:${inviteTarget?.role.id}:${workerId}`;
                 return (
                   <View key={`invite-${workerId}`} style={styles.drawerRow}>
                     <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
-                    <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{assigned ? 'Assigned' : 'Invite pending'}</Text>
+                    <Pressable
+                      disabled={busy || !inviteTarget}
+                      onPress={() => {
+                        if (!inviteTarget) return;
+                        handleRoleAssignmentUpdate({
+                          eventId: inviteTarget.event.id,
+                          roleId: inviteTarget.role.id,
+                          workerId,
+                          currentlyAssigned: assigned,
+                        });
+                      }}>
+                      <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
+                        {busy ? 'Sending…' : assigned ? 'Remove + notify' : 'Assign + notify'}
+                      </Text>
+                    </Pressable>
                   </View>
                 );
               }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
@@ -818,6 +905,7 @@ const styles = StyleSheet.create({
   avatarName: { marginTop: 4, fontSize: 11 },
   avatarNameLight: { color: '#334155' },
   avatarNameDark: { color: '#cbd5e1' },
+  roleTaskToggle: { marginTop: 10, alignSelf: 'flex-start' },
   roleActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   drawerButton: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8 },
   drawerButtonLight: { backgroundColor: '#e2e8f0' },
