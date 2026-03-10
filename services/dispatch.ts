@@ -6,7 +6,9 @@ import {
   documentId,
   getDoc,
   getDocs,
+  increment,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -22,6 +24,96 @@ export type TeamUnreadCount = {
   teamId: string;
   unreadCount: number;
 };
+
+export type PersistedChatMessage = {
+  id: string;
+  senderId: string;
+  text: string;
+  createdAt?: { toDate?: () => Date } | Date | null;
+};
+
+export function buildChatThreadId(params: {
+  teamId?: string;
+  selfId: string;
+  otherUserId?: string;
+  isTeamBroadcast?: boolean;
+}) {
+  const { teamId, selfId, otherUserId, isTeamBroadcast } = params;
+  if (isTeamBroadcast && teamId) return `team:${teamId}:all`;
+
+  const participants = [selfId, otherUserId].filter(Boolean).sort().join('__');
+  if (!participants) throw new Error('Cannot build chat thread without participants');
+  return teamId ? `team:${teamId}:dm:${participants}` : `dm:${participants}`;
+}
+
+export function watchChatMessages(threadId: string, cb: (items: PersistedChatMessage[]) => void) {
+  const q = query(collection(db, 'chatThreads', threadId, 'messages'), orderBy('createdAt', 'asc'));
+  return onSnapshot(q, (snap) => {
+    const messages = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PersistedChatMessage, 'id'>) }));
+    cb(messages);
+  });
+}
+
+export async function sendChatMessage(params: {
+  threadId: string;
+  teamId?: string;
+  senderId: string;
+  recipientIds: string[];
+  text: string;
+}) {
+  const text = params.text.trim();
+  if (!text) return;
+
+  await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
+    senderId: params.senderId,
+    text,
+    createdAt: serverTimestamp(),
+  });
+
+  await setDoc(
+    doc(db, 'chatThreads', params.threadId),
+    {
+      id: params.threadId,
+      teamId: params.teamId || null,
+      participants: [params.senderId, ...params.recipientIds],
+      lastMessageText: text,
+      lastMessageSenderId: params.senderId,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  if (params.teamId) {
+    const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
+    await Promise.all(
+      recipientIds.map((userId) =>
+        setDoc(
+          doc(db, 'chatUnread', `${userId}__${params.teamId}`),
+          {
+            userId,
+            teamId: params.teamId,
+            unreadCount: increment(1),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        )
+      )
+    );
+  }
+}
+
+export async function markTeamChatRead(params: { userId: string; teamId: string }) {
+  await setDoc(
+    doc(db, 'chatUnread', `${params.userId}__${params.teamId}`),
+    {
+      userId: params.userId,
+      teamId: params.teamId,
+      unreadCount: 0,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
 
 function mapEvents(snap: { docs: Array<{ id: string; data: () => unknown }> }): DispatchEvent[] {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DispatchEvent, 'id'>) }));
@@ -45,6 +137,23 @@ function isValidEmail(email: string) {
 
 function getInviteAppLink() {
   return process.env.EXPO_PUBLIC_APP_INVITE_URL?.trim() || 'https://dispatchapp.ca/download';
+}
+
+async function ensureManagerWorkerThread(params: { managerId: string; workerId: string; teamId: string }) {
+  const threadId = [params.managerId, params.workerId].sort().join('__');
+  await setDoc(
+    doc(db, 'chatThreads', threadId),
+    {
+      id: threadId,
+      managerId: params.managerId,
+      workerId: params.workerId,
+      teamId: params.teamId,
+      participants: [params.managerId, params.workerId],
+      updatedAt: serverTimestamp(),
+      createdByInvite: true,
+    },
+    { merge: true }
+  );
 }
 
 export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[]) => void) {
@@ -254,20 +363,11 @@ export async function acceptPendingInvitesForUser(params: { userId: string; emai
         acceptedAt: serverTimestamp(),
       });
 
-      const threadId = [invite.managerId, params.userId].sort().join('__');
-      await setDoc(
-        doc(db, 'chatThreads', threadId),
-        {
-          id: threadId,
-          managerId: invite.managerId,
-          workerId: params.userId,
-          teamId: invite.teamId,
-          participants: [invite.managerId, params.userId],
-          updatedAt: serverTimestamp(),
-          createdByInvite: true,
-        },
-        { merge: true }
-      );
+      await ensureManagerWorkerThread({
+        managerId: invite.managerId,
+        workerId: params.userId,
+        teamId: invite.teamId,
+      });
     }
   }
 }
@@ -304,6 +404,21 @@ export async function inviteWorkerByEmailToTeam(params: {
     if (foundWorkerId) {
       const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
       tx.update(teamRef, { workerIds: nextWorkerIds });
+
+      const threadId = [managerId, foundWorkerId].sort().join('__');
+      tx.set(
+        doc(db, 'chatThreads', threadId),
+        {
+          id: threadId,
+          managerId,
+          workerId: foundWorkerId,
+          teamId,
+          participants: [managerId, foundWorkerId],
+          updatedAt: serverTimestamp(),
+          createdByInvite: true,
+        },
+        { merge: true }
+      );
     }
   });
 
@@ -346,8 +461,8 @@ export async function linkPendingEmailInvites(params: { workerId: string; email:
 
   await runTransaction(db, async (tx) => {
     for (const inviteDoc of invitesSnap.docs) {
-      const invite = inviteDoc.data() as { teamId?: string };
-      if (!invite.teamId) continue;
+      const invite = inviteDoc.data() as { teamId?: string; managerId?: string };
+      if (!invite.teamId || !invite.managerId) continue;
 
       const teamRef = doc(db, 'teams', invite.teamId);
       const teamSnap = await tx.get(teamRef);
@@ -362,6 +477,21 @@ export async function linkPendingEmailInvites(params: { workerId: string; email:
         status: 'linked',
         linkedAt: serverTimestamp(),
       });
+
+      const threadId = [invite.managerId, params.workerId].sort().join('__');
+      tx.set(
+        doc(db, 'chatThreads', threadId),
+        {
+          id: threadId,
+          managerId: invite.managerId,
+          workerId: params.workerId,
+          teamId: invite.teamId,
+          participants: [invite.managerId, params.workerId],
+          updatedAt: serverTimestamp(),
+          createdByInvite: true,
+        },
+        { merge: true }
+      );
     }
   });
 }
