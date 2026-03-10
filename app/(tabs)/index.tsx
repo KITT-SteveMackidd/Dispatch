@@ -412,8 +412,14 @@ export default function EventsScreen() {
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
-  const selectedTemplateRoles = selectedTemplate?.roles || [];
+  const rolePickerTarget = createEventRolesDraft.find((role) => role.id === rolePickerRoleId) || null;
   const isEditingTemplate = !!editingTemplateId;
+
+  const assignWorkerToCreateEventRole = (workerId: string) => {
+    if (!rolePickerRoleId) return;
+    setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === rolePickerRoleId ? { ...role, assignedWorkerId: workerId } : role)));
+    setRolePickerRoleId(null);
+  };
 
   useEffect(() => {
     if (!createEventDrawerOpen || !selectedTemplate) return;
@@ -599,18 +605,34 @@ export default function EventsScreen() {
             <View style={styles.formField}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Roles needed for this event</Text>
               <View style={[styles.rolePreviewContainer, isDarkMode ? styles.rolePreviewContainerDark : styles.rolePreviewContainerLight]}>
-                {selectedTemplateRoles.length ? (
-                  selectedTemplateRoles.map((role) => (
-                    <View key={`${selectedTemplate?.id}-${role.id}`} style={styles.rolePreviewRow}>
-                      <View style={styles.rolePreviewLeft}>
-                        <View style={[styles.rolePreviewAvatar, isDarkMode ? styles.rolePreviewAvatarDark : styles.rolePreviewAvatarLight]}>
-                          <Text style={styles.rolePreviewAvatarText}>{role.name.slice(0, 1).toUpperCase()}</Text>
+                {createEventRolesDraft.length ? (
+                  createEventRolesDraft.map((role) => {
+                    const assignedLabel = role.assignedWorkerId ? workerLabel(role.assignedWorkerId) : null;
+                    const avatarInitial = assignedLabel ? assignedLabel.slice(0, 1).toUpperCase() : '+';
+
+                    return (
+                      <View key={`${selectedTemplate?.id}-${role.id}`} style={styles.rolePreviewRow}>
+                        <View style={styles.rolePreviewLeft}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`${role.assignedWorkerId ? 'Change' : 'Assign'} worker for ${role.name}`}
+                            style={[
+                              styles.rolePreviewAvatar,
+                              role.assignedWorkerId
+                                ? (isDarkMode ? styles.rolePreviewAvatarAssignedDark : styles.rolePreviewAvatarAssignedLight)
+                                : (isDarkMode ? styles.rolePreviewAvatarDark : styles.rolePreviewAvatarLight),
+                            ]}
+                            onPress={() => setRolePickerRoleId(role.id)}>
+                            <Text style={styles.rolePreviewAvatarText}>{avatarInitial}</Text>
+                          </Pressable>
+                          <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>{role.name}</Text>
                         </View>
-                        <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>{role.name}</Text>
+                        <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>
+                          {assignedLabel ? assignedLabel : 'Tap avatar to assign'} · {role.taskCount} tasks
+                        </Text>
                       </View>
-                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>Unassigned · {role.taskCount} tasks</Text>
-                    </View>
-                  ))
+                    );
+                  })
                 ) : (
                   <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>
                     No roles in this template yet. Add roles while editing the template.
@@ -674,6 +696,31 @@ export default function EventsScreen() {
             </Pressable>
             <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateEventDrawer}>
               <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={!!rolePickerRoleId} animationType="slide" transparent onRequestClose={() => setRolePickerRoleId(null)}>
+        <Pressable style={styles.drawerBackdrop} onPress={() => setRolePickerRoleId(null)}>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Assign Worker</Text>
+            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
+              Role: {rolePickerTarget?.name || 'Unknown role'}
+            </Text>
+            <ScrollView style={styles.drawerList}>
+              {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
+                const selected = rolePickerTarget?.assignedWorkerId === workerId;
+                return (
+                  <Pressable key={`role-picker-${workerId}`} style={styles.drawerRow} onPress={() => assignWorkerToCreateEventRole(workerId)}>
+                    <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
+                    <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{selected ? 'Assigned' : 'Tap to assign'}</Text>
+                  </Pressable>
+                );
+              }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
+            </ScrollView>
+            <Pressable style={styles.drawerClose} onPress={() => setRolePickerRoleId(null)}>
+              <Text style={styles.drawerCloseText}>Done</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -799,6 +846,8 @@ const styles = StyleSheet.create({
   rolePreviewAvatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   rolePreviewAvatarLight: { backgroundColor: '#dbeafe' },
   rolePreviewAvatarDark: { backgroundColor: '#1e3a8a' },
+  rolePreviewAvatarAssignedLight: { backgroundColor: '#0ea5e9' },
+  rolePreviewAvatarAssignedDark: { backgroundColor: '#2563eb' },
   rolePreviewAvatarText: { fontSize: 11, fontWeight: '700', color: '#bfdbfe' },
   rolePreviewName: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
   rolePreviewNameLight: { color: '#0f172a' },
