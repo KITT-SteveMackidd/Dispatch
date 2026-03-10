@@ -227,9 +227,9 @@
     "id": "DSP-029",
     "area": "Events-Templates",
     "title": "Create Event: + button to create a new template",
-    "status": "In Progress",
+    "status": "Done",
     "priority": "High",
-    "statusReason": "Claimed by automation: dispatch-heartbeat-agent-1 at 2026-03-10T03:17:55.736Z"
+    "statusReason": "Added a + New Template action inside Create Event that opens a Create Template drawer and creates/selects a new template in the picker; validated with dispatch npx tsc --noEmit."
   },
   {
     "id": "DSP-030",

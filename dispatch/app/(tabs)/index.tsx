@@ -437,6 +437,36 @@ export default function EventsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal visible={createTemplateDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateTemplateDrawer}>
+        <Pressable style={styles.drawerBackdrop} onPress={closeCreateTemplateDrawer}>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Template</Text>
+            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add a template you can reuse while creating events.</Text>
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Template name</Text>
+              <TextInput
+                value={templateNameDraft}
+                onChangeText={setTemplateNameDraft}
+                placeholder="Example: Saturday Street Crew"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <Pressable
+              style={[styles.drawerClose, (!templateNameDraft.trim().length) && styles.drawerCloseDisabled]}
+              onPress={createTemplate}
+              disabled={!templateNameDraft.trim().length}>
+              <Text style={styles.drawerCloseText}>Create Template</Text>
+            </Pressable>
+            <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateTemplateDrawer}>
+              <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -539,7 +569,14 @@ const styles = StyleSheet.create({
   drawerMetaLight: { color: '#64748b' },
   drawerMetaDark: { color: '#94a3b8' },
   templateSection: { marginTop: 14, gap: 8 },
-  templateLabel: { fontSize: 13, fontWeight: '700' },
+  templateHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  templateLabel: { fontSize: 13, fontWeight: '700', flex: 1 },
+  templateAddButton: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1 },
+  templateAddButtonLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
+  templateAddButtonDark: { borderColor: '#1d4ed8', backgroundColor: '#1e3a8a' },
+  templateAddButtonText: { fontSize: 12, fontWeight: '700' },
+  templateAddButtonTextLight: { color: '#1d4ed8' },
+  templateAddButtonTextDark: { color: '#bfdbfe' },
   templateLabelLight: { color: '#334155' },
   templateLabelDark: { color: '#cbd5e1' },
   templateOption: { borderRadius: 10, borderWidth: 1, padding: 10 },
@@ -556,6 +593,17 @@ const styles = StyleSheet.create({
   templateMeta: { marginTop: 4, fontSize: 12 },
   templateMetaLight: { color: '#475569' },
   templateMetaDark: { color: '#cbd5e1' },
+  formField: { marginTop: 14, gap: 8 },
+  templateInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  templateInputLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc', color: '#0f172a' },
+  templateInputDark: { borderColor: '#334155', backgroundColor: '#111827', color: '#f8fafc' },
   drawerClose: { marginTop: 12, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
+  drawerCloseDisabled: { opacity: 0.45 },
   drawerCloseText: { color: '#fff', fontWeight: '700' },
+  drawerSecondaryButton: { marginTop: 10, borderWidth: 1, borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
+  drawerSecondaryButtonLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  drawerSecondaryButtonDark: { borderColor: '#334155', backgroundColor: '#111827' },
+  drawerSecondaryButtonText: { fontWeight: '700' },
+  drawerSecondaryButtonTextLight: { color: '#334155' },
+  drawerSecondaryButtonTextDark: { color: '#cbd5e1' },
 });

@@ -790,5 +790,13 @@
     "state": "working",
     "zone": "computer",
     "task": "Claimed DSP-028 and implemented Create Event template dropdown/selector UI in dispatch/app/(tabs)/index.tsx; validated with npx tsc --noEmit."
+  },
+  {
+    "id": "evt-dispatch-heartbeat-agent-1-20260310T032158Z",
+    "ts": "2026-03-10T03:21:58Z",
+    "agent": "dispatch-heartbeat-agent-1",
+    "state": "working",
+    "zone": "computer",
+    "task": "Completed DSP-029: added + New Template action in Create Event drawer with create-template modal/input that adds and auto-selects a new template option; validated with dispatch npx tsc --noEmit."
   }
 ]
