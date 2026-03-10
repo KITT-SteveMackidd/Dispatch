@@ -784,8 +784,13 @@ export default function EventsScreen() {
                           <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>{role.name}</Text>
                         </View>
                         <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>
-                          {assignedLabel ? assignedLabel : 'Tap avatar to assign'} · {role.taskCount} tasks
+                          {assignedLabel ? assignedLabel : 'Tap avatar to assign'} · {role.tasks.length} tasks
                         </Text>
+                        {!!role.tasks.length ? (
+                          <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>
+                            Next due: {formatTaskOffset(Math.min(...role.tasks.map((task) => task.expectedOffsetMinutes)))} from start
+                          </Text>
+                        ) : null}
                       </View>
                     );
                   })
