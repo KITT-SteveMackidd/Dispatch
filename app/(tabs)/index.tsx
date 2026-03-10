@@ -20,17 +20,21 @@ const INITIAL_DRAWER: DrawerState = {
   roleId: null,
 };
 
+type TemplateTaskPreview = {
+  id: string;
+  name: string;
+  expectedOffsetMinutes: number;
+};
+
 type TemplateRolePreview = {
   id: string;
   name: string;
-  taskCount: number;
+  tasks: TemplateTaskPreview[];
 };
 
 type EventTemplateOption = {
   id: string;
   name: string;
-  roleCount: number;
-  taskCount: number;
   roles?: TemplateRolePreview[];
   defaultLocation?: string;
   defaultDescription?: string;
@@ -39,7 +43,7 @@ type EventTemplateOption = {
 type CreateEventRoleDraft = {
   id: string;
   name: string;
-  taskCount: number;
+  tasks: TemplateTaskPreview[];
   assignedWorkerId: string | null;
 };
 
@@ -47,12 +51,34 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
   {
     id: 'street-team',
     name: 'Street Team Activation',
-    roleCount: 3,
-    taskCount: 9,
     roles: [
-      { id: 'lead-ambassador', name: 'Lead Ambassador', taskCount: 3 },
-      { id: 'flyer-specialist', name: 'Flyer Specialist', taskCount: 3 },
-      { id: 'engagement-runner', name: 'Engagement Runner', taskCount: 3 },
+      {
+        id: 'lead-ambassador',
+        name: 'Lead Ambassador',
+        tasks: [
+          { id: 'briefing', name: 'Run pre-shift briefing', expectedOffsetMinutes: 10 },
+          { id: 'zone-check', name: 'Confirm zone assignments', expectedOffsetMinutes: 25 },
+          { id: 'checkpoint', name: 'Submit first-hour checkpoint', expectedOffsetMinutes: 60 },
+        ],
+      },
+      {
+        id: 'flyer-specialist',
+        name: 'Flyer Specialist',
+        tasks: [
+          { id: 'pickup', name: 'Pick up flyer inventory', expectedOffsetMinutes: 5 },
+          { id: 'rotation', name: 'Rotate handout hotspots', expectedOffsetMinutes: 45 },
+          { id: 'recap', name: 'Report distribution totals', expectedOffsetMinutes: 90 },
+        ],
+      },
+      {
+        id: 'engagement-runner',
+        name: 'Engagement Runner',
+        tasks: [
+          { id: 'script', name: 'Start engagement script rounds', expectedOffsetMinutes: 15 },
+          { id: 'sampling', name: 'Launch sample sweep', expectedOffsetMinutes: 40 },
+          { id: 'handoff', name: 'Handoff leads to manager', expectedOffsetMinutes: 100 },
+        ],
+      },
     ],
     defaultLocation: 'Downtown',
     defaultDescription: 'Street-level promotion with handouts and passersby engagement.',
@@ -60,11 +86,25 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
   {
     id: 'mall-pop-up',
     name: 'Mall Pop-Up',
-    roleCount: 2,
-    taskCount: 6,
     roles: [
-      { id: 'booth-manager', name: 'Booth Manager', taskCount: 3 },
-      { id: 'demo-host', name: 'Demo Host', taskCount: 3 },
+      {
+        id: 'booth-manager',
+        name: 'Booth Manager',
+        tasks: [
+          { id: 'open', name: 'Open booth and check signage', expectedOffsetMinutes: 10 },
+          { id: 'stock', name: 'Verify promo stock levels', expectedOffsetMinutes: 35 },
+          { id: 'closeout', name: 'Complete closeout checklist', expectedOffsetMinutes: 150 },
+        ],
+      },
+      {
+        id: 'demo-host',
+        name: 'Demo Host',
+        tasks: [
+          { id: 'demo-start', name: 'Start first demo cycle', expectedOffsetMinutes: 20 },
+          { id: 'qa', name: 'Run audience Q&A', expectedOffsetMinutes: 75 },
+          { id: 'capture', name: 'Capture lead recap', expectedOffsetMinutes: 135 },
+        ],
+      },
     ],
     defaultLocation: 'City Mall',
     defaultDescription: 'Retail-facing booth coverage with product demos and lead capture.',
@@ -72,13 +112,43 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
   {
     id: 'festival-booth',
     name: 'Festival Booth',
-    roleCount: 4,
-    taskCount: 12,
     roles: [
-      { id: 'setup-captain', name: 'Setup Captain', taskCount: 3 },
-      { id: 'welcome-host', name: 'Welcome Host', taskCount: 3 },
-      { id: 'sampling-lead', name: 'Sampling Lead', taskCount: 3 },
-      { id: 'breakdown-support', name: 'Breakdown Support', taskCount: 3 },
+      {
+        id: 'setup-captain',
+        name: 'Setup Captain',
+        tasks: [
+          { id: 'arrival', name: 'Arrive and inspect footprint', expectedOffsetMinutes: 0 },
+          { id: 'build', name: 'Complete booth buildout', expectedOffsetMinutes: 30 },
+          { id: 'handoff', name: 'Handoff setup status', expectedOffsetMinutes: 50 },
+        ],
+      },
+      {
+        id: 'welcome-host',
+        name: 'Welcome Host',
+        tasks: [
+          { id: 'welcome-open', name: 'Open welcome queue', expectedOffsetMinutes: 10 },
+          { id: 'line-flow', name: 'Maintain line flow', expectedOffsetMinutes: 70 },
+          { id: 'summary', name: 'Send engagement summary', expectedOffsetMinutes: 140 },
+        ],
+      },
+      {
+        id: 'sampling-lead',
+        name: 'Sampling Lead',
+        tasks: [
+          { id: 'prep', name: 'Prep product samples', expectedOffsetMinutes: 15 },
+          { id: 'wave-two', name: 'Start second sampling wave', expectedOffsetMinutes: 80 },
+          { id: 'inventory', name: 'Log remaining samples', expectedOffsetMinutes: 155 },
+        ],
+      },
+      {
+        id: 'breakdown-support',
+        name: 'Breakdown Support',
+        tasks: [
+          { id: 'pack', name: 'Pack teardown kits', expectedOffsetMinutes: 140 },
+          { id: 'teardown', name: 'Teardown booth', expectedOffsetMinutes: 180 },
+          { id: 'loadout', name: 'Finalize loadout checklist', expectedOffsetMinutes: 210 },
+        ],
+      },
     ],
     defaultLocation: 'Festival Grounds',
     defaultDescription: 'High-traffic booth operation with staggered shift handoffs.',
@@ -113,24 +183,19 @@ export default function EventsScreen() {
   const canCreateEvent = profile?.role === 'manager';
 
   const buildCreateEventRolesDraft = (template?: EventTemplateOption): CreateEventRoleDraft[] => {
-    if (!template) return [];
+    if (!template?.roles?.length) return [];
 
-    if (template.roles?.length) {
-      return template.roles.map((role, index) => ({
-        id: role.id || `role-${index + 1}`,
-        name: role.name || `Role ${index + 1}`,
-        taskCount: role.taskCount || 0,
-        assignedWorkerId: null,
-      }));
-    }
-
-    return Array.from({ length: Math.max(0, template.roleCount || 0) }).map((_, index) => ({
-      id: `${template.id}-role-${index + 1}`,
-      name: `Role ${index + 1}`,
-      taskCount: 0,
+    return template.roles.map((role, index) => ({
+      id: role.id || `role-${index + 1}`,
+      name: role.name || `Role ${index + 1}`,
+      tasks: role.tasks || [],
       assignedWorkerId: null,
     }));
   };
+
+  const getTemplateRoleCount = (template: EventTemplateOption) => template.roles?.length ?? 0;
+  const getTemplateTaskCount = (template: EventTemplateOption) => (template.roles || []).reduce((sum, role) => sum + (role.tasks?.length || 0), 0);
+  const formatTaskOffset = (offsetMinutes: number) => `+${offsetMinutes}m`;
 
   useEffect(() => {
     if (!profile) return;
@@ -262,8 +327,6 @@ export default function EventsScreen() {
     const nextTemplate: EventTemplateOption = {
       id,
       name,
-      roleCount: 0,
-      taskCount: 0,
       roles: [],
     };
 
@@ -439,6 +502,12 @@ export default function EventsScreen() {
   const assignWorkerToCreateEventRole = (workerId: string) => {
     if (!rolePickerRoleId) return;
     setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === rolePickerRoleId ? { ...role, assignedWorkerId: workerId } : role)));
+    setRolePickerRoleId(null);
+  };
+
+  const clearWorkerFromCreateEventRole = () => {
+    if (!rolePickerRoleId) return;
+    setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === rolePickerRoleId ? { ...role, assignedWorkerId: null } : role)));
     setRolePickerRoleId(null);
   };
 
@@ -654,7 +723,7 @@ export default function EventsScreen() {
                       <Text style={[styles.templateBadge, selected && styles.templateBadgeSelected]}>{selected ? 'Selected' : 'Select'}</Text>
                     </View>
                     <Text style={[styles.templateMeta, isDarkMode ? styles.templateMetaDark : styles.templateMetaLight]}>
-                      {template.roleCount} roles · {template.taskCount} tasks
+                      {getTemplateRoleCount(template)} roles · {getTemplateTaskCount(template)} tasks
                       {template.defaultLocation ? ` · ${template.defaultLocation}` : ''}
                     </Text>
                     <View style={styles.templateActionRow}>
@@ -796,12 +865,18 @@ export default function EventsScreen() {
               Role: {rolePickerTarget?.name || 'Unknown role'}
             </Text>
             <ScrollView style={styles.drawerList}>
+              {rolePickerTarget?.assignedWorkerId ? (
+                <Pressable style={[styles.drawerButton, styles.drawerDestructiveButton]} onPress={clearWorkerFromCreateEventRole}>
+                  <Text style={styles.drawerDestructiveButtonText}>Remove assigned worker</Text>
+                </Pressable>
+              ) : null}
+
               {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
                 const selected = rolePickerTarget?.assignedWorkerId === workerId;
                 return (
                   <Pressable key={`role-picker-${workerId}`} style={styles.drawerRow} onPress={() => assignWorkerToCreateEventRole(workerId)}>
                     <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
-                    <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{selected ? 'Assigned' : 'Tap to assign'}</Text>
+                    <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{selected ? 'Assigned · tap to reassign' : 'Tap to assign'}</Text>
                   </Pressable>
                 );
               }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
@@ -913,6 +988,8 @@ const styles = StyleSheet.create({
   drawerButtonText: { fontSize: 12, fontWeight: '700' },
   drawerButtonTextLight: { color: '#334155' },
   drawerButtonTextDark: { color: '#e2e8f0' },
+  drawerDestructiveButton: { marginBottom: 10, backgroundColor: '#7f1d1d' },
+  drawerDestructiveButtonText: { color: '#fecaca', textAlign: 'center', fontWeight: '700' },
   taskList: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 8, gap: 8 },
   taskRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   taskName: { flex: 1, fontSize: 13 },
