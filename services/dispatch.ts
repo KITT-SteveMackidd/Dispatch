@@ -2,11 +2,13 @@ import {
   addDoc,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   documentId,
   getDoc,
   getDocs,
   increment,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -18,7 +20,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { DispatchEvent, EventRole, Team, UserProfile } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTemplate, EventTemplateRole, Team, UserProfile } from '@/types/dispatch';
 
 export type TeamUnreadCount = {
   teamId: string;
@@ -62,6 +64,14 @@ export type CreateEventRoleInput = {
   name: string;
   assignedWorkerId?: string | null;
   tasks?: Array<{ id: string; name: string; optional?: boolean }>;
+};
+
+export type UpsertEventTemplateInput = {
+  name: string;
+  roles: EventTemplateRole[];
+  defaultLocation?: string;
+  defaultTime?: string;
+  defaultDescription?: string;
 };
 
 export function buildChatThreadId(params: {
@@ -155,8 +165,29 @@ function mapTeams(snap: { docs: Array<{ id: string; data: () => unknown }> }): T
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Team, 'id'>) }));
 }
 
-function sortByStartAsc(items: DispatchEvent[]) {
-  return [...items].sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
+function parseEventDateTime(value?: string) {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
+export function sortDispatchEvents(items: DispatchEvent[]) {
+  return [...items].sort((a, b) => {
+    const aStartsAt = parseEventDateTime(a.startsAt);
+    const bStartsAt = parseEventDateTime(b.startsAt);
+
+    if (aStartsAt !== bStartsAt) return aStartsAt - bStartsAt;
+
+    const aEndsAt = parseEventDateTime(a.endsAt ?? a.startsAt);
+    const bEndsAt = parseEventDateTime(b.endsAt ?? b.startsAt);
+
+    if (aEndsAt !== bEndsAt) return aEndsAt - bEndsAt;
+
+    const byName = a.name.localeCompare(b.name);
+    if (byName !== 0) return byName;
+
+    return a.id.localeCompare(b.id);
+  });
 }
 
 function normalizeEmail(email: string) {
@@ -190,17 +221,105 @@ async function ensureManagerWorkerThread(params: { managerId: string; workerId: 
 
 export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[]) => void) {
   const q = query(collection(db, 'events'), where('managerId', '==', managerId));
-  return onSnapshot(q, (snap) => cb(sortByStartAsc(mapEvents(snap))));
+  return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
 }
 
 export function watchWorkerEvents(workerId: string, cb: (items: DispatchEvent[]) => void) {
   const q = query(collection(db, 'events'), where('workerIds', 'array-contains', workerId));
-  return onSnapshot(q, (snap) => cb(sortByStartAsc(mapEvents(snap))));
+  return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
 }
 
 export function watchManagerTeams(managerId: string, cb: (items: Team[]) => void) {
   const q = query(collection(db, 'teams'), where('managerId', '==', managerId));
   return onSnapshot(q, (snap) => cb(mapTeams(snap)));
+}
+
+function mapEventTemplates(snap: { docs: Array<{ id: string; data: () => unknown }> }): EventTemplate[] {
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EventTemplate, 'id'>) }));
+}
+
+function toTemplateUpdateTime(value: EventTemplate['updatedAt']) {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if ('toDate' in value && typeof value.toDate === 'function') return value.toDate().getTime();
+  return 0;
+}
+
+export async function ensureDefaultEventTemplates(managerId: string) {
+  const existing = await getDocs(query(collection(db, 'eventTemplates'), where('managerId', '==', managerId), limit(1)));
+  if (!existing.empty) return;
+
+  await addDoc(collection(db, 'eventTemplates'), {
+    managerId,
+    name: 'General Event Template',
+    roles: [
+      {
+        id: 'lead',
+        name: 'Team Lead',
+        tasks: [
+          { id: 'briefing', name: 'Run pre-shift briefing', expectedOffsetMinutes: 15 },
+          { id: 'checkpoint', name: 'Send first-hour checkpoint', expectedOffsetMinutes: 60 },
+        ],
+      },
+    ],
+    defaultTime: '10:00',
+    defaultLocation: 'TBD',
+    defaultDescription: 'Default event template. Customize roles and tasks as needed.',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function watchManagerEventTemplates(managerId: string, cb: (items: EventTemplate[]) => void) {
+  const q = query(collection(db, 'eventTemplates'), where('managerId', '==', managerId));
+  return onSnapshot(q, (snap) => {
+    const items = mapEventTemplates(snap).sort((a, b) => toTemplateUpdateTime(b.updatedAt) - toTemplateUpdateTime(a.updatedAt));
+    cb(items);
+  });
+}
+
+export async function createEventTemplate(managerId: string, input: UpsertEventTemplateInput) {
+  const ref = await addDoc(collection(db, 'eventTemplates'), {
+    managerId,
+    name: input.name,
+    roles: input.roles,
+    defaultLocation: input.defaultLocation || null,
+    defaultTime: input.defaultTime || null,
+    defaultDescription: input.defaultDescription || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return ref.id;
+}
+
+export async function updateEventTemplate(params: { managerId: string; templateId: string; input: UpsertEventTemplateInput }) {
+  const ref = doc(db, 'eventTemplates', params.templateId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Template not found');
+
+  const template = snap.data() as Partial<EventTemplate>;
+  if (template.managerId !== params.managerId) throw new Error('You can only edit your own templates');
+
+  await updateDoc(ref, {
+    name: params.input.name,
+    roles: params.input.roles,
+    defaultLocation: params.input.defaultLocation || null,
+    defaultTime: params.input.defaultTime || null,
+    defaultDescription: params.input.defaultDescription || null,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteEventTemplate(params: { managerId: string; templateId: string }) {
+  const ref = doc(db, 'eventTemplates', params.templateId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const template = snap.data() as Partial<EventTemplate>;
+  if (template.managerId !== params.managerId) throw new Error('You can only delete your own templates');
+
+  await deleteDoc(ref);
 }
 
 export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (items: RoleAssignmentNotification[]) => void) {
@@ -282,6 +401,17 @@ export async function createDispatchEvent(params: {
     teamIds: eventPayload.teamIds,
     roles: eventPayload.roles,
   };
+}
+
+export async function deleteDispatchEvent(params: { eventId: string; managerId: string }) {
+  const ref = doc(db, 'events', params.eventId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const event = snap.data() as Omit<DispatchEvent, 'id'>;
+  if (event.managerId !== params.managerId) throw new Error('Only the event manager can delete this event');
+
+  await deleteDoc(ref);
 }
 
 export async function loadWorkerTeams(workerId: string): Promise<Team[]> {

@@ -1,18 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
   createDispatchEvent,
+  createEventTemplate,
+  deleteDispatchEvent,
+  deleteEventTemplate,
+  ensureDefaultEventTemplates,
   loadUserProfilesByIds,
   respondToRoleAssignmentNotification,
   updateEventRoleAssignment,
+  updateEventTemplate,
   watchManagerEvents,
+  watchManagerEventTemplates,
   watchManagerTeams,
   watchWorkerEvents,
   watchWorkerRoleAssignmentNotifications,
 } from '@/services/dispatch';
-import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTemplate, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
 type ManagerNamesMap = Record<string, string>;
@@ -42,14 +49,7 @@ type TemplateRolePreview = {
   tasks: TemplateTaskPreview[];
 };
 
-type EventTemplateOption = {
-  id: string;
-  name: string;
-  roles?: TemplateRolePreview[];
-  defaultLocation?: string;
-  defaultTime?: string;
-  defaultDescription?: string;
-};
+type EventTemplateOption = EventTemplate;
 
 type CreateEventRoleDraft = {
   id: string;
@@ -63,117 +63,6 @@ type TemplateRoleDraft = {
   name: string;
   tasks: TemplateTaskPreview[];
 };
-
-const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
-  {
-    id: 'street-team',
-    name: 'Street Team Activation',
-    roles: [
-      {
-        id: 'lead-ambassador',
-        name: 'Lead Ambassador',
-        tasks: [
-          { id: 'briefing', name: 'Run pre-shift briefing', expectedOffsetMinutes: 10 },
-          { id: 'zone-check', name: 'Confirm zone assignments', expectedOffsetMinutes: 25 },
-          { id: 'checkpoint', name: 'Submit first-hour checkpoint', expectedOffsetMinutes: 60 },
-        ],
-      },
-      {
-        id: 'flyer-specialist',
-        name: 'Flyer Specialist',
-        tasks: [
-          { id: 'pickup', name: 'Pick up flyer inventory', expectedOffsetMinutes: 5 },
-          { id: 'rotation', name: 'Rotate handout hotspots', expectedOffsetMinutes: 45 },
-          { id: 'recap', name: 'Report distribution totals', expectedOffsetMinutes: 90 },
-        ],
-      },
-      {
-        id: 'engagement-runner',
-        name: 'Engagement Runner',
-        tasks: [
-          { id: 'script', name: 'Start engagement script rounds', expectedOffsetMinutes: 15 },
-          { id: 'sampling', name: 'Launch sample sweep', expectedOffsetMinutes: 40 },
-          { id: 'handoff', name: 'Handoff leads to manager', expectedOffsetMinutes: 100 },
-        ],
-      },
-    ],
-    defaultTime: '10:00',
-    defaultLocation: 'Downtown',
-    defaultDescription: 'Street-level promotion with handouts and passersby engagement.',
-  },
-  {
-    id: 'mall-pop-up',
-    name: 'Mall Pop-Up',
-    roles: [
-      {
-        id: 'booth-manager',
-        name: 'Booth Manager',
-        tasks: [
-          { id: 'open', name: 'Open booth and check signage', expectedOffsetMinutes: 10 },
-          { id: 'stock', name: 'Verify promo stock levels', expectedOffsetMinutes: 35 },
-          { id: 'closeout', name: 'Complete closeout checklist', expectedOffsetMinutes: 150 },
-        ],
-      },
-      {
-        id: 'demo-host',
-        name: 'Demo Host',
-        tasks: [
-          { id: 'demo-start', name: 'Start first demo cycle', expectedOffsetMinutes: 20 },
-          { id: 'qa', name: 'Run audience Q&A', expectedOffsetMinutes: 75 },
-          { id: 'capture', name: 'Capture lead recap', expectedOffsetMinutes: 135 },
-        ],
-      },
-    ],
-    defaultTime: '12:00',
-    defaultLocation: 'City Mall',
-    defaultDescription: 'Retail-facing booth coverage with product demos and lead capture.',
-  },
-  {
-    id: 'festival-booth',
-    name: 'Festival Booth',
-    roles: [
-      {
-        id: 'setup-captain',
-        name: 'Setup Captain',
-        tasks: [
-          { id: 'arrival', name: 'Arrive and inspect footprint', expectedOffsetMinutes: 0 },
-          { id: 'build', name: 'Complete booth buildout', expectedOffsetMinutes: 30 },
-          { id: 'handoff', name: 'Handoff setup status', expectedOffsetMinutes: 50 },
-        ],
-      },
-      {
-        id: 'welcome-host',
-        name: 'Welcome Host',
-        tasks: [
-          { id: 'welcome-open', name: 'Open welcome queue', expectedOffsetMinutes: 10 },
-          { id: 'line-flow', name: 'Maintain line flow', expectedOffsetMinutes: 70 },
-          { id: 'summary', name: 'Send engagement summary', expectedOffsetMinutes: 140 },
-        ],
-      },
-      {
-        id: 'sampling-lead',
-        name: 'Sampling Lead',
-        tasks: [
-          { id: 'prep', name: 'Prep product samples', expectedOffsetMinutes: 15 },
-          { id: 'wave-two', name: 'Start second sampling wave', expectedOffsetMinutes: 80 },
-          { id: 'inventory', name: 'Log remaining samples', expectedOffsetMinutes: 155 },
-        ],
-      },
-      {
-        id: 'breakdown-support',
-        name: 'Breakdown Support',
-        tasks: [
-          { id: 'pack', name: 'Pack teardown kits', expectedOffsetMinutes: 140 },
-          { id: 'teardown', name: 'Teardown booth', expectedOffsetMinutes: 180 },
-          { id: 'loadout', name: 'Finalize loadout checklist', expectedOffsetMinutes: 210 },
-        ],
-      },
-    ],
-    defaultTime: '09:00',
-    defaultLocation: 'Festival Grounds',
-    defaultDescription: 'High-traffic booth operation with staggered shift handoffs.',
-  },
-];
 
 export default function EventsScreen() {
   const { profile } = useSession();
@@ -197,8 +86,8 @@ export default function EventsScreen() {
   const [templateDefaultLocationDraft, setTemplateDefaultLocationDraft] = useState('');
   const [templateDefaultDescriptionDraft, setTemplateDefaultDescriptionDraft] = useState('');
   const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
-  const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
+  const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [reopenCreateEventAfterTemplateFlow, setReopenCreateEventAfterTemplateFlow] = useState(false);
   const [pendingRoleNotifications, setPendingRoleNotifications] = useState<Array<{
@@ -216,6 +105,7 @@ export default function EventsScreen() {
   const [optimisticCreatedEvents, setOptimisticCreatedEvents] = useState<DispatchEvent[]>([]);
   const [rolePickerRoleId, setRolePickerRoleId] = useState<string | null>(null);
   const [assignmentBusyKey, setAssignmentBusyKey] = useState<string | null>(null);
+  const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
   const canCreateEvent = profile?.role === 'manager';
 
   const buildCreateEventRolesDraft = (template?: EventTemplateOption): CreateEventRoleDraft[] => {
@@ -252,6 +142,27 @@ export default function EventsScreen() {
     return watchManagerTeams(profile.uid, (teams) => {
       const workerIds = [...new Set(teams.flatMap((team) => team.workerIds || []).filter(Boolean))];
       setTeamWorkerIds(workerIds);
+    });
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager') {
+      setTemplateOptions([]);
+      setSelectedTemplateId('');
+      return;
+    }
+
+    ensureDefaultEventTemplates(profile.uid).catch((error) => {
+      console.warn('Failed to ensure default templates', error);
+    });
+
+    return watchManagerEventTemplates(profile.uid, (items) => {
+      setTemplateOptions(items);
+      setSelectedTemplateId((currentId) => {
+        if (!items.length) return '';
+        if (currentId && items.some((template) => template.id === currentId)) return currentId;
+        return items[0].id;
+      });
     });
   }, [profile]);
 
@@ -336,6 +247,11 @@ export default function EventsScreen() {
 
   const openCreateEventDrawer = () => {
     if (!canCreateEvent) return;
+    if (!templateOptions.length) {
+      Alert.alert('Templates Loading', 'Templates are still syncing. Try again in a moment.');
+      return;
+    }
+
     setReplaceDrawer(INITIAL_DRAWER);
     setInviteDrawer(INITIAL_DRAWER);
 
@@ -429,9 +345,9 @@ export default function EventsScreen() {
     router.setParams({ openTemplateDrawer: undefined, templateId: undefined });
   }, [params.openTemplateDrawer, params.templateId, router, templateOptions]);
 
-  const saveTemplate = () => {
+  const saveTemplate = async () => {
     const name = templateNameDraft.trim();
-    if (!name) return;
+    if (!name || !profile?.uid) return;
 
     const sanitizedRoles = templateRolesDraft
       .map((role, index) => {
@@ -453,36 +369,38 @@ export default function EventsScreen() {
       })
       .filter((role) => role.name.length > 0);
 
-    if (editingTemplateId) {
-      setTemplateOptions((prev) => prev.map((template) => (
-        template.id === editingTemplateId
-          ? {
-              ...template,
-              name,
-              roles: sanitizedRoles,
-              defaultTime: templateDefaultTimeDraft.trim() || undefined,
-              defaultLocation: templateDefaultLocationDraft.trim() || undefined,
-              defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
-            }
-          : template
-      )));
+    try {
+      if (editingTemplateId) {
+        await updateEventTemplate({
+          managerId: profile.uid,
+          templateId: editingTemplateId,
+          input: {
+            name,
+            roles: sanitizedRoles,
+            defaultTime: templateDefaultTimeDraft.trim() || undefined,
+            defaultLocation: templateDefaultLocationDraft.trim() || undefined,
+            defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
+          },
+        });
+
+        closeCreateTemplateDrawer();
+        return;
+      }
+
+      const id = await createEventTemplate(profile.uid, {
+        name,
+        roles: sanitizedRoles,
+        defaultTime: templateDefaultTimeDraft.trim() || undefined,
+        defaultLocation: templateDefaultLocationDraft.trim() || undefined,
+        defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
+      });
+
+      setSelectedTemplateId(id);
       closeCreateTemplateDrawer();
-      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save template right now.';
+      Alert.alert('Template Save Failed', message);
     }
-
-    const id = `custom-${Date.now()}`;
-    const nextTemplate: EventTemplateOption = {
-      id,
-      name,
-      roles: sanitizedRoles,
-      defaultTime: templateDefaultTimeDraft.trim() || undefined,
-      defaultLocation: templateDefaultLocationDraft.trim() || undefined,
-      defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
-    };
-
-    setTemplateOptions((prev) => [nextTemplate, ...prev]);
-    setSelectedTemplateId(id);
-    closeCreateTemplateDrawer();
   };
 
   const addTemplateRoleDraft = () => {
@@ -563,15 +481,19 @@ export default function EventsScreen() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            setTemplateOptions((prev) => {
-              const remaining = prev.filter((option) => option.id !== template.id);
-              if (!remaining.length) return prev;
-              if (selectedTemplateId === template.id) {
-                setSelectedTemplateId(remaining[0].id);
-              }
-              return remaining;
-            });
+          onPress: async () => {
+            if (!profile?.uid) return;
+            if (templateOptions.length <= 1) {
+              Alert.alert('Template Required', 'You must keep at least one template.');
+              return;
+            }
+
+            try {
+              await deleteEventTemplate({ managerId: profile.uid, templateId: template.id });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Unable to delete template right now.';
+              Alert.alert('Template Delete Failed', message);
+            }
           },
         },
       ]
@@ -810,6 +732,35 @@ export default function EventsScreen() {
     }
   };
 
+  const handleDeleteEvent = (event: DispatchEvent) => {
+    if (!profile?.uid || profile.role !== 'manager') return;
+
+    Alert.alert(
+      'Delete Event',
+      `Delete "${event.name}"? This cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => swipeableRefs.current[event.id]?.close(),
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDispatchEvent({ eventId: event.id, managerId: profile.uid });
+            } catch (error) {
+              Alert.alert('Unable to delete event', error instanceof Error ? error.message : 'Please try again.');
+            } finally {
+              swipeableRefs.current[event.id]?.close();
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const hasEventSchedule = eventDateDraft.trim().length > 0 && eventTimeDraft.trim().length > 0;
   const canCreateEventNow = !!selectedTemplate && hasEventSchedule && eventLocationDraft.trim().length > 0 && eventDescriptionDraft.trim().length > 0;
 
@@ -881,7 +832,7 @@ export default function EventsScreen() {
           const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
           const signupRatio = getWorkerSignupRatio(item);
 
-          return (
+          const card = (
             <Pressable
               style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}
               onPress={() => toggleExpanded(item.id)}>
@@ -910,6 +861,22 @@ export default function EventsScreen() {
                 </>
               )}
             </Pressable>
+          );
+
+          if (profile?.role !== 'manager') return card;
+
+          return (
+            <Swipeable
+              ref={(ref) => { swipeableRefs.current[item.id] = ref; }}
+              renderRightActions={() => (
+                <Pressable style={styles.swipeDeleteAction} onPress={() => handleDeleteEvent(item)}>
+                  <Text style={styles.swipeDeleteActionText}>Delete</Text>
+                </Pressable>
+              )}
+              rightThreshold={40}
+              overshootRight={false}>
+              {card}
+            </Swipeable>
           );
         }}
       />
@@ -1449,6 +1416,15 @@ const styles = StyleSheet.create({
   pendingActionAcceptTextDark: { color: '#dbeafe' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  swipeDeleteAction: {
+    marginBottom: 10,
+    borderRadius: 12,
+    width: 92,
+    backgroundColor: '#b91c1c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swipeDeleteActionText: { color: '#fee2e2', fontWeight: '700' },
   cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontWeight: '700', fontSize: 20, flex: 1, marginRight: 8 },
