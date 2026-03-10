@@ -259,6 +259,9 @@ export default function TeamsScreen() {
 
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
                 <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
+                <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
+                  Invite keeps this worker unlinked until they sign in with that email.
+                </Text>
               </>
             )}
 
@@ -346,6 +349,9 @@ const styles = StyleSheet.create({
   teamChipTextDark: { color: '#cbd5e1' },
   teamChipTextActive: { color: '#1e3a8a' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
+  helperText: { marginTop: 6, fontSize: 11 },
+  helperTextLight: { color: '#64748b' },
+  helperTextDark: { color: '#94a3b8' },
   message: { marginTop: 12, fontSize: 12, fontWeight: '600' },
   messageInfo: { color: '#1e40af' },
   messageSuccess: { color: '#15803d' },

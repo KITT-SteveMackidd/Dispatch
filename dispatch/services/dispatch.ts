@@ -110,10 +110,10 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
     const reason = error instanceof Error ? error.message : 'Invite email transport failed';
     await updateDoc(inviteRef, {
       status: 'send_failed',
-      statusReason: `Invite queued but email failed: ${reason}`,
+      statusReason: `Invite saved but delivery failed: ${reason}`,
       deliveryErrorAt: serverTimestamp(),
     });
-    throw new Error(`Invite saved, but email failed to send: ${reason}`);
+    throw new Error(`Invite saved, but delivery failed: ${reason}`);
   }
 }
 

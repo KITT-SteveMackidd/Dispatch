@@ -157,7 +157,7 @@
     "title": "Add email-based invite flow in Add Member drawer and send app-link invite email",
     "status": "Done",
     "priority": "High",
-    "statusReason": "Reworked and re-verified: Add Member drawer now uses email, invite action sends through configured HTTP transport or Firebase mail-collection fallback, and drawer reports explicit success/failure; invite keeps worker unlinked until acceptance during sign-in/sign-up flow. Validated with dispatch `npx tsc --noEmit`."
+    "statusReason": "2026-03-10 revalidation: Add Member drawer uses email and invite send path now works through configured HTTP endpoint or Firebase mail queue fallback with explicit success/error UI; worker stays unlinked until sign-in acceptance flow. Checked with dispatch `npx tsc --noEmit`."
   },
   {
     "id": "DSP-021",
@@ -197,7 +197,7 @@
     "title": "Refinement pass: WhatsApp/Telegram chat layout and composer behavior",
     "status": "Done",
     "priority": "Medium",
-    "statusReason": "Reworked chat refinement in dispatch/app/chat/[workerId].tsx to WhatsApp/Telegram-like behavior with keyboard-safe anchored composer, reliable send via button/keyboard submit, empty-draft guard, and auto-scroll to latest message; validated with dispatch `npx tsc --noEmit`."
+    "statusReason": "2026-03-10 revalidation: chat screen now behaves like WhatsApp/Telegram with keyboard-safe anchored composer, reliable send on button/submit, disabled empty send, and auto-scroll to latest message. Checked with dispatch `npx tsc --noEmit`."
   },
   {
     "id": "DSP-026",
