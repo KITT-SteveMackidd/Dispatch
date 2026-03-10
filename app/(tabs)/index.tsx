@@ -110,6 +110,26 @@ export default function EventsScreen() {
   const [rolePickerRoleId, setRolePickerRoleId] = useState<string | null>(null);
   const canCreateEvent = profile?.role === 'manager';
 
+  const buildCreateEventRolesDraft = (template?: EventTemplateOption): CreateEventRoleDraft[] => {
+    if (!template) return [];
+
+    if (template.roles?.length) {
+      return template.roles.map((role, index) => ({
+        id: role.id || `role-${index + 1}`,
+        name: role.name || `Role ${index + 1}`,
+        taskCount: role.taskCount || 0,
+        assignedWorkerId: null,
+      }));
+    }
+
+    return Array.from({ length: Math.max(0, template.roleCount || 0) }).map((_, index) => ({
+      id: `${template.id}-role-${index + 1}`,
+      name: `Role ${index + 1}`,
+      taskCount: 0,
+      assignedWorkerId: null,
+    }));
+  };
+
   useEffect(() => {
     if (!profile) return;
     return profile.role === 'manager'
@@ -199,11 +219,14 @@ export default function EventsScreen() {
     setEventTimeDraft('');
     setEventLocationDraft(initialTemplate?.defaultLocation || '');
     setEventDescriptionDraft(initialTemplate?.defaultDescription || '');
+    setCreateEventRolesDraft(buildCreateEventRolesDraft(initialTemplate));
+    setRolePickerRoleId(null);
     setCreateEventDrawerOpen(true);
   };
 
   const closeCreateEventDrawer = () => {
     setCreateEventDrawerOpen(false);
+    setRolePickerRoleId(null);
   };
 
   const openCreateTemplateDrawer = (template?: EventTemplateOption) => {
@@ -389,12 +412,15 @@ export default function EventsScreen() {
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
+  const selectedTemplateRoles = selectedTemplate?.roles || [];
   const isEditingTemplate = !!editingTemplateId;
 
   useEffect(() => {
     if (!createEventDrawerOpen || !selectedTemplate) return;
     setEventLocationDraft(selectedTemplate.defaultLocation || '');
     setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
+    setCreateEventRolesDraft(buildCreateEventRolesDraft(selectedTemplate));
+    setRolePickerRoleId(null);
   }, [createEventDrawerOpen, selectedTemplate?.id]);
 
   const hasEventSchedule = eventDateDraft.trim().length > 0 && eventTimeDraft.trim().length > 0;
