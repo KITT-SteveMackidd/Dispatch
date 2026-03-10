@@ -8,6 +8,7 @@ export default function ProfileScreen() {
   const { resolvedThemeMode } = useThemeMode();
   const router = useRouter();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const canManageTemplates = profile?.role === 'manager';
 
   const stub = (label: string) => Alert.alert(label, 'This panel is a UI placeholder for now.');
 
@@ -20,6 +21,13 @@ export default function ProfileScreen() {
       </View>
 
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}><Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>⚙️  Account Settings</Text></Pressable>
+      {canManageTemplates ? (
+        <Pressable
+          style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]}
+          onPress={() => router.push({ pathname: '/(tabs)/index', params: { openTemplateDrawer: '1' } })}>
+          <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>🗂️  Manage Event Templates</Text>
+        </Pressable>
+      ) : null}
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => stub('Notifications')}><Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>🔔  Notifications</Text></Pressable>
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => stub('Help & Support')}><Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>❓  Help & Support</Text></Pressable>
     </View>

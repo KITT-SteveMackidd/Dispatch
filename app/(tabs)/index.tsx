@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { loadUserProfilesByIds, updateEventRoleAssignment, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
@@ -157,6 +158,8 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
 
 export default function EventsScreen() {
   const { profile } = useSession();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ openTemplateDrawer?: string; templateId?: string }>();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
@@ -312,6 +315,22 @@ export default function EventsScreen() {
     setEditingTemplateId(null);
     setTemplateNameDraft('');
   };
+
+  useEffect(() => {
+    if (params.openTemplateDrawer !== '1') return;
+
+    const requestedTemplateId = typeof params.templateId === 'string' ? params.templateId : null;
+    const requestedTemplate = requestedTemplateId ? templateOptions.find((template) => template.id === requestedTemplateId) : undefined;
+
+    if (requestedTemplate) {
+      setSelectedTemplateId(requestedTemplate.id);
+      openCreateTemplateDrawer(requestedTemplate);
+    } else {
+      openCreateTemplateDrawer();
+    }
+
+    router.setParams({ openTemplateDrawer: undefined, templateId: undefined });
+  }, [params.openTemplateDrawer, params.templateId, router, templateOptions]);
 
   const saveTemplate = () => {
     const name = templateNameDraft.trim();
