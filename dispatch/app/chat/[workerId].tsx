@@ -22,6 +22,7 @@ export default function WorkerChatScreen() {
     teamName?: string;
     teamMemberIds?: string;
     isTeamAll?: string;
+    teamThreadPath?: string;
   }>();
 
   const workerId = params.workerId ?? 'worker';
@@ -75,6 +76,7 @@ export default function WorkerChatScreen() {
         <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{workerLabel}</Text>
         <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>{headerSubtitle}</Text>
         {params.teamName ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Team: {params.teamName}</Text> : null}
+        {params.teamThreadPath ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Thread: {params.teamThreadPath}</Text> : null}
         {params.eventName ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Event: {params.eventName}</Text> : null}
       </View>
 

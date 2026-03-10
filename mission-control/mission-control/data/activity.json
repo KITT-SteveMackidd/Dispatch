@@ -742,5 +742,21 @@
     "state": "working",
     "zone": "computer",
     "task": "Completed DSP-025: refined chat layout/composer behavior in dispatch/app/chat/[workerId].tsx (keyboard avoidance, safer composer/send UX, polished bubble styling) and passed dispatch TypeScript validation with npx tsc --noEmit."
+  },
+  {
+    "id": "evt-dispatch-redo-dsp020-dsp025-20260310T030159Z",
+    "ts": "2026-03-10T03:01:59.180Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Reopened redo complete: DSP-020 invite flow now sends via endpoint or Firebase mail queue with explicit UI feedback and deferred worker linking; DSP-025 chat composer/send behavior refined and revalidated."
+  },
+  {
+    "id": "evt-dispatch-dsp014-complete-20260310T030249Z",
+    "ts": "2026-03-10T03:02:49Z",
+    "agent": "finish-dsp014",
+    "state": "working",
+    "zone": "computer",
+    "task": "Completed DSP-014: retained single-member direct chat routing, ensured multi-member flow presents synthetic All option, and passed explicit team thread context (teams/{teamId}/all) into chat route; validated with dispatch npx tsc --noEmit and marked todo Done."
   }
 ]
