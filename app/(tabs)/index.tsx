@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { loadUserProfilesByIds, updateEventRoleAssignment, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
+import {
+  createDispatchEvent,
+  loadUserProfilesByIds,
+  respondToRoleAssignmentNotification,
+  updateEventRoleAssignment,
+  watchManagerEvents,
+  watchManagerTeams,
+  watchWorkerEvents,
+  watchWorkerRoleAssignmentNotifications,
+} from '@/services/dispatch';
 import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
@@ -190,6 +199,14 @@ export default function EventsScreen() {
   const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [pendingRoleNotifications, setPendingRoleNotifications] = useState<Array<{
+    id: string;
+    action: 'assign' | 'remove';
+    eventName?: string;
+    roleId: string;
+  }>>([]);
+  const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null);
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
   const [eventLocationDraft, setEventLocationDraft] = useState('');
@@ -227,6 +244,22 @@ export default function EventsScreen() {
     return watchManagerTeams(profile.uid, (teams) => {
       const workerIds = [...new Set(teams.flatMap((team) => team.workerIds || []).filter(Boolean))];
       setTeamWorkerIds(workerIds);
+    });
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'worker') {
+      setPendingRoleNotifications([]);
+      return;
+    }
+
+    return watchWorkerRoleAssignmentNotifications(profile.uid, (items) => {
+      setPendingRoleNotifications(items.map((item) => ({
+        id: item.id,
+        action: item.action,
+        eventName: item.eventName,
+        roleId: item.roleId,
+      })));
     });
   }, [profile]);
 
@@ -314,6 +347,7 @@ export default function EventsScreen() {
   };
 
   const openCreateTemplateDrawer = (template?: EventTemplateOption) => {
+    setTemplatePickerOpen(false);
     if (template) {
       setEditingTemplateId(template.id);
       setTemplateNameDraft(template.name);
@@ -706,8 +740,40 @@ export default function EventsScreen() {
     setRolePickerRoleId(null);
   }, [createEventDrawerOpen, selectedTemplate?.id]);
 
+  const handleRoleNotificationResponse = async (notificationId: string, response: 'accept' | 'decline') => {
+    if (!profile?.uid || notificationBusyId === notificationId) return;
+    try {
+      setNotificationBusyId(notificationId);
+      await respondToRoleAssignmentNotification({ notificationId, workerId: profile.uid, response });
+    } catch (error) {
+      Alert.alert('Unable to respond', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setNotificationBusyId(null);
+    }
+  };
+
+  const handleCreateEvent = async () => {
+    if (!profile?.uid || !selectedTemplate) return;
+
+    try {
+      await createDispatchEvent({
+        managerId: profile.uid,
+        name: selectedTemplate.name,
+        date: eventDateDraft,
+        time: eventTimeDraft,
+        location: eventLocationDraft,
+        description: eventDescriptionDraft,
+        roles: createEventRolesDraft,
+      });
+      Alert.alert('Event created', 'Your event has been created and added to upcoming assignments.');
+      closeCreateEventDrawer();
+    } catch (error) {
+      Alert.alert('Unable to create event', error instanceof Error ? error.message : 'Please check required fields and try again.');
+    }
+  };
+
   const hasEventSchedule = eventDateDraft.trim().length > 0 && eventTimeDraft.trim().length > 0;
-  const canSaveEventDraft = !!selectedTemplate && hasEventSchedule && eventLocationDraft.trim().length > 0 && eventDescriptionDraft.trim().length > 0;
+  const canCreateEventNow = !!selectedTemplate && hasEventSchedule && eventLocationDraft.trim().length > 0 && eventDescriptionDraft.trim().length > 0;
 
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
@@ -723,6 +789,40 @@ export default function EventsScreen() {
           </Pressable>
         ) : null}
       </View>
+      {profile?.role === 'worker' && pendingRoleNotifications.length ? (
+        <View style={[styles.pendingNotificationsCard, isDarkMode ? styles.pendingNotificationsCardDark : styles.pendingNotificationsCardLight]}>
+          <Text style={[styles.pendingNotificationsTitle, isDarkMode ? styles.pendingNotificationsTitleDark : styles.pendingNotificationsTitleLight]}>
+            Role updates need your response
+          </Text>
+          {pendingRoleNotifications.map((notification) => {
+            const busy = notificationBusyId === notification.id;
+            return (
+              <View key={notification.id} style={styles.pendingNotificationRow}>
+                <Text style={[styles.pendingNotificationText, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                  {notification.eventName || 'Event'} · {notification.action === 'assign' ? 'Assigned to role' : 'Removed from role'}
+                </Text>
+                <View style={styles.pendingNotificationActions}>
+                  <Pressable
+                    disabled={busy}
+                    style={[styles.drawerButton, isDarkMode ? styles.drawerButtonDark : styles.drawerButtonLight]}
+                    onPress={() => handleRoleNotificationResponse(notification.id, 'decline')}>
+                    <Text style={[styles.drawerButtonText, isDarkMode ? styles.drawerButtonTextDark : styles.drawerButtonTextLight]}>
+                      {busy ? '…' : 'Decline'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={busy}
+                    style={styles.drawerClose}
+                    onPress={() => handleRoleNotificationResponse(notification.id, 'accept')}>
+                    <Text style={styles.drawerCloseText}>{busy ? '…' : 'Accept'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+
       <FlatList
         data={upcoming}
         keyExtractor={(i) => i.id}
@@ -847,6 +947,7 @@ export default function EventsScreen() {
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Event</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Choose a template to start your event setup.</Text>
 
+            <ScrollView style={styles.createEventScroll} contentContainerStyle={styles.createEventScrollContent} showsVerticalScrollIndicator>
             <View style={styles.templateSection}>
               <View style={styles.templateHeaderRow}>
                 <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event template</Text>
@@ -858,58 +959,46 @@ export default function EventsScreen() {
                   <Text style={[styles.templateAddButtonText, isDarkMode ? styles.templateAddButtonTextDark : styles.templateAddButtonTextLight]}>+ New Template</Text>
                 </Pressable>
               </View>
-              {templateOptions.map((template) => {
-                const selected = template.id === selectedTemplate?.id;
-                return (
-                  <Pressable
-                    key={template.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select ${template.name} template`}
-                    style={[
-                      styles.templateOption,
-                      isDarkMode ? styles.templateOptionDark : styles.templateOptionLight,
-                      selected && (isDarkMode ? styles.templateOptionSelectedDark : styles.templateOptionSelectedLight),
-                    ]}
-                    onPress={() => setSelectedTemplateId(template.id)}>
-                    <View style={styles.templateOptionHeader}>
-                      <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>{template.name}</Text>
-                      <Text style={[styles.templateBadge, selected && styles.templateBadgeSelected]}>{selected ? 'Selected' : 'Select'}</Text>
-                    </View>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open template selector"
+                style={[styles.templateSelectTrigger, isDarkMode ? styles.templateSelectTriggerDark : styles.templateSelectTriggerLight]}
+                onPress={() => setTemplatePickerOpen(true)}>
+                <View>
+                  <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>{selectedTemplate?.name || 'Select template'}</Text>
+                  {selectedTemplate ? (
                     <Text style={[styles.templateMeta, isDarkMode ? styles.templateMetaDark : styles.templateMetaLight]}>
-                      {getTemplateRoleCount(template)} roles · {getTemplateTaskCount(template)} tasks
-                      {template.defaultTime ? ` · ${template.defaultTime}` : ''}
-                      {template.defaultLocation ? ` · ${template.defaultLocation}` : ''}
+                      {getTemplateRoleCount(selectedTemplate)} roles · {getTemplateTaskCount(selectedTemplate)} tasks
                     </Text>
-                    <View style={styles.templateActionRow}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Edit ${template.name} template`}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          openCreateTemplateDrawer(template);
-                        }}
-                        style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight]}>
-                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>Edit</Text>
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Delete ${template.name} template`}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          deleteTemplate(template);
-                        }}
-                        disabled={templateOptions.length <= 1}
-                        style={[
-                          styles.templateActionButton,
-                          isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight,
-                          templateOptions.length <= 1 && styles.templateActionButtonDisabled,
-                        ]}>
-                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
-                      </Pressable>
-                    </View>
+                  ) : null}
+                </View>
+                <Text style={[styles.templateMeta, isDarkMode ? styles.templateMetaDark : styles.templateMetaLight]}>▼</Text>
+              </Pressable>
+
+              {selectedTemplate ? (
+                <View style={styles.templateActionRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit ${selectedTemplate.name} template`}
+                    onPress={() => openCreateTemplateDrawer(selectedTemplate)}
+                    style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight]}>
+                    <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>Edit</Text>
                   </Pressable>
-                );
-              })}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${selectedTemplate.name} template`}
+                    onPress={() => deleteTemplate(selectedTemplate)}
+                    disabled={templateOptions.length <= 1}
+                    style={[
+                      styles.templateActionButton,
+                      isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight,
+                      templateOptions.length <= 1 && styles.templateActionButtonDisabled,
+                    ]}>
+                    <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.formField}>
@@ -1004,13 +1093,46 @@ export default function EventsScreen() {
             </View>
 
             <Pressable
-              style={[styles.drawerClose, !canSaveEventDraft && styles.drawerCloseDisabled]}
-              disabled={!canSaveEventDraft}
-              onPress={closeCreateEventDrawer}>
-              <Text style={styles.drawerCloseText}>Save Event Draft</Text>
+              style={[styles.drawerClose, !canCreateEventNow && styles.drawerCloseDisabled]}
+              disabled={!canCreateEventNow}
+              onPress={handleCreateEvent}>
+              <Text style={styles.drawerCloseText}>Create Event</Text>
             </Pressable>
             <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateEventDrawer}>
               <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
+            </Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={templatePickerOpen} animationType="slide" transparent onRequestClose={() => setTemplatePickerOpen(false)}>
+        <Pressable style={styles.drawerBackdrop} onPress={() => setTemplatePickerOpen(false)}>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Select Template</Text>
+            <ScrollView style={styles.drawerList}>
+              {templateOptions.map((template) => {
+                const selected = template.id === selectedTemplate?.id;
+                return (
+                  <Pressable
+                    key={`combo-${template.id}`}
+                    style={styles.drawerRow}
+                    onPress={() => {
+                      setSelectedTemplateId(template.id);
+                      setTemplatePickerOpen(false);
+                    }}>
+                    <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>
+                      {template.name} {selected ? '✓' : ''}
+                    </Text>
+                    <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
+                      {getTemplateRoleCount(template)} roles · {getTemplateTaskCount(template)} tasks
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <Pressable style={styles.drawerClose} onPress={() => setTemplatePickerOpen(false)}>
+              <Text style={styles.drawerCloseText}>Done</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -1209,6 +1331,15 @@ const styles = StyleSheet.create({
   empty: { marginTop: 20 },
   emptyLight: { color: '#64748b' },
   emptyDark: { color: '#94a3b8' },
+  pendingNotificationsCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
+  pendingNotificationsCardLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
+  pendingNotificationsCardDark: { borderColor: '#1e3a8a', backgroundColor: '#0b1220' },
+  pendingNotificationsTitle: { fontWeight: '700', fontSize: 13 },
+  pendingNotificationsTitleLight: { color: '#1e3a8a' },
+  pendingNotificationsTitleDark: { color: '#bfdbfe' },
+  pendingNotificationRow: { gap: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#334155' },
+  pendingNotificationText: { fontSize: 12 },
+  pendingNotificationActions: { flexDirection: 'row', gap: 8 },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
   cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
@@ -1298,7 +1429,9 @@ const styles = StyleSheet.create({
   templateTaskRowDark: { borderColor: '#334155', backgroundColor: '#111827' },
   templateTaskLabel: { fontSize: 12, fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
+  drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
+  createEventScroll: { marginTop: 8 },
+  createEventScrollContent: { paddingBottom: 16 },
   drawerLight: { backgroundColor: '#fff' },
   drawerDark: { backgroundColor: '#0f172a' },
   drawerTitle: { fontWeight: '700', fontSize: 18 },
@@ -1317,6 +1450,9 @@ const styles = StyleSheet.create({
   drawerMetaDark: { color: '#94a3b8' },
   templateSection: { marginTop: 14, gap: 8 },
   templateHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  templateSelectTrigger: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  templateSelectTriggerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  templateSelectTriggerDark: { borderColor: '#334155', backgroundColor: '#111827' },
   templateLabel: { fontSize: 13, fontWeight: '700', flex: 1 },
   templateAddButton: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1 },
   templateAddButtonLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },

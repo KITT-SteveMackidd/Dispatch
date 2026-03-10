@@ -32,6 +32,26 @@ export type PersistedChatMessage = {
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
+export type RoleAssignmentNotification = {
+  id: string;
+  workerId: string;
+  managerId: string;
+  eventId: string;
+  roleId: string;
+  eventName?: string;
+  action: 'assign' | 'remove';
+  status: 'pending' | 'accepted' | 'declined';
+  statusReason?: string;
+  createdAt?: { toDate?: () => Date } | Date | null;
+};
+
+export type CreateEventRoleInput = {
+  id: string;
+  name: string;
+  assignedWorkerId?: string | null;
+  tasks?: Array<{ id: string; name: string; optional?: boolean }>;
+};
+
 export function buildChatThreadId(params: {
   teamId?: string;
   selfId: string;
@@ -169,6 +189,74 @@ export function watchWorkerEvents(workerId: string, cb: (items: DispatchEvent[])
 export function watchManagerTeams(managerId: string, cb: (items: Team[]) => void) {
   const q = query(collection(db, 'teams'), where('managerId', '==', managerId));
   return onSnapshot(q, (snap) => cb(mapTeams(snap)));
+}
+
+export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (items: RoleAssignmentNotification[]) => void) {
+  const q = query(collection(db, 'roleAssignmentNotifications'), where('workerId', '==', workerId));
+  return onSnapshot(q, (snap) => {
+    const notifications = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as Omit<RoleAssignmentNotification, 'id'>) }))
+      .filter((item) => item.status === 'pending')
+      .sort((a, b) => {
+        const aTime = a.createdAt && 'toDate' in a.createdAt && typeof a.createdAt.toDate === 'function'
+          ? a.createdAt.toDate().getTime()
+          : 0;
+        const bTime = b.createdAt && 'toDate' in b.createdAt && typeof b.createdAt.toDate === 'function'
+          ? b.createdAt.toDate().getTime()
+          : 0;
+        return bTime - aTime;
+      });
+
+    cb(notifications);
+  });
+}
+
+export async function createDispatchEvent(params: {
+  managerId: string;
+  name: string;
+  date: string;
+  time: string;
+  location: string;
+  description: string;
+  roles: CreateEventRoleInput[];
+}) {
+  const startsAt = new Date(`${params.date.trim()}T${params.time.trim()}:00`);
+  if (Number.isNaN(startsAt.getTime())) {
+    throw new Error('Enter a valid event date and time.');
+  }
+
+  const endsAt = new Date(startsAt.getTime() + 2 * 60 * 60 * 1000);
+  const roles = params.roles.map((role) => {
+    const assignedWorkerIds = role.assignedWorkerId ? [role.assignedWorkerId] : [];
+    return {
+      id: role.id,
+      name: role.name,
+      assignedWorkerIds,
+      openSlots: assignedWorkerIds.length ? 0 : 1,
+      tasks: (role.tasks || []).map((task) => ({
+        id: task.id,
+        name: task.name,
+        optional: !!task.optional,
+        completedBy: [],
+      })),
+    } satisfies EventRole;
+  });
+
+  const workerIds = [...new Set(roles.flatMap((role) => role.assignedWorkerIds || []))];
+
+  await addDoc(collection(db, 'events'), {
+    managerId: params.managerId,
+    workerIds,
+    name: params.name.trim(),
+    location: params.location.trim(),
+    description: params.description.trim(),
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
+    teamIds: [],
+    roles,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
@@ -595,6 +683,69 @@ export async function updateEventRoleAssignment(params: {
           : 'Worker must accept or decline this role removal update.',
       responseOptions: ['accept', 'decline'],
       createdAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function respondToRoleAssignmentNotification(params: {
+  notificationId: string;
+  workerId: string;
+  response: 'accept' | 'decline';
+}) {
+  await runTransaction(db, async (tx) => {
+    const notificationRef = doc(db, 'roleAssignmentNotifications', params.notificationId);
+    const notificationSnap = await tx.get(notificationRef);
+    if (!notificationSnap.exists()) throw new Error('Notification not found');
+
+    const notification = notificationSnap.data() as Omit<RoleAssignmentNotification, 'id'>;
+    if (notification.workerId !== params.workerId) throw new Error('You can only respond to your own notifications');
+    if (notification.status !== 'pending') return;
+
+    const eventRef = doc(db, 'events', notification.eventId);
+    const eventSnap = await tx.get(eventRef);
+    if (!eventSnap.exists()) throw new Error('Event not found');
+
+    const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+    let nextRoles = (event.roles || []) as EventRole[];
+
+    if (params.response === 'decline') {
+      nextRoles = nextRoles.map((role) => {
+        if (role.id !== notification.roleId) return role;
+
+        const assignedWorkerIds = role.assignedWorkerIds || [];
+        const assigned = assignedWorkerIds.includes(params.workerId);
+
+        if (notification.action === 'assign' && assigned) {
+          return {
+            ...role,
+            assignedWorkerIds: assignedWorkerIds.filter((id) => id !== params.workerId),
+            openSlots: (role.openSlots || 0) + 1,
+          };
+        }
+
+        if (notification.action === 'remove' && !assigned) {
+          return {
+            ...role,
+            assignedWorkerIds: [...assignedWorkerIds, params.workerId],
+            openSlots: Math.max(0, (role.openSlots || 0) - 1),
+          };
+        }
+
+        return role;
+      });
+
+      const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
+      tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+    }
+
+    tx.update(notificationRef, {
+      status: params.response === 'accept' ? 'accepted' : 'declined',
+      statusReason:
+        params.response === 'accept'
+          ? 'Worker accepted this role assignment update.'
+          : 'Worker declined this role assignment update.',
+      respondedAt: serverTimestamp(),
+      response: params.response,
     });
   });
 }
