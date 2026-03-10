@@ -11,6 +11,7 @@ export type UserProfile = {
 export type EventTask = {
   id: string;
   name: string;
+  expectedOffsetMinutes?: number;
   dueAt?: string;
   optional?: boolean;
   completedBy?: string[];

@@ -122,7 +122,7 @@ export default function EventsScreen() {
 
   const getTemplateRoleCount = (template: EventTemplateOption) => template.roles?.length ?? 0;
   const getTemplateTaskCount = (template: EventTemplateOption) => (template.roles || []).reduce((sum, role) => sum + (role.tasks?.length || 0), 0);
-  const formatTaskOffset = (offsetMinutes: number) => `+${offsetMinutes}m`;
+  const formatTaskOffset = (offsetMinutes?: number) => `+${Math.max(0, Math.round(offsetMinutes || 0))}m`;
 
   useEffect(() => {
     if (!profile) return;
@@ -550,6 +550,7 @@ export default function EventsScreen() {
           id: `${role.id}-${task.id}`,
           roleName: role.name,
           taskName: task.name,
+          expectedOffsetMinutes: task.expectedOffsetMinutes,
           optional: !!task.optional,
           doneByMe: (task.completedBy ?? []).includes(profile.uid),
         }))
@@ -563,7 +564,7 @@ export default function EventsScreen() {
       <View style={styles.taskList}>
         {workerTasks.map((task) => (
           <View key={task.id} style={styles.taskRow}>
-            <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.taskName}{task.optional ? ' (optional)' : ''}</Text>
+            <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.taskName} · due {formatTaskOffset(task.expectedOffsetMinutes || 0)}{task.optional ? ' (optional)' : ''}</Text>
             <Text style={[styles.taskStatus, isDarkMode ? styles.metaDark : styles.metaLight, task.doneByMe && styles.taskStatusDone]}>{task.doneByMe ? 'Done' : task.roleName}</Text>
           </View>
         ))}
@@ -618,7 +619,7 @@ export default function EventsScreen() {
           <View style={styles.taskList}>
             {role.tasks.map((task) => (
               <View key={task.id} style={styles.taskRow}>
-                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name}{task.optional ? ' (optional)' : ''}</Text>
+                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name} · due {formatTaskOffset(task.expectedOffsetMinutes)}{task.optional ? ' (optional)' : ''}</Text>
               </View>
             ))}
           </View>

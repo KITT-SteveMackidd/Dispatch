@@ -63,7 +63,7 @@ export type CreateEventRoleInput = {
   id: string;
   name: string;
   assignedWorkerId?: string | null;
-  tasks?: Array<{ id: string; name: string; optional?: boolean }>;
+  tasks?: Array<{ id: string; name: string; expectedOffsetMinutes?: number; optional?: boolean }>;
 };
 
 export type UpsertEventTemplateInput = {
@@ -367,6 +367,8 @@ export async function createDispatchEvent(params: {
       tasks: (role.tasks || []).map((task) => ({
         id: task.id,
         name: task.name,
+        expectedOffsetMinutes: Math.max(0, Math.round(task.expectedOffsetMinutes || 0)),
+        dueAt: new Date(startsAt.getTime() + Math.max(0, Math.round(task.expectedOffsetMinutes || 0)) * 60 * 1000).toISOString(),
         optional: !!task.optional,
         completedBy: [],
       })),
