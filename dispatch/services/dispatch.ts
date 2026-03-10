@@ -89,7 +89,7 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
   });
 
   try {
-    await sendInviteEmail({
+    const delivery = await sendInviteEmail({
       email: normalizedEmail,
       teamName: team.name,
       appLink,
@@ -99,12 +99,13 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
     });
 
     await updateDoc(inviteRef, {
-      status: 'sent',
-      statusReason: 'Invite email delivered to configured transport.',
+      status: delivery.status,
+      statusReason: delivery.reason,
       sentAt: serverTimestamp(),
+      emailDelivery: delivery.via,
     });
 
-    return { inviteId: inviteRef.id, queued: false };
+    return { inviteId: inviteRef.id, queued: delivery.status !== 'sent', via: delivery.via };
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Invite email transport failed';
     await updateDoc(inviteRef, {
@@ -123,41 +124,71 @@ async function sendInviteEmail(params: {
   inviteId: string;
   managerId: string;
   teamId: string;
-}) {
+}): Promise<{ status: 'sent' | 'queued'; reason: string; via: 'http-endpoint' | 'firebase-mail-collection' }> {
   const endpoint = (process.env.EXPO_PUBLIC_INVITE_EMAIL_ENDPOINT || '').trim();
-  if (!endpoint) {
-    throw new Error('Missing EXPO_PUBLIC_INVITE_EMAIL_ENDPOINT for invite email transport');
+
+  if (endpoint) {
+    const token = (process.env.EXPO_PUBLIC_INVITE_EMAIL_BEARER_TOKEN || '').trim();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        type: 'dispatch-worker-invite',
+        to: params.email,
+        teamName: params.teamName,
+        appLink: params.appLink,
+        inviteId: params.inviteId,
+        managerId: params.managerId,
+        teamId: params.teamId,
+      }),
+    });
+
+    if (!response.ok) {
+      const raw = await response.text();
+      throw new Error(raw || `Transport HTTP ${response.status}`);
+    }
+
+    return {
+      status: 'sent',
+      reason: 'Invite email delivered through configured HTTP endpoint.',
+      via: 'http-endpoint',
+    };
   }
 
-  const token = (process.env.EXPO_PUBLIC_INVITE_EMAIL_BEARER_TOKEN || '').trim();
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
+  await addDoc(collection(db, collectionName), {
+    to: [params.email],
+    message: {
+      subject: `You are invited to join ${params.teamName} on Dispatch`,
+      text: `You have been invited to join ${params.teamName} on Dispatch. Download the app and sign in with this email to connect with your manager automatically: ${params.appLink}`,
+      html: `<p>You have been invited to join <strong>${params.teamName}</strong> on Dispatch.</p><p><a href="${params.appLink}">Download the app</a> and sign in with <strong>${params.email}</strong> to connect with your manager automatically.</p>`,
     },
-    body: JSON.stringify({
-      type: 'dispatch-worker-invite',
-      to: params.email,
-      teamName: params.teamName,
-      appLink: params.appLink,
+    dispatchInvite: {
       inviteId: params.inviteId,
       managerId: params.managerId,
       teamId: params.teamId,
-    }),
+      teamName: params.teamName,
+      appLink: params.appLink,
+      email: params.email,
+    },
+    createdAt: serverTimestamp(),
   });
 
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(raw || `Transport HTTP ${response.status}`);
-  }
+  return {
+    status: 'queued',
+    reason: `Invite email queued in Firestore collection "${collectionName}" for delivery worker.`,
+    via: 'firebase-mail-collection',
+  };
 }
 
 export async function acceptPendingInvitesForUser(params: { userId: string; email: string }) {
   const normalizedEmail = params.email.trim().toLowerCase();
   if (!normalizedEmail) return;
 
-  const inviteStatuses = ['pending', 'sent', 'send_failed'] as const;
+  const inviteStatuses = ['pending', 'queued', 'sent', 'send_failed'] as const;
 
   for (const status of inviteStatuses) {
     const invitesSnap = await getDocs(

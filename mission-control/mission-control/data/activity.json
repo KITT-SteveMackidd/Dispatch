@@ -710,5 +710,29 @@
     "state": "working",
     "zone": "computer",
     "task": "Dispatch full-drain completed DSP-027: added invite acceptance + manager chat auto-connect bootstrap on auth and marked Done."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-020-20260310T025854Z",
+    "ts": "2026-03-10T02:58:54.976Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-heartbeat-agent-2 claimed DSP-020 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-claim-dsp-025-20260310T025859Z",
+    "ts": "2026-03-10T02:58:59.904Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Dispatch automation claim: dispatch-heartbeat-agent-1 claimed DSP-025 and marked it In Progress."
+  },
+  {
+    "id": "evt-dispatch-heartbeat-agent-2-20260310T030017Z",
+    "ts": "2026-03-10T03:00:17.033Z",
+    "agent": "dispatch-heartbeat-agent-2",
+    "state": "working",
+    "zone": "computer",
+    "task": "Completed DSP-020: validated Add Member drawer email invite flow and invite email transport/app-link path; ran dispatch TypeScript validation (npx tsc --noEmit) successfully; updated dispatch todo status to Done."
   }
 ]

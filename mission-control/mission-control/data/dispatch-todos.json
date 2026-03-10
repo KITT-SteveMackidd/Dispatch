@@ -157,7 +157,7 @@
     "title": "Add email-based invite flow in Add Member drawer and send app-link invite email",
     "status": "Done",
     "priority": "High",
-    "statusReason": "Invite drawer now collects email and calls configured email transport (EXPO_PUBLIC_INVITE_EMAIL_ENDPOINT). On failure, invite is persisted with send_failed + statusReason and UI surfaces explicit error; worker is not linked to team until post-login acceptance flow."
+    "statusReason": "Verified email-based Add Member invite flow and app-link invite email transport in Teams drawer/service; TypeScript check passed; merged/pushed to master."
   },
   {
     "id": "DSP-021",
@@ -195,9 +195,9 @@
     "id": "DSP-025",
     "area": "Chat-UI",
     "title": "Refinement pass: WhatsApp/Telegram chat layout and composer behavior",
-    "status": "Done",
+    "status": "In Progress",
     "priority": "Medium",
-    "statusReason": "Validated refined WhatsApp/Telegram-style chat UI in dispatch/app/chat/[workerId].tsx (thread bubbles + fixed bottom composer/send behavior); dispatch typecheck passed."
+    "statusReason": "Claimed by automation: dispatch-heartbeat-agent-1 at 2026-03-10T02:58:59.904Z"
   },
   {
     "id": "DSP-026",
@@ -214,5 +214,125 @@
     "status": "Done",
     "priority": "High",
     "statusReason": "Implemented invite acceptance on sign-in/sign-up via acceptPendingInvitesForUser (dispatch/services/dispatch.ts): links invited worker into team, marks invite accepted, and creates chatThreads doc for manager-worker auto-connect; dispatch typecheck passed."
+  },
+  {
+    "id": "DSP-028",
+    "area": "Events-Templates",
+    "title": "Create Event: template dropdown selector",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-029",
+    "area": "Events-Templates",
+    "title": "Create Event: + button to create a new template",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-030",
+    "area": "Events-Templates",
+    "title": "Create Event: edit/delete template permanently",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-031",
+    "area": "Events-Create",
+    "title": "Create Event: input date/time, location, description",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-032",
+    "area": "Events-Create",
+    "title": "Create Event: show empty roles from selected template",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-033",
+    "area": "Events-Create",
+    "title": "Role assignment: empty avatar picker assigns worker and fills avatar",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-034",
+    "area": "Notifications",
+    "title": "Role assignment/removal sends worker accept/decline notification",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-035",
+    "area": "Events-Create",
+    "title": "Manager can expand role to view assigned tasks",
+    "status": "To Do",
+    "priority": "Medium",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-036",
+    "area": "Events-Create",
+    "title": "Manager can reassign role worker or remove worker via avatar action",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-037",
+    "area": "Events-Templates",
+    "title": "Template model: roles + tasks + expected completion offset from event start",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-038",
+    "area": "Events-Templates",
+    "title": "Create/edit template drawer accessible from Create Event and Profile",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-039",
+    "area": "Events-Templates",
+    "title": "Template editor: add/update/delete roles",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-040",
+    "area": "Events-Templates",
+    "title": "Template editor: per-role add/update/delete tasks",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-041",
+    "area": "Events-Templates",
+    "title": "Template optional defaults: location/time/description autofill event",
+    "status": "To Do",
+    "priority": "Medium",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
+  },
+  {
+    "id": "DSP-042",
+    "area": "Theme",
+    "title": "Dark mode styling polish still needed across all screens",
+    "status": "To Do",
+    "priority": "High",
+    "statusReason": "Added from latest Dispatch_Bible DOCX (new requirement)."
   }
 ]
