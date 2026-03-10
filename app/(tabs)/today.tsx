@@ -30,6 +30,11 @@ type WorkerChecklistItem = {
   task: EventTask;
 };
 
+type CountdownInfo = {
+  label: string;
+  isOverdue: boolean;
+};
+
 function getWorkerSummaries(event: DispatchEvent): WorkerSummary[] {
   const map = new Map<string, WorkerSummary>();
 
@@ -173,8 +178,10 @@ export default function TodayScreen() {
 
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
     const startsAtMs = +new Date(event.startsAt);
-    if (Number.isFinite(startsAtMs) && Number.isFinite(task.expectedOffsetMinutes)) {
-      return startsAtMs + Math.max(0, Math.round(task.expectedOffsetMinutes || 0)) * 60 * 1000;
+    const offsetMinutes = Number(task.expectedOffsetMinutes);
+
+    if (Number.isFinite(startsAtMs) && Number.isFinite(offsetMinutes)) {
+      return startsAtMs + Math.max(0, offsetMinutes) * 60 * 1000;
     }
 
     if (task.dueAt) {
@@ -203,7 +210,22 @@ export default function TodayScreen() {
     })[0];
   };
 
-  const formatCountdownClock = (dueAtMs?: number) => {
+  const managerNextTask = (event: DispatchEvent): EventTask | null => {
+    const remaining = event.roles
+      .flatMap((role) => role.tasks)
+      .filter((task) => (task.completedBy?.length ?? 0) === 0);
+
+    if (!remaining.length) return null;
+
+    return [...remaining].sort((a, b) => {
+      const aDue = getTaskDueAtMs(event, a);
+      const bDue = getTaskDueAtMs(event, b);
+      if (aDue !== bDue) return aDue - bDue;
+      return a.name.localeCompare(b.name);
+    })[0];
+  };
+
+  const formatCountdownClock = (dueAtMs?: number): CountdownInfo | null => {
     if (!Number.isFinite(dueAtMs)) return null;
 
     const msRemaining = (dueAtMs || 0) - nowMs;
@@ -216,8 +238,8 @@ export default function TodayScreen() {
       .padStart(2, '0');
     const seconds = (totalSeconds % 60).toString().padStart(2, '0');
 
-    if (msRemaining <= 0) return `${hours}:${minutes}:${seconds} overdue`;
-    return `${hours}:${minutes}:${seconds} remaining`;
+    if (msRemaining <= 0) return { label: `Overdue by ${hours}:${minutes}:${seconds}`, isOverdue: true };
+    return { label: `${hours}:${minutes}:${seconds} remaining`, isOverdue: false };
   };
 
   const getEventChecklist = (event: DispatchEvent): WorkerChecklistItem[] => {
@@ -327,6 +349,9 @@ export default function TodayScreen() {
           const nextTask = profile?.role === 'worker' ? workerNextTask(item, profile.uid) : null;
           const nextTaskDueAtMs = nextTask ? getTaskDueAtMs(item, nextTask) : Number.POSITIVE_INFINITY;
           const countdownClock = formatCountdownClock(nextTaskDueAtMs);
+          const managerNext = isManager ? managerNextTask(item) : null;
+          const managerNextDueAtMs = managerNext ? getTaskDueAtMs(item, managerNext) : Number.POSITIVE_INFINITY;
+          const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
 
           const card = (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
@@ -338,15 +363,19 @@ export default function TodayScreen() {
               <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventDate} • {eventTime}</Text>
 
               {isManager ? (
-                <View style={styles.progressSection}>
-                  <View style={styles.progressHeader}>
-                    <Text style={styles.progressLabel}>Task progress</Text>
-                    <Text style={styles.progressCount}>{progress.done}/{progress.total}</Text>
+                <>
+                  <View style={styles.progressSection}>
+                    <View style={styles.progressHeader}>
+                      <Text style={styles.progressLabel}>Task progress</Text>
+                      <Text style={styles.progressCount}>{progress.done}/{progress.total}</Text>
+                    </View>
+                    <View style={styles.progressTrack}>
+                      <View style={[styles.progressFill, { width: `${progress.percent}%` }]} />
+                    </View>
                   </View>
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${progress.percent}%` }]} />
-                  </View>
-                </View>
+                  <Text style={styles.nextTaskLabel}>Next task: {managerNext ? `${managerNext.name} · due ${formatTaskOffset(managerNext.expectedOffsetMinutes)}` : 'All tasks complete'}</Text>
+                  {managerCountdownClock ? <Text style={[styles.timeRemaining, managerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {managerCountdownClock.label}</Text> : null}
+                </>
               ) : (
                 <>
                   <View style={[styles.badge, { backgroundColor: b.bg }]}>
@@ -355,7 +384,7 @@ export default function TodayScreen() {
                   <Text style={styles.meta}>Assigned by {managerInfo?.displayName || 'Manager'}</Text>
                   <Text style={styles.meta}>Manager phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
                   <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskOffset(nextTask.expectedOffsetMinutes)}` : 'All assigned tasks complete'}</Text>
-                  {countdownClock && <Text style={styles.timeRemaining}>Countdown: {countdownClock}</Text>}
+                  {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {countdownClock.label}</Text> : null}
                 </>
               )}
 
@@ -407,7 +436,7 @@ export default function TodayScreen() {
                             {workerNext ? (
                               <>
                                 <Text style={styles.workerMeta}>Next task: {workerNext.name} · due {formatTaskOffset(workerNext.expectedOffsetMinutes)}</Text>
-                                {workerCountdownClock ? <Text style={styles.timeRemaining}>Countdown: {workerCountdownClock}</Text> : null}
+                                {workerCountdownClock ? <Text style={[styles.timeRemaining, workerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {workerCountdownClock.label}</Text> : null}
                               </>
                             ) : (
                               <Text style={styles.workerMeta}>Next task: All assigned tasks complete</Text>
@@ -489,6 +518,7 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: '#2563eb', borderRadius: 999 },
   nextTaskLabel: { color: '#0f172a', fontSize: 13, fontWeight: '600', marginTop: 6 },
   timeRemaining: { color: '#2563eb', fontSize: 12, fontWeight: '600', marginTop: 2 },
+  timeRemainingOverdue: { color: '#dc2626' },
   workerSection: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10, gap: 10 },
   workerCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'flex-start' },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
