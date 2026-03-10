@@ -86,6 +86,7 @@ export default function WorkerChatScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.thread}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         renderItem={({ item: message }) => {
           const mine = message.from === 'self';
           return (
