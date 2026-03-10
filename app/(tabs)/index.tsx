@@ -38,6 +38,7 @@ type EventTemplateOption = {
   name: string;
   roles?: TemplateRolePreview[];
   defaultLocation?: string;
+  defaultTime?: string;
   defaultDescription?: string;
 };
 
@@ -87,6 +88,7 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
         ],
       },
     ],
+    defaultTime: '10:00',
     defaultLocation: 'Downtown',
     defaultDescription: 'Street-level promotion with handouts and passersby engagement.',
   },
@@ -113,6 +115,7 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
         ],
       },
     ],
+    defaultTime: '12:00',
     defaultLocation: 'City Mall',
     defaultDescription: 'Retail-facing booth coverage with product demos and lead capture.',
   },
@@ -157,6 +160,7 @@ const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
         ],
       },
     ],
+    defaultTime: '09:00',
     defaultLocation: 'Festival Grounds',
     defaultDescription: 'High-traffic booth operation with staggered shift handoffs.',
   },
@@ -180,6 +184,9 @@ export default function EventsScreen() {
   const [createTemplateDrawerOpen, setCreateTemplateDrawerOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState('');
+  const [templateDefaultTimeDraft, setTemplateDefaultTimeDraft] = useState('');
+  const [templateDefaultLocationDraft, setTemplateDefaultLocationDraft] = useState('');
+  const [templateDefaultDescriptionDraft, setTemplateDefaultDescriptionDraft] = useState('');
   const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
@@ -293,7 +300,7 @@ export default function EventsScreen() {
 
     const initialTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
     setEventDateDraft('');
-    setEventTimeDraft('');
+    setEventTimeDraft(initialTemplate?.defaultTime || '');
     setEventLocationDraft(initialTemplate?.defaultLocation || '');
     setEventDescriptionDraft(initialTemplate?.defaultDescription || '');
     setCreateEventRolesDraft(buildCreateEventRolesDraft(initialTemplate));
@@ -310,6 +317,9 @@ export default function EventsScreen() {
     if (template) {
       setEditingTemplateId(template.id);
       setTemplateNameDraft(template.name);
+      setTemplateDefaultTimeDraft(template.defaultTime || '');
+      setTemplateDefaultLocationDraft(template.defaultLocation || '');
+      setTemplateDefaultDescriptionDraft(template.defaultDescription || '');
       setTemplateRolesDraft((template.roles || []).map((role, index) => ({
         id: role.id || `role-${index + 1}`,
         name: role.name || `Role ${index + 1}`,
@@ -318,6 +328,9 @@ export default function EventsScreen() {
     } else {
       setEditingTemplateId(null);
       setTemplateNameDraft('');
+      setTemplateDefaultTimeDraft('');
+      setTemplateDefaultLocationDraft('');
+      setTemplateDefaultDescriptionDraft('');
       setTemplateRolesDraft([]);
     }
     setCreateTemplateDrawerOpen(true);
@@ -327,6 +340,9 @@ export default function EventsScreen() {
     setCreateTemplateDrawerOpen(false);
     setEditingTemplateId(null);
     setTemplateNameDraft('');
+    setTemplateDefaultTimeDraft('');
+    setTemplateDefaultLocationDraft('');
+    setTemplateDefaultDescriptionDraft('');
     setTemplateRolesDraft([]);
   };
 
@@ -351,16 +367,36 @@ export default function EventsScreen() {
     if (!name) return;
 
     const sanitizedRoles = templateRolesDraft
-      .map((role, index) => ({
-        ...role,
-        name: role.name.trim() || `Role ${index + 1}`,
-      }))
+      .map((role, index) => {
+        const sanitizedTasks = role.tasks
+          .map((task, taskIndex) => ({
+            id: task.id || `task-${Date.now()}-${taskIndex + 1}`,
+            name: task.name.trim(),
+            expectedOffsetMinutes: Number.isFinite(task.expectedOffsetMinutes)
+              ? Math.max(0, Math.round(task.expectedOffsetMinutes))
+              : 0,
+          }))
+          .filter((task) => task.name.length > 0);
+
+        return {
+          ...role,
+          name: role.name.trim() || `Role ${index + 1}`,
+          tasks: sanitizedTasks,
+        };
+      })
       .filter((role) => role.name.length > 0);
 
     if (editingTemplateId) {
       setTemplateOptions((prev) => prev.map((template) => (
         template.id === editingTemplateId
-          ? { ...template, name, roles: sanitizedRoles }
+          ? {
+              ...template,
+              name,
+              roles: sanitizedRoles,
+              defaultTime: templateDefaultTimeDraft.trim() || undefined,
+              defaultLocation: templateDefaultLocationDraft.trim() || undefined,
+              defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
+            }
           : template
       )));
       closeCreateTemplateDrawer();
@@ -372,6 +408,9 @@ export default function EventsScreen() {
       id,
       name,
       roles: sanitizedRoles,
+      defaultTime: templateDefaultTimeDraft.trim() || undefined,
+      defaultLocation: templateDefaultLocationDraft.trim() || undefined,
+      defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
     };
 
     setTemplateOptions((prev) => [nextTemplate, ...prev]);
@@ -396,6 +435,56 @@ export default function EventsScreen() {
 
   const removeTemplateRoleDraft = (roleId: string) => {
     setTemplateRolesDraft((prev) => prev.filter((role) => role.id !== roleId));
+  };
+
+  const addTemplateTaskDraft = (roleId: string) => {
+    setTemplateRolesDraft((prev) => prev.map((role) => {
+      if (role.id !== roleId) return role;
+      return {
+        ...role,
+        tasks: [
+          ...role.tasks,
+          {
+            id: `task-${Date.now()}-${role.tasks.length + 1}`,
+            name: '',
+            expectedOffsetMinutes: role.tasks.length ? role.tasks[role.tasks.length - 1].expectedOffsetMinutes + 15 : 15,
+          },
+        ],
+      };
+    }));
+  };
+
+  const updateTemplateTaskDraft = (
+    roleId: string,
+    taskId: string,
+    updates: Partial<TemplateTaskPreview>
+  ) => {
+    setTemplateRolesDraft((prev) => prev.map((role) => {
+      if (role.id !== roleId) return role;
+      return {
+        ...role,
+        tasks: role.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const nextOffset = updates.expectedOffsetMinutes;
+          return {
+            ...task,
+            ...updates,
+            expectedOffsetMinutes:
+              nextOffset === undefined || Number.isNaN(nextOffset)
+                ? task.expectedOffsetMinutes
+                : Math.max(0, Math.round(nextOffset)),
+          };
+        }),
+      };
+    }));
+  };
+
+  const removeTemplateTaskDraft = (roleId: string, taskId: string) => {
+    setTemplateRolesDraft((prev) => prev.map((role) => (
+      role.id === roleId
+        ? { ...role, tasks: role.tasks.filter((task) => task.id !== taskId) }
+        : role
+    )));
   };
 
   const deleteTemplate = (template: EventTemplateOption) => {
@@ -610,6 +699,7 @@ export default function EventsScreen() {
 
   useEffect(() => {
     if (!createEventDrawerOpen || !selectedTemplate) return;
+    setEventTimeDraft(selectedTemplate.defaultTime || '');
     setEventLocationDraft(selectedTemplate.defaultLocation || '');
     setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
     setCreateEventRolesDraft(buildCreateEventRolesDraft(selectedTemplate));
@@ -787,6 +877,7 @@ export default function EventsScreen() {
                     </View>
                     <Text style={[styles.templateMeta, isDarkMode ? styles.templateMetaDark : styles.templateMetaLight]}>
                       {getTemplateRoleCount(template)} roles · {getTemplateTaskCount(template)} tasks
+                      {template.defaultTime ? ` · ${template.defaultTime}` : ''}
                       {template.defaultLocation ? ` · ${template.defaultLocation}` : ''}
                     </Text>
                     <View style={styles.templateActionRow}>
@@ -973,6 +1064,41 @@ export default function EventsScreen() {
               />
             </View>
 
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Default event time (24h, optional)</Text>
+              <TextInput
+                value={templateDefaultTimeDraft}
+                onChangeText={setTemplateDefaultTimeDraft}
+                autoCapitalize="none"
+                placeholder="14:30"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Default location (optional)</Text>
+              <TextInput
+                value={templateDefaultLocationDraft}
+                onChangeText={setTemplateDefaultLocationDraft}
+                placeholder="Downtown"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Default description (optional)</Text>
+              <TextInput
+                value={templateDefaultDescriptionDraft}
+                onChangeText={setTemplateDefaultDescriptionDraft}
+                placeholder="Describe this template"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                multiline
+                style={[styles.templateTextArea, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
             <View style={styles.formField}>
               <View style={styles.templateHeaderRow}>
                 <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Roles</Text>
@@ -985,24 +1111,63 @@ export default function EventsScreen() {
               </View>
               <View style={[styles.rolePreviewContainer, isDarkMode ? styles.rolePreviewContainerDark : styles.rolePreviewContainerLight]}>
                 {templateRolesDraft.length ? templateRolesDraft.map((role, index) => (
-                  <View key={role.id} style={styles.rolePreviewRow}>
-                    <View style={styles.rolePreviewLeft}>
+                  <View key={role.id} style={[styles.templateRoleEditor, isDarkMode ? styles.templateRoleEditorDark : styles.templateRoleEditorLight]}>
+                    <View style={styles.templateRoleHeader}>
                       <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>Role {index + 1}</Text>
-                      <TextInput
-                        value={role.name}
-                        onChangeText={(value) => updateTemplateRoleDraftName(role.id, value)}
-                        placeholder={`Role ${index + 1}`}
-                        placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
-                        style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
-                      />
-                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>{role.tasks.length} tasks configured</Text>
+                      <Pressable
+                        accessibilityLabel={`Delete role ${role.name || index + 1}`}
+                        style={[styles.templateActionButton, isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight]}
+                        onPress={() => removeTemplateRoleDraft(role.id)}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
+                      </Pressable>
                     </View>
-                    <Pressable
-                      accessibilityLabel={`Delete role ${role.name || index + 1}`}
-                      style={[styles.templateActionButton, isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight]}
-                      onPress={() => removeTemplateRoleDraft(role.id)}>
-                      <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
-                    </Pressable>
+
+                    <TextInput
+                      value={role.name}
+                      onChangeText={(value) => updateTemplateRoleDraftName(role.id, value)}
+                      placeholder={`Role ${index + 1}`}
+                      placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                      style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+                    />
+
+                    <View style={styles.templateRoleTaskHeader}>
+                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>{role.tasks.length} tasks configured</Text>
+                      <Pressable
+                        accessibilityLabel={`Add task to ${role.name || `role ${index + 1}`}`}
+                        style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight]}
+                        onPress={() => addTemplateTaskDraft(role.id)}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>+ Add Task</Text>
+                      </Pressable>
+                    </View>
+
+                    {role.tasks.length ? role.tasks.map((task, taskIndex) => (
+                      <View key={task.id} style={[styles.templateTaskRow, isDarkMode ? styles.templateTaskRowDark : styles.templateTaskRowLight]}>
+                        <Text style={[styles.templateTaskLabel, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>Task {taskIndex + 1}</Text>
+                        <TextInput
+                          value={task.name}
+                          onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { name: value })}
+                          placeholder="Task name"
+                          placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                          style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+                        />
+                        <TextInput
+                          value={`${task.expectedOffsetMinutes}`}
+                          onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: Number.parseInt(value || '0', 10) || 0 })}
+                          keyboardType="numeric"
+                          placeholder="Minutes from event start"
+                          placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                          style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+                        />
+                        <Pressable
+                          accessibilityLabel={`Delete task ${task.name || taskIndex + 1} from ${role.name || `role ${index + 1}`}`}
+                          style={[styles.templateActionButton, isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight]}
+                          onPress={() => removeTemplateTaskDraft(role.id, task.id)}>
+                          <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete Task</Text>
+                        </Pressable>
+                      </View>
+                    )) : (
+                      <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No tasks yet for this role.</Text>
+                    )}
                   </View>
                 )) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No roles yet. Add at least one role for this template.</Text>}
               </View>
@@ -1123,6 +1288,15 @@ const styles = StyleSheet.create({
   rolePreviewMeta: { fontSize: 12 },
   rolePreviewMetaLight: { color: '#64748b' },
   rolePreviewMetaDark: { color: '#94a3b8' },
+  templateRoleEditor: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 10 },
+  templateRoleEditorLight: { borderColor: '#cbd5e1', backgroundColor: '#f1f5f9' },
+  templateRoleEditorDark: { borderColor: '#334155', backgroundColor: '#0b1220' },
+  templateRoleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  templateRoleTaskHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  templateTaskRow: { borderWidth: 1, borderRadius: 8, padding: 8, gap: 6 },
+  templateTaskRowLight: { borderColor: '#cbd5e1', backgroundColor: '#ffffff' },
+  templateTaskRowDark: { borderColor: '#334155', backgroundColor: '#111827' },
+  templateTaskLabel: { fontSize: 12, fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
   drawerLight: { backgroundColor: '#fff' },
