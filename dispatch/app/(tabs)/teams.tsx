@@ -20,8 +20,8 @@ type DrawerMode = 'add-team' | 'invite-worker';
 export default function TeamsScreen() {
   const { profile } = useSession();
   const router = useRouter();
-  const { themeMode } = useThemeMode();
-  const isDarkMode = themeMode === 'dark';
+  const { resolvedThemeMode } = useThemeMode();
+  const isDarkMode = resolvedThemeMode === 'dark';
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [seeding, setSeeding] = useState(false);
@@ -32,6 +32,7 @@ export default function TeamsScreen() {
   const [inviteTeamId, setInviteTeamId] = useState('');
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
+  const [drawerMessageTone, setDrawerMessageTone] = useState<'info' | 'success' | 'error'>('info');
   const [memberInfoById, setMemberInfoById] = useState<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>({});
 
   useEffect(() => {
@@ -147,6 +148,7 @@ export default function TeamsScreen() {
   const openDrawer = () => {
     setDrawerMode('add-team');
     setDrawerMessage(null);
+    setDrawerMessageTone('info');
     setTeamName('');
     setInviteEmail('');
     setDrawerOpen(true);
@@ -156,22 +158,31 @@ export default function TeamsScreen() {
     if (!profile || profile.role !== 'manager') return;
     setSaving(true);
     setDrawerMessage(null);
+    setDrawerMessageTone('info');
 
     try {
       if (drawerMode === 'add-team') {
         await createTeam(profile.uid, teamName);
         setTeamName('');
+        setDrawerMessageTone('success');
         setDrawerMessage('Team created.');
       } else {
         if (!inviteTeamId) {
+          setDrawerMessageTone('error');
           setDrawerMessage('Choose a team first.');
           return;
         }
-        await inviteWorkerToTeam({ managerId: profile.uid, teamId: inviteTeamId, email: inviteEmail });
+        const result = await inviteWorkerToTeam({ managerId: profile.uid, teamId: inviteTeamId, email: inviteEmail });
         setInviteEmail('');
-        setDrawerMessage('Invite email sent. Worker will join team after account creation and login.');
+        setDrawerMessageTone('success');
+        setDrawerMessage(
+          result.via === 'http-endpoint'
+            ? 'Invite email sent. Worker stays unlinked until they sign in and accept.'
+            : 'Invite queued for delivery. Worker stays unlinked until they sign in and accept.'
+        );
       }
     } catch (error) {
+      setDrawerMessageTone('error');
       setDrawerMessage(error instanceof Error ? error.message : 'Unable to complete this action.');
     } finally {
       setSaving(false);
@@ -222,10 +233,10 @@ export default function TeamsScreen() {
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
 
             <View style={styles.modeRow}>
-              <Pressable style={[styles.modeButton, drawerMode === 'add-team' && styles.modeButtonActive]} onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); }}>
+              <Pressable style={[styles.modeButton, drawerMode === 'add-team' && styles.modeButtonActive]} onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
                 <Text style={[styles.modeText, drawerMode === 'add-team' && styles.modeTextActive]}>Add Team</Text>
               </Pressable>
-              <Pressable style={[styles.modeButton, drawerMode === 'invite-worker' && styles.modeButtonActive]} onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); }}>
+              <Pressable style={[styles.modeButton, drawerMode === 'invite-worker' && styles.modeButtonActive]} onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
                 <Text style={[styles.modeText, drawerMode === 'invite-worker' && styles.modeTextActive]}>Invite Worker</Text>
               </Pressable>
             </View>
@@ -251,7 +262,11 @@ export default function TeamsScreen() {
               </>
             )}
 
-            {drawerMessage ? <Text style={styles.message}>{drawerMessage}</Text> : null}
+            {drawerMessage ? (
+              <Text style={[styles.message, drawerMessageTone === 'error' ? styles.messageError : drawerMessageTone === 'success' ? styles.messageSuccess : styles.messageInfo]}>
+                {drawerMessage}
+              </Text>
+            ) : null}
 
             <Pressable style={[styles.drawerSave, saving && styles.drawerSaveDisabled]} onPress={handleSubmitDrawer} disabled={saving}>
               <Text style={styles.drawerSaveText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : 'Invite Worker'}</Text>
@@ -331,7 +346,10 @@ const styles = StyleSheet.create({
   teamChipTextDark: { color: '#cbd5e1' },
   teamChipTextActive: { color: '#1e3a8a' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
-  message: { marginTop: 12, color: '#1e40af', fontSize: 12, fontWeight: '600' },
+  message: { marginTop: 12, fontSize: 12, fontWeight: '600' },
+  messageInfo: { color: '#1e40af' },
+  messageSuccess: { color: '#15803d' },
+  messageError: { color: '#b91c1c' },
   drawerSave: { marginTop: 14, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerSaveDisabled: { opacity: 0.7 },
   drawerSaveText: { color: '#fff', fontWeight: '700' },
