@@ -597,6 +597,29 @@ export default function EventsScreen() {
             </View>
 
             <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Roles needed for this event</Text>
+              <View style={[styles.rolePreviewContainer, isDarkMode ? styles.rolePreviewContainerDark : styles.rolePreviewContainerLight]}>
+                {selectedTemplateRoles.length ? (
+                  selectedTemplateRoles.map((role) => (
+                    <View key={`${selectedTemplate?.id}-${role.id}`} style={styles.rolePreviewRow}>
+                      <View style={styles.rolePreviewLeft}>
+                        <View style={[styles.rolePreviewAvatar, isDarkMode ? styles.rolePreviewAvatarDark : styles.rolePreviewAvatarLight]}>
+                          <Text style={styles.rolePreviewAvatarText}>{role.name.slice(0, 1).toUpperCase()}</Text>
+                        </View>
+                        <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>{role.name}</Text>
+                      </View>
+                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>Unassigned · {role.taskCount} tasks</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>
+                    No roles in this template yet. Add roles while editing the template.
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.formField}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event date (YYYY-MM-DD)</Text>
               <TextInput
                 value={eventDateDraft}
@@ -768,6 +791,21 @@ const styles = StyleSheet.create({
   roleEmpty: { fontSize: 12 },
   roleEmptyLight: { color: '#64748b' },
   roleEmptyDark: { color: '#94a3b8' },
+  rolePreviewContainer: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 8 },
+  rolePreviewContainerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  rolePreviewContainerDark: { borderColor: '#334155', backgroundColor: '#111827' },
+  rolePreviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  rolePreviewLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  rolePreviewAvatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  rolePreviewAvatarLight: { backgroundColor: '#dbeafe' },
+  rolePreviewAvatarDark: { backgroundColor: '#1e3a8a' },
+  rolePreviewAvatarText: { fontSize: 11, fontWeight: '700', color: '#bfdbfe' },
+  rolePreviewName: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  rolePreviewNameLight: { color: '#0f172a' },
+  rolePreviewNameDark: { color: '#e2e8f0' },
+  rolePreviewMeta: { fontSize: 12 },
+  rolePreviewMetaLight: { color: '#64748b' },
+  rolePreviewMetaDark: { color: '#94a3b8' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
   drawerLight: { backgroundColor: '#fff' },
