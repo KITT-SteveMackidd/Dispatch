@@ -393,6 +393,82 @@ export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProf
   );
 }
 
+export async function updateEventRoleAssignment(params: {
+  eventId: string;
+  roleId: string;
+  managerId: string;
+  workerId: string;
+  action: 'assign' | 'remove';
+}) {
+  const { eventId, roleId, managerId, workerId, action } = params;
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'events', eventId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Event not found');
+
+    const event = snap.data() as Omit<DispatchEvent, 'id'>;
+    if (event.managerId !== managerId) throw new Error('Only the event manager can change role assignments');
+
+    const roles = (event.roles || []) as EventRole[];
+    let assignmentChanged = false;
+
+    const nextRoles = roles.map((role) => {
+      if (role.id !== roleId) return role;
+
+      const assignedWorkerIds = role.assignedWorkerIds || [];
+      const alreadyAssigned = assignedWorkerIds.includes(workerId);
+
+      if (action === 'assign' && !alreadyAssigned) {
+        assignmentChanged = true;
+        return {
+          ...role,
+          assignedWorkerIds: [...assignedWorkerIds, workerId],
+          openSlots: Math.max(0, (role.openSlots || 0) - 1),
+        };
+      }
+
+      if (action === 'remove' && alreadyAssigned) {
+        assignmentChanged = true;
+        return {
+          ...role,
+          assignedWorkerIds: assignedWorkerIds.filter((id) => id !== workerId),
+          openSlots: (role.openSlots || 0) + 1,
+        };
+      }
+
+      return role;
+    });
+
+    if (!assignmentChanged) return;
+
+    const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
+
+    tx.update(ref, {
+      roles: nextRoles,
+      workerIds,
+      updatedAt: serverTimestamp(),
+    });
+
+    const notificationRef = doc(collection(db, 'roleAssignmentNotifications'));
+    tx.set(notificationRef, {
+      workerId,
+      managerId,
+      eventId,
+      roleId,
+      eventName: event.name,
+      action,
+      status: 'pending',
+      statusReason:
+        action === 'assign'
+          ? 'Worker must accept or decline this role assignment.'
+          : 'Worker must accept or decline this role removal update.',
+      responseOptions: ['accept', 'decline'],
+      createdAt: serverTimestamp(),
+    });
+  });
+}
+
 export async function toggleTaskCompletion(params: {
   eventId: string;
   roleId: string;
