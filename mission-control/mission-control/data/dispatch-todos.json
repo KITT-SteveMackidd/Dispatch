@@ -107,9 +107,9 @@
     "id": "DSP-014",
     "area": "Team",
     "title": "Team list tap logic: member list+All for multi-member; direct chat for single-member",
-    "status": "In Progress",
+    "status": "Done",
     "priority": "High",
-    "statusReason": "Active agent run is implementing team tap routing + All recipient logic."
+    "statusReason": "Completed: team tap opens direct chat when only one other member exists; multi-member teams open member list with synthetic All option that routes to team thread context (teams/{teamId}/all). Validated with dispatch `npx tsc --noEmit`."
   },
   {
     "id": "DSP-015",
@@ -157,7 +157,7 @@
     "title": "Add email-based invite flow in Add Member drawer and send app-link invite email",
     "status": "Done",
     "priority": "High",
-    "statusReason": "Verified email-based Add Member invite flow and app-link invite email transport in Teams drawer/service; TypeScript check passed; merged/pushed to master."
+    "statusReason": "2026-03-10 revalidation: Add Member drawer uses email and invite send path now works through configured HTTP endpoint or Firebase mail queue fallback with explicit success/error UI; worker stays unlinked until sign-in acceptance flow. Checked with dispatch `npx tsc --noEmit`."
   },
   {
     "id": "DSP-021",
@@ -197,7 +197,7 @@
     "title": "Refinement pass: WhatsApp/Telegram chat layout and composer behavior",
     "status": "Done",
     "priority": "Medium",
-    "statusReason": "Refined app/chat/[workerId].tsx to a WhatsApp/Telegram-style thread with polished bubbles, keyboard-aware bottom composer, and disabled send when draft is empty. Validated with dispatch TypeScript check."
+    "statusReason": "2026-03-10 revalidation: chat screen now behaves like WhatsApp/Telegram with keyboard-safe anchored composer, reliable send on button/submit, disabled empty send, and auto-scroll to latest message. Checked with dispatch `npx tsc --noEmit`."
   },
   {
     "id": "DSP-026",

@@ -18,6 +18,11 @@ import {
 import { db } from '@/lib/firebase';
 import { DispatchEvent, EventRole, Team, UserProfile } from '@/types/dispatch';
 
+export type TeamUnreadCount = {
+  teamId: string;
+  unreadCount: number;
+};
+
 function mapEvents(snap: { docs: Array<{ id: string; data: () => unknown }> }): DispatchEvent[] {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<DispatchEvent, 'id'>) }));
 }
@@ -28,6 +33,18 @@ function mapTeams(snap: { docs: Array<{ id: string; data: () => unknown }> }): T
 
 function sortByStartAsc(items: DispatchEvent[]) {
   return [...items].sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function getInviteAppLink() {
+  return process.env.EXPO_PUBLIC_APP_INVITE_URL?.trim() || 'https://dispatchapp.ca/download';
 }
 
 export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[]) => void) {
@@ -49,6 +66,25 @@ export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
   const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
   const snap = await getDocs(q);
   return mapTeams(snap);
+}
+
+
+export function watchUserTeamUnreadCounts(userId: string, cb: (items: TeamUnreadCount[]) => void) {
+  const q = query(collection(db, 'chatUnread'), where('userId', '==', userId));
+  return onSnapshot(q, (snap) => {
+    const items = snap.docs
+      .map((d) => {
+        const data = d.data() as Partial<{ teamId: string; unreadCount: number }>;
+        if (!data.teamId) return null;
+        return {
+          teamId: data.teamId,
+          unreadCount: Math.max(0, Number(data.unreadCount ?? 0)),
+        } satisfies TeamUnreadCount;
+      })
+      .filter((item): item is TeamUnreadCount => !!item);
+
+    cb(items);
+  });
 }
 
 export async function createTeam(managerId: string, name: string) {
@@ -110,10 +146,10 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
     const reason = error instanceof Error ? error.message : 'Invite email transport failed';
     await updateDoc(inviteRef, {
       status: 'send_failed',
-      statusReason: `Invite queued but email failed: ${reason}`,
+      statusReason: `Invite saved but delivery failed: ${reason}`,
       deliveryErrorAt: serverTimestamp(),
     });
-    throw new Error(`Invite saved, but email failed to send: ${reason}`);
+    throw new Error(`Invite saved, but delivery failed: ${reason}`);
   }
 }
 
@@ -234,6 +270,100 @@ export async function acceptPendingInvitesForUser(params: { userId: string; emai
       );
     }
   }
+}
+
+export async function inviteWorkerByEmailToTeam(params: {
+  managerId: string;
+  teamId: string;
+  email: string;
+  managerName?: string;
+}) {
+  const { managerId, teamId, managerName } = params;
+  const normalizedEmail = normalizeEmail(params.email);
+  if (!normalizedEmail) throw new Error('Worker email is required');
+  if (!isValidEmail(normalizedEmail)) throw new Error('Enter a valid email address');
+
+  const usersSnap = await getDocs(query(
+    collection(db, 'users'),
+    where('email', '==', normalizedEmail),
+    where('role', '==', 'worker')
+  ));
+
+  const foundWorker = usersSnap.docs[0];
+  const foundWorkerId = foundWorker?.id;
+
+  await runTransaction(db, async (tx) => {
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await tx.get(teamRef);
+
+    if (!teamSnap.exists()) throw new Error('Team not found');
+
+    const team = teamSnap.data() as Omit<Team, 'id'>;
+    if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
+
+    if (foundWorkerId) {
+      const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
+      tx.update(teamRef, { workerIds: nextWorkerIds });
+    }
+  });
+
+  await addDoc(collection(db, 'workerInvites'), {
+    managerId,
+    teamId,
+    email: normalizedEmail,
+    workerId: foundWorkerId || null,
+    status: foundWorkerId ? 'linked' : 'pending',
+    createdAt: serverTimestamp(),
+  });
+
+  const appLink = getInviteAppLink();
+  const inviterLabel = managerName?.trim() || 'A Dispatch manager';
+
+  await addDoc(collection(db, 'mail'), {
+    to: [normalizedEmail],
+    message: {
+      subject: `${inviterLabel} invited you to Dispatch`,
+      text: `${inviterLabel} invited you to join Dispatch. Download the app and sign in with this email to get connected automatically: ${appLink}`,
+      html: `<p>${inviterLabel} invited you to join Dispatch.</p><p>Download the app and sign in with this email to get connected automatically.</p><p><a href="${appLink}">Open Dispatch app link</a></p>`,
+    },
+    createdAt: serverTimestamp(),
+  });
+
+  return { linked: !!foundWorkerId };
+}
+
+export async function linkPendingEmailInvites(params: { workerId: string; email: string }) {
+  const normalizedEmail = normalizeEmail(params.email);
+  if (!normalizedEmail) return;
+
+  const invitesSnap = await getDocs(query(
+    collection(db, 'workerInvites'),
+    where('email', '==', normalizedEmail),
+    where('status', '==', 'pending')
+  ));
+
+  if (!invitesSnap.docs.length) return;
+
+  await runTransaction(db, async (tx) => {
+    for (const inviteDoc of invitesSnap.docs) {
+      const invite = inviteDoc.data() as { teamId?: string };
+      if (!invite.teamId) continue;
+
+      const teamRef = doc(db, 'teams', invite.teamId);
+      const teamSnap = await tx.get(teamRef);
+      if (!teamSnap.exists()) continue;
+
+      const team = teamSnap.data() as Omit<Team, 'id'>;
+      const nextWorkerIds = [...new Set([...(team.workerIds || []), params.workerId])];
+      tx.update(teamRef, { workerIds: nextWorkerIds });
+
+      tx.update(inviteDoc.ref, {
+        workerId: params.workerId,
+        status: 'linked',
+        linkedAt: serverTimestamp(),
+      });
+    }
+  });
 }
 
 export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProfile[]> {
@@ -384,6 +514,20 @@ export async function seedDemoData(profile: UserProfile) {
         ],
       },
     ],
+  });
+
+  batch.set(doc(db, 'chatUnread', `demo-unread-${profile.uid}-${teamAId}`), {
+    userId: profile.uid,
+    teamId: teamAId,
+    unreadCount: 3,
+    updatedAt: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'chatUnread', `demo-unread-${profile.uid}-${teamBId}`), {
+    userId: profile.uid,
+    teamId: teamBId,
+    unreadCount: 1,
+    updatedAt: serverTimestamp(),
   });
 
   await batch.commit();

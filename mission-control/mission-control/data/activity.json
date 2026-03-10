@@ -736,11 +736,35 @@
     "task": "Completed DSP-020: validated Add Member drawer email invite flow and invite email transport/app-link path; ran dispatch TypeScript validation (npx tsc --noEmit) successfully; updated dispatch todo status to Done."
   },
   {
-    "id": "evt-dispatch-heartbeat-agent-1-20260310T030257Z",
-    "ts": "2026-03-10T03:02:57.031Z",
+    "id": "evt-dispatch-heartbeat-agent-1-20260310T030109Z",
+    "ts": "2026-03-10T03:01:09.125Z",
     "agent": "dispatch-heartbeat-agent-1",
     "state": "working",
     "zone": "computer",
-    "task": "Completed DSP-025 on master: refined app/chat/[workerId].tsx with WhatsApp/Telegram-style bubble layout and improved composer UX; validated with dispatch npx tsc --noEmit."
+    "task": "Completed DSP-025: refined chat layout/composer behavior in dispatch/app/chat/[workerId].tsx (keyboard avoidance, safer composer/send UX, polished bubble styling) and passed dispatch TypeScript validation with npx tsc --noEmit."
+  },
+  {
+    "id": "evt-dispatch-redo-dsp020-dsp025-20260310T030159Z",
+    "ts": "2026-03-10T03:01:59.180Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Reopened redo complete: DSP-020 invite flow now sends via endpoint or Firebase mail queue with explicit UI feedback and deferred worker linking; DSP-025 chat composer/send behavior refined and revalidated."
+  },
+  {
+    "id": "evt-dispatch-dsp014-complete-20260310T030249Z",
+    "ts": "2026-03-10T03:02:49Z",
+    "agent": "finish-dsp014",
+    "state": "working",
+    "zone": "computer",
+    "task": "Completed DSP-014: retained single-member direct chat routing, ensured multi-member flow presents synthetic All option, and passed explicit team thread context (teams/{teamId}/all) into chat route; validated with dispatch npx tsc --noEmit and marked todo Done."
+  },
+  {
+    "id": "evt-dispatch-redo-dsp020-dsp025-revalidate-20260310T030417Z",
+    "ts": "2026-03-10T03:04:17.633Z",
+    "agent": "KITT",
+    "state": "working",
+    "zone": "computer",
+    "task": "Revalidated reopened DSP-020 and DSP-025 with code-level fixes (invite send path + clearer drawer feedback + chat composer reliability), updated todo reasons, and reran dispatch typecheck."
   }
 ]

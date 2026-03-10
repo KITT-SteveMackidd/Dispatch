@@ -4,12 +4,13 @@ import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
   createTeam,
-  inviteWorkerToTeam,
+  inviteWorkerByEmailToTeam,
   loadUserProfilesByIds,
   loadWorkerTeams,
   seedDemoData,
   watchManagerEvents,
   watchManagerTeams,
+  watchUserTeamUnreadCounts,
   watchWorkerEvents,
 } from '@/services/dispatch';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
@@ -34,6 +35,7 @@ export default function TeamsScreen() {
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
   const [drawerMessageTone, setDrawerMessageTone] = useState<'info' | 'success' | 'error'>('info');
   const [memberInfoById, setMemberInfoById] = useState<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>({});
+  const [unreadCountByTeamId, setUnreadCountByTeamId] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -54,6 +56,21 @@ export default function TeamsScreen() {
   useEffect(() => {
     if (!inviteTeamId && teams.length) setInviteTeamId(teams[0].id);
   }, [teams, inviteTeamId]);
+
+  useEffect(() => {
+    if (!profile) {
+      setUnreadCountByTeamId({});
+      return;
+    }
+
+    return watchUserTeamUnreadCounts(profile.uid, (items) => {
+      const next = items.reduce<Record<string, number>>((acc, item) => {
+        acc[item.teamId] = item.unreadCount;
+        return acc;
+      }, {});
+      setUnreadCountByTeamId(next);
+    });
+  }, [profile]);
 
   useEffect(() => {
     if (!profile || !teams.length) {
@@ -206,6 +223,7 @@ export default function TeamsScreen() {
         ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No teams found yet. Tap Add Demo Team Data.</Text>}
         renderItem={({ item }) => {
           const otherCount = getOtherMemberIds(item).length;
+          const unreadCount = unreadCountByTeamId[item.id] ?? 0;
           return (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => handleTeamPress(item)}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
@@ -259,6 +277,9 @@ export default function TeamsScreen() {
 
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
                 <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
+                <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
+                  Invite keeps this worker unlinked until they sign in with that email.
+                </Text>
               </>
             )}
 
@@ -346,6 +367,9 @@ const styles = StyleSheet.create({
   teamChipTextDark: { color: '#cbd5e1' },
   teamChipTextActive: { color: '#1e3a8a' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
+  helperText: { marginTop: 6, fontSize: 11 },
+  helperTextLight: { color: '#64748b' },
+  helperTextDark: { color: '#94a3b8' },
   message: { marginTop: 12, fontSize: 12, fontWeight: '600' },
   messageInfo: { color: '#1e40af' },
   messageSuccess: { color: '#15803d' },
