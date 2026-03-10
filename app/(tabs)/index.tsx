@@ -11,6 +11,7 @@ import {
   ensureDefaultEventTemplates,
   loadUserProfilesByIds,
   respondToRoleAssignmentNotification,
+  sortDispatchEvents,
   updateEventRoleAssignment,
   updateEventTemplate,
   watchManagerEvents,
@@ -504,7 +505,11 @@ export default function EventsScreen() {
     () => {
       const combined = [...events, ...optimisticCreatedEvents];
       const unique = combined.filter((event, index, list) => list.findIndex((item) => item.id === event.id) === index);
-      return unique.filter((e) => new Date(e.startsAt).getTime() >= Date.now()).sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
+      const upcomingOnly = unique.filter((event) => {
+        const startsAtMs = new Date(event.startsAt).getTime();
+        return Number.isFinite(startsAtMs) && startsAtMs >= Date.now();
+      });
+      return sortDispatchEvents(upcomingOnly);
     },
     [events, optimisticCreatedEvents]
   );
