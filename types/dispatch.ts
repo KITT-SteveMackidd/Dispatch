@@ -41,3 +41,27 @@ export type Team = {
   name: string;
   workerIds: string[];
 };
+
+export type EventTemplateTask = {
+  id: string;
+  name: string;
+  expectedOffsetMinutes: number;
+};
+
+export type EventTemplateRole = {
+  id: string;
+  name: string;
+  tasks: EventTemplateTask[];
+};
+
+export type EventTemplate = {
+  id: string;
+  managerId: string;
+  name: string;
+  roles: EventTemplateRole[];
+  defaultLocation?: string;
+  defaultTime?: string;
+  defaultDescription?: string;
+  createdAt?: { toDate?: () => Date } | Date | null;
+  updatedAt?: { toDate?: () => Date } | Date | null;
+};
