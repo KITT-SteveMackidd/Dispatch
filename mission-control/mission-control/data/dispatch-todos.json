@@ -195,9 +195,9 @@
     "id": "DSP-025",
     "area": "Chat-UI",
     "title": "Refinement pass: WhatsApp/Telegram chat layout and composer behavior",
-    "status": "In Progress",
+    "status": "Done",
     "priority": "Medium",
-    "statusReason": "Claimed by automation: dispatch-heartbeat-agent-1 at 2026-03-10T02:58:59.904Z"
+    "statusReason": "Refined app/chat/[workerId].tsx to a WhatsApp/Telegram-style thread with polished bubbles, keyboard-aware bottom composer, and disabled send when draft is empty. Validated with dispatch TypeScript check."
   },
   {
     "id": "DSP-026",
