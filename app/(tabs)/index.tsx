@@ -505,11 +505,8 @@ export default function EventsScreen() {
     () => {
       const combined = [...events, ...optimisticCreatedEvents];
       const unique = combined.filter((event, index, list) => list.findIndex((item) => item.id === event.id) === index);
-      const upcomingOnly = unique.filter((event) => {
-        const startsAtMs = new Date(event.startsAt).getTime();
-        return Number.isFinite(startsAtMs) && startsAtMs >= Date.now();
-      });
-      return sortDispatchEvents(upcomingOnly);
+      const validEvents = unique.filter((event) => Number.isFinite(new Date(event.startsAt).getTime()));
+      return sortDispatchEvents(validEvents);
     },
     [events, optimisticCreatedEvents]
   );
