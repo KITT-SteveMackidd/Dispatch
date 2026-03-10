@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSession } from '@/context/session';
 import { loadUserProfilesByIds, watchManagerEvents, watchManagerTeams, watchWorkerEvents } from '@/services/dispatch';
 import { DispatchEvent, EventRole, UserProfile } from '@/types/dispatch';
@@ -20,18 +20,69 @@ const INITIAL_DRAWER: DrawerState = {
   roleId: null,
 };
 
+type TemplateRolePreview = {
+  id: string;
+  name: string;
+  taskCount: number;
+};
+
 type EventTemplateOption = {
   id: string;
   name: string;
   roleCount: number;
   taskCount: number;
+  roles?: TemplateRolePreview[];
   defaultLocation?: string;
+  defaultDescription?: string;
+};
+
+type CreateEventRoleDraft = {
+  id: string;
+  name: string;
+  taskCount: number;
+  assignedWorkerId: string | null;
 };
 
 const INITIAL_TEMPLATE_OPTIONS: EventTemplateOption[] = [
-  { id: 'street-team', name: 'Street Team Activation', roleCount: 3, taskCount: 9, defaultLocation: 'Downtown' },
-  { id: 'mall-pop-up', name: 'Mall Pop-Up', roleCount: 2, taskCount: 6, defaultLocation: 'City Mall' },
-  { id: 'festival-booth', name: 'Festival Booth', roleCount: 4, taskCount: 12, defaultLocation: 'Festival Grounds' },
+  {
+    id: 'street-team',
+    name: 'Street Team Activation',
+    roleCount: 3,
+    taskCount: 9,
+    roles: [
+      { id: 'lead-ambassador', name: 'Lead Ambassador', taskCount: 3 },
+      { id: 'flyer-specialist', name: 'Flyer Specialist', taskCount: 3 },
+      { id: 'engagement-runner', name: 'Engagement Runner', taskCount: 3 },
+    ],
+    defaultLocation: 'Downtown',
+    defaultDescription: 'Street-level promotion with handouts and passersby engagement.',
+  },
+  {
+    id: 'mall-pop-up',
+    name: 'Mall Pop-Up',
+    roleCount: 2,
+    taskCount: 6,
+    roles: [
+      { id: 'booth-manager', name: 'Booth Manager', taskCount: 3 },
+      { id: 'demo-host', name: 'Demo Host', taskCount: 3 },
+    ],
+    defaultLocation: 'City Mall',
+    defaultDescription: 'Retail-facing booth coverage with product demos and lead capture.',
+  },
+  {
+    id: 'festival-booth',
+    name: 'Festival Booth',
+    roleCount: 4,
+    taskCount: 12,
+    roles: [
+      { id: 'setup-captain', name: 'Setup Captain', taskCount: 3 },
+      { id: 'welcome-host', name: 'Welcome Host', taskCount: 3 },
+      { id: 'sampling-lead', name: 'Sampling Lead', taskCount: 3 },
+      { id: 'breakdown-support', name: 'Breakdown Support', taskCount: 3 },
+    ],
+    defaultLocation: 'Festival Grounds',
+    defaultDescription: 'High-traffic booth operation with staggered shift handoffs.',
+  },
 ];
 
 export default function EventsScreen() {
@@ -47,9 +98,16 @@ export default function EventsScreen() {
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [createEventDrawerOpen, setCreateEventDrawerOpen] = useState(false);
   const [createTemplateDrawerOpen, setCreateTemplateDrawerOpen] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState('');
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
+  const [eventDateDraft, setEventDateDraft] = useState('');
+  const [eventTimeDraft, setEventTimeDraft] = useState('');
+  const [eventLocationDraft, setEventLocationDraft] = useState('');
+  const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
+  const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
+  const [rolePickerRoleId, setRolePickerRoleId] = useState<string | null>(null);
   const canCreateEvent = profile?.role === 'manager';
 
   useEffect(() => {
@@ -135,6 +193,12 @@ export default function EventsScreen() {
     if (!canCreateEvent) return;
     setReplaceDrawer(INITIAL_DRAWER);
     setInviteDrawer(INITIAL_DRAWER);
+
+    const initialTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
+    setEventDateDraft('');
+    setEventTimeDraft('');
+    setEventLocationDraft(initialTemplate?.defaultLocation || '');
+    setEventDescriptionDraft(initialTemplate?.defaultDescription || '');
     setCreateEventDrawerOpen(true);
   };
 
@@ -142,19 +206,32 @@ export default function EventsScreen() {
     setCreateEventDrawerOpen(false);
   };
 
-  const openCreateTemplateDrawer = () => {
-    setTemplateNameDraft('');
+  const openCreateTemplateDrawer = (template?: EventTemplateOption) => {
+    if (template) {
+      setEditingTemplateId(template.id);
+      setTemplateNameDraft(template.name);
+    } else {
+      setEditingTemplateId(null);
+      setTemplateNameDraft('');
+    }
     setCreateTemplateDrawerOpen(true);
   };
 
   const closeCreateTemplateDrawer = () => {
     setCreateTemplateDrawerOpen(false);
+    setEditingTemplateId(null);
     setTemplateNameDraft('');
   };
 
-  const createTemplate = () => {
+  const saveTemplate = () => {
     const name = templateNameDraft.trim();
     if (!name) return;
+
+    if (editingTemplateId) {
+      setTemplateOptions((prev) => prev.map((template) => (template.id === editingTemplateId ? { ...template, name } : template)));
+      closeCreateTemplateDrawer();
+      return;
+    }
 
     const id = `custom-${Date.now()}`;
     const nextTemplate: EventTemplateOption = {
@@ -162,11 +239,36 @@ export default function EventsScreen() {
       name,
       roleCount: 0,
       taskCount: 0,
+      roles: [],
     };
 
     setTemplateOptions((prev) => [nextTemplate, ...prev]);
     setSelectedTemplateId(id);
     closeCreateTemplateDrawer();
+  };
+
+  const deleteTemplate = (template: EventTemplateOption) => {
+    Alert.alert(
+      'Delete Template',
+      `Delete "${template.name}" permanently?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setTemplateOptions((prev) => {
+              const remaining = prev.filter((option) => option.id !== template.id);
+              if (!remaining.length) return prev;
+              if (selectedTemplateId === template.id) {
+                setSelectedTemplateId(remaining[0].id);
+              }
+              return remaining;
+            });
+          },
+        },
+      ]
+    );
   };
 
   const upcoming = useMemo(
@@ -287,6 +389,16 @@ export default function EventsScreen() {
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
+  const isEditingTemplate = !!editingTemplateId;
+
+  useEffect(() => {
+    if (!createEventDrawerOpen || !selectedTemplate) return;
+    setEventLocationDraft(selectedTemplate.defaultLocation || '');
+    setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
+  }, [createEventDrawerOpen, selectedTemplate?.id]);
+
+  const hasEventSchedule = eventDateDraft.trim().length > 0 && eventTimeDraft.trim().length > 0;
+  const canSaveEventDraft = !!selectedTemplate && hasEventSchedule && eventLocationDraft.trim().length > 0 && eventDescriptionDraft.trim().length > 0;
 
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
@@ -401,7 +513,7 @@ export default function EventsScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Create new template"
                   style={[styles.templateAddButton, isDarkMode ? styles.templateAddButtonDark : styles.templateAddButtonLight]}
-                  onPress={openCreateTemplateDrawer}>
+                  onPress={() => openCreateTemplateDrawer()}>
                   <Text style={[styles.templateAddButtonText, isDarkMode ? styles.templateAddButtonTextDark : styles.templateAddButtonTextLight]}>+ New Template</Text>
                 </Pressable>
               </View>
@@ -426,13 +538,93 @@ export default function EventsScreen() {
                       {template.roleCount} roles · {template.taskCount} tasks
                       {template.defaultLocation ? ` · ${template.defaultLocation}` : ''}
                     </Text>
+                    <View style={styles.templateActionRow}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Edit ${template.name} template`}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          openCreateTemplateDrawer(template);
+                        }}
+                        style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight]}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>Edit</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete ${template.name} template`}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          deleteTemplate(template);
+                        }}
+                        disabled={templateOptions.length <= 1}
+                        style={[
+                          styles.templateActionButton,
+                          isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight,
+                          templateOptions.length <= 1 && styles.templateActionButtonDisabled,
+                        ]}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
+                      </Pressable>
+                    </View>
                   </Pressable>
                 );
               })}
             </View>
 
-            <Pressable style={styles.drawerClose} onPress={closeCreateEventDrawer}>
-              <Text style={styles.drawerCloseText}>Close</Text>
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event date (YYYY-MM-DD)</Text>
+              <TextInput
+                value={eventDateDraft}
+                onChangeText={setEventDateDraft}
+                autoCapitalize="none"
+                placeholder="2026-06-15"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event time (24h)</Text>
+              <TextInput
+                value={eventTimeDraft}
+                onChangeText={setEventTimeDraft}
+                autoCapitalize="none"
+                placeholder="14:30"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Location</Text>
+              <TextInput
+                value={eventLocationDraft}
+                onChangeText={setEventLocationDraft}
+                placeholder="Downtown"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Description</Text>
+              <TextInput
+                value={eventDescriptionDraft}
+                onChangeText={setEventDescriptionDraft}
+                placeholder="Describe this event for workers"
+                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                multiline
+                style={[styles.templateTextArea, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+
+            <Pressable
+              style={[styles.drawerClose, !canSaveEventDraft && styles.drawerCloseDisabled]}
+              disabled={!canSaveEventDraft}
+              onPress={closeCreateEventDrawer}>
+              <Text style={styles.drawerCloseText}>Save Event Draft</Text>
+            </Pressable>
+            <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateEventDrawer}>
+              <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -441,8 +633,8 @@ export default function EventsScreen() {
       <Modal visible={createTemplateDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateTemplateDrawer}>
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateTemplateDrawer}>
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Template</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add a template you can reuse while creating events.</Text>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>{isEditingTemplate ? 'Edit Template' : 'Create Template'}</Text>
+            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>{isEditingTemplate ? 'Update this template. Changes are saved permanently.' : 'Add a template you can reuse while creating events.'}</Text>
 
             <View style={styles.formField}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Template name</Text>
@@ -457,9 +649,9 @@ export default function EventsScreen() {
 
             <Pressable
               style={[styles.drawerClose, (!templateNameDraft.trim().length) && styles.drawerCloseDisabled]}
-              onPress={createTemplate}
+              onPress={saveTemplate}
               disabled={!templateNameDraft.trim().length}>
-              <Text style={styles.drawerCloseText}>Create Template</Text>
+              <Text style={styles.drawerCloseText}>{isEditingTemplate ? 'Save Changes' : 'Create Template'}</Text>
             </Pressable>
             <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateTemplateDrawer}>
               <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
@@ -593,8 +785,21 @@ const styles = StyleSheet.create({
   templateMeta: { marginTop: 4, fontSize: 12 },
   templateMetaLight: { color: '#475569' },
   templateMetaDark: { color: '#cbd5e1' },
+  templateActionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  templateActionButton: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6 },
+  templateActionButtonLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
+  templateActionButtonDark: { borderColor: '#334155', backgroundColor: '#0f172a' },
+  templateActionButtonDisabled: { opacity: 0.45 },
+  templateActionButtonText: { fontSize: 12, fontWeight: '700' },
+  templateActionButtonTextLight: { color: '#1d4ed8' },
+  templateActionButtonTextDark: { color: '#bfdbfe' },
+  templateDeleteButtonLight: { borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  templateDeleteButtonDark: { borderColor: '#7f1d1d', backgroundColor: '#450a0a' },
+  templateDeleteButtonTextLight: { color: '#b91c1c' },
+  templateDeleteButtonTextDark: { color: '#fecaca' },
   formField: { marginTop: 14, gap: 8 },
   templateInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  templateTextArea: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, minHeight: 88, textAlignVertical: 'top' },
   templateInputLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc', color: '#0f172a' },
   templateInputDark: { borderColor: '#334155', backgroundColor: '#111827', color: '#f8fafc' },
   drawerClose: { marginTop: 12, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },

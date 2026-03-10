@@ -189,13 +189,13 @@ export default function TeamsScreen() {
           setDrawerMessage('Choose a team first.');
           return;
         }
-        const result = await inviteWorkerToTeam({ managerId: profile.uid, teamId: inviteTeamId, email: inviteEmail });
+        const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId: inviteTeamId, email: inviteEmail });
         setInviteEmail('');
         setDrawerMessageTone('success');
         setDrawerMessage(
-          result.via === 'http-endpoint'
-            ? 'Invite email sent. Worker stays unlinked until they sign in and accept.'
-            : 'Invite queued for delivery. Worker stays unlinked until they sign in and accept.'
+          result.linked
+            ? 'Worker account found and linked to the team.'
+            : 'Invite sent. Worker will link automatically after they sign in with this email.'
         );
       }
     } catch (error) {

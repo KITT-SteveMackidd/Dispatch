@@ -8,9 +8,24 @@ import { useThemeMode } from '@/context/theme';
 
 export default function TabLayout() {
   const router = useRouter();
-  const { signOut } = useSession();
+  const { profile, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const [teamUnreadTotal, setTeamUnreadTotal] = useState(0);
+
+  useEffect(() => {
+    if (!profile) {
+      setTeamUnreadTotal(0);
+      return;
+    }
+
+    return watchUserTeamUnreadCounts(profile.uid, (items) => {
+      const total = items.reduce((sum, item) => sum + item.unreadCount, 0);
+      setTeamUnreadTotal(total);
+    });
+  }, [profile]);
+
+  const teamTabBadge = useMemo(() => (teamUnreadTotal > 0 ? teamUnreadTotal : undefined), [teamUnreadTotal]);
 
   const switchProfile = async () => {
     await signOut();
