@@ -3,7 +3,7 @@ import { Tabs, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text } from 'react-native';
 import { useSession } from '@/context/session';
-import { watchUserTeamUnreadCounts } from '@/services/dispatch';
+import { watchUserTeamUnreadCounts, watchUserUnreadNotificationCount } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
 
 export default function TabLayout() {
@@ -12,6 +12,7 @@ export default function TabLayout() {
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [teamUnreadTotal, setTeamUnreadTotal] = useState(0);
+  const [profileUnreadTotal, setProfileUnreadTotal] = useState(0);
 
   useEffect(() => {
     if (!profile) {
@@ -25,7 +26,17 @@ export default function TabLayout() {
     });
   }, [profile]);
 
+  useEffect(() => {
+    if (!profile) {
+      setProfileUnreadTotal(0);
+      return;
+    }
+
+    return watchUserUnreadNotificationCount(profile.uid, setProfileUnreadTotal);
+  }, [profile]);
+
   const teamTabBadge = useMemo(() => (teamUnreadTotal > 0 ? teamUnreadTotal : undefined), [teamUnreadTotal]);
+  const profileTabBadge = useMemo(() => (profileUnreadTotal > 0 ? profileUnreadTotal : undefined), [profileUnreadTotal]);
 
   const switchProfile = async () => {
     await signOut();
@@ -88,6 +99,7 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: 'Profile',
+          tabBarBadge: profileTabBadge,
           tabBarIcon: ({ color }) => <Feather name="user" size={18} color={color} />,
           headerRight: () => (
             <Pressable

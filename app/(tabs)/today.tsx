@@ -259,7 +259,9 @@ export default function TodayScreen() {
         renderItem={({ item }) => {
           const progress = getProgress(item);
           const b = badge(progress);
-          const eventTime = new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const startsAtDate = new Date(item.startsAt);
+          const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
           const isManager = profile?.role === 'manager';
           const isExpanded = !!expandedEventIds[item.id];
           const workers = isManager ? getWorkerSummaries(item) : [];
@@ -274,7 +276,7 @@ export default function TodayScreen() {
                 <Text style={[styles.expandHint, isDarkMode ? styles.expandHintDark : styles.expandHintLight]}>{isExpanded ? 'Hide' : 'Expand'}</Text>
               </View>
 
-              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventTime}</Text>
+              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventDate} • {eventTime}</Text>
 
               {isManager ? (
                 <View style={styles.progressSection}>

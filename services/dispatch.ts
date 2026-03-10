@@ -45,6 +45,18 @@ export type RoleAssignmentNotification = {
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
+export type UserNotification = {
+  id: string;
+  userId: string;
+  kind: 'role_invite_response';
+  title: string;
+  body: string;
+  relatedEventId?: string;
+  relatedRoleId?: string;
+  read: boolean;
+  createdAt?: { toDate?: () => Date } | Date | null;
+};
+
 export type CreateEventRoleInput = {
   id: string;
   name: string;
@@ -294,6 +306,40 @@ export function watchUserTeamUnreadCounts(userId: string, cb: (items: TeamUnread
       .filter((item): item is TeamUnreadCount => !!item);
 
     cb(items);
+  });
+}
+
+export function watchUserUnreadNotificationCount(userId: string, cb: (count: number) => void) {
+  const q = query(collection(db, 'userNotifications'), where('userId', '==', userId), where('read', '==', false));
+  return onSnapshot(q, (snap) => cb(snap.docs.length));
+}
+
+export function watchUserNotifications(userId: string, cb: (items: UserNotification[]) => void) {
+  const q = query(collection(db, 'userNotifications'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
+  return onSnapshot(q, (snap) => {
+    const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserNotification, 'id'>) }));
+    cb(items);
+  });
+}
+
+export async function markUserNotificationsRead(params: { userId: string; notificationIds: string[] }) {
+  const ids = [...new Set(params.notificationIds.filter(Boolean))];
+  if (!ids.length) return;
+
+  await runTransaction(db, async (tx) => {
+    for (const id of ids) {
+      const ref = doc(db, 'userNotifications', id);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) continue;
+
+      const data = snap.data() as Partial<UserNotification>;
+      if (data.userId !== params.userId || data.read) continue;
+
+      tx.update(ref, {
+        read: true,
+        readAt: serverTimestamp(),
+      });
+    }
   });
 }
 
@@ -642,44 +688,35 @@ export async function updateEventRoleAssignment(params: {
     if (event.managerId !== managerId) throw new Error('Only the event manager can change role assignments');
 
     const roles = (event.roles || []) as EventRole[];
-    let assignmentChanged = false;
+    const role = roles.find((item) => item.id === roleId);
+    if (!role) throw new Error('Role not found');
 
-    const nextRoles = roles.map((role) => {
-      if (role.id !== roleId) return role;
+    const assignedWorkerIds = role.assignedWorkerIds || [];
+    const alreadyAssigned = assignedWorkerIds.includes(workerId);
 
-      const assignedWorkerIds = role.assignedWorkerIds || [];
-      const alreadyAssigned = assignedWorkerIds.includes(workerId);
+    if (action === 'assign' && alreadyAssigned) return;
+    if (action === 'remove' && !alreadyAssigned) return;
 
-      if (action === 'assign' && !alreadyAssigned) {
-        assignmentChanged = true;
+    let nextRoles = roles;
+
+    // Assignments are now pending until worker accepts.
+    if (action === 'remove') {
+      nextRoles = roles.map((item) => {
+        if (item.id !== roleId) return item;
         return {
-          ...role,
-          assignedWorkerIds: [...assignedWorkerIds, workerId],
-          openSlots: Math.max(0, (role.openSlots || 0) - 1),
-        };
-      }
-
-      if (action === 'remove' && alreadyAssigned) {
-        assignmentChanged = true;
-        return {
-          ...role,
+          ...item,
           assignedWorkerIds: assignedWorkerIds.filter((id) => id !== workerId),
-          openSlots: (role.openSlots || 0) + 1,
+          openSlots: (item.openSlots || 0) + 1,
         };
-      }
+      });
 
-      return role;
-    });
-
-    if (!assignmentChanged) return;
-
-    const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
-
-    tx.update(ref, {
-      roles: nextRoles,
-      workerIds,
-      updatedAt: serverTimestamp(),
-    });
+      const workerIds = [...new Set(nextRoles.flatMap((item) => item.assignedWorkerIds || []))];
+      tx.update(ref, {
+        roles: nextRoles,
+        workerIds,
+        updatedAt: serverTimestamp(),
+      });
+    }
 
     const notificationRef = doc(collection(db, 'roleAssignmentNotifications'));
     tx.set(notificationRef, {
@@ -692,7 +729,7 @@ export async function updateEventRoleAssignment(params: {
       status: 'pending',
       statusReason:
         action === 'assign'
-          ? 'Worker must accept or decline this role assignment.'
+          ? 'Worker must accept or decline this role assignment before it is finalized.'
           : 'Worker must accept or decline this role removal update.',
       responseOptions: ['accept', 'decline'],
       createdAt: serverTimestamp(),
@@ -721,30 +758,36 @@ export async function respondToRoleAssignmentNotification(params: {
     const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
     let nextRoles = (event.roles || []) as EventRole[];
 
-    if (params.response === 'decline') {
+    if (notification.action === 'assign' && params.response === 'accept') {
       nextRoles = nextRoles.map((role) => {
         if (role.id !== notification.roleId) return role;
 
         const assignedWorkerIds = role.assignedWorkerIds || [];
-        const assigned = assignedWorkerIds.includes(params.workerId);
+        if (assignedWorkerIds.includes(params.workerId)) return role;
 
-        if (notification.action === 'assign' && assigned) {
-          return {
-            ...role,
-            assignedWorkerIds: assignedWorkerIds.filter((id) => id !== params.workerId),
-            openSlots: (role.openSlots || 0) + 1,
-          };
-        }
+        return {
+          ...role,
+          assignedWorkerIds: [...assignedWorkerIds, params.workerId],
+          openSlots: Math.max(0, (role.openSlots || 0) - 1),
+        };
+      });
 
-        if (notification.action === 'remove' && !assigned) {
-          return {
-            ...role,
-            assignedWorkerIds: [...assignedWorkerIds, params.workerId],
-            openSlots: Math.max(0, (role.openSlots || 0) - 1),
-          };
-        }
+      const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
+      tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+    }
 
-        return role;
+    if (notification.action === 'remove' && params.response === 'decline') {
+      nextRoles = nextRoles.map((role) => {
+        if (role.id !== notification.roleId) return role;
+
+        const assignedWorkerIds = role.assignedWorkerIds || [];
+        if (assignedWorkerIds.includes(params.workerId)) return role;
+
+        return {
+          ...role,
+          assignedWorkerIds: [...assignedWorkerIds, params.workerId],
+          openSlots: Math.max(0, (role.openSlots || 0) - 1),
+        };
       });
 
       const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
@@ -759,6 +802,19 @@ export async function respondToRoleAssignmentNotification(params: {
           : 'Worker declined this role assignment update.',
       respondedAt: serverTimestamp(),
       response: params.response,
+    });
+
+    const managerNotificationRef = doc(collection(db, 'userNotifications'));
+    tx.set(managerNotificationRef, {
+      userId: notification.managerId,
+      kind: 'role_invite_response',
+      title: params.response === 'accept' ? 'Role invite accepted' : 'Role invite declined',
+      body: `${event.name}: worker ${params.response === 'accept' ? 'accepted' : 'declined'} role update.`,
+      relatedEventId: notification.eventId,
+      relatedRoleId: notification.roleId,
+      sourceNotificationId: params.notificationId,
+      read: false,
+      createdAt: serverTimestamp(),
     });
   });
 }

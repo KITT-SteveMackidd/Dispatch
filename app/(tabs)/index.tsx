@@ -876,7 +876,9 @@ export default function EventsScreen() {
         renderItem={({ item }) => {
           const expanded = !!expandedIds[item.id];
           const managerLabel = managerNames[item.managerId] || 'Manager';
-          const eventTime = new Date(item.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const startsAtDate = new Date(item.startsAt);
+          const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
           const signupRatio = getWorkerSignupRatio(item);
 
           return (
@@ -888,7 +890,7 @@ export default function EventsScreen() {
                 <View style={[styles.statusPill, isDarkMode ? styles.statusPillDark : styles.statusPillLight]}><Text style={[styles.statusText, isDarkMode ? styles.statusTextDark : styles.statusTextLight]}>Upcoming</Text></View>
               </View>
 
-              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventTime}</Text>
+              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventDate} • {eventTime}</Text>
 
               {profile?.role === 'worker' ? (
                 <>

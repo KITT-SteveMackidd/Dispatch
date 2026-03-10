@@ -1,5 +1,16 @@
-import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import {
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { AppRole } from '@/types/dispatch';
@@ -15,6 +26,8 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<AppRole>('manager');
   const [loading, setLoading] = useState(false);
+  const emailInputRef = useRef<TextInput>(null);
+  const passwordInputRef = useRef<TextInput>(null);
 
   const onSignUp = async () => {
     if (!displayName.trim() || !email.trim() || !password) {
@@ -33,45 +46,84 @@ export default function SignUpScreen() {
   };
 
   return (
-    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
-      <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
-        <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Get Started</Text>
-        <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Create your account</Text>
-        <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>Set up your events workspace and role.</Text>
+    <KeyboardAvoidingView
+      style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}
+      behavior={Platform.select({ ios: 'padding', android: 'height' })}>
+      <Pressable style={styles.flex} onPress={Keyboard.dismiss}>
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+          <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+            <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Get Started</Text>
+            <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Create your account</Text>
+            <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>Set up your events workspace and role.</Text>
 
-        <TextInput value={displayName} onChangeText={setDisplayName} placeholder="Full name" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
-        <TextInput value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
-        <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholder="Password" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
+            <TextInput
+              value={displayName}
+              onChangeText={setDisplayName}
+              placeholder="Full name"
+              returnKeyType="next"
+              onSubmitEditing={() => emailInputRef.current?.focus()}
+              blurOnSubmit={false}
+              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+            />
+            <TextInput
+              ref={emailInputRef}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              placeholder="Email"
+              returnKeyType="next"
+              onSubmitEditing={() => passwordInputRef.current?.focus()}
+              blurOnSubmit={false}
+              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+            />
+            <TextInput
+              ref={passwordInputRef}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              placeholder="Password"
+              returnKeyType="go"
+              onSubmitEditing={onSignUp}
+              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+            />
 
-        <View style={styles.row}>
-          {(['manager', 'worker'] as AppRole[]).map((r) => (
-            <Pressable
-              key={r}
-              onPress={() => setRole(r)}
-              style={[
-                styles.pill,
-                isDarkMode ? styles.pillDark : styles.pillLight,
-                role === r && (isDarkMode ? styles.pillActiveDark : styles.pillActiveLight),
-              ]}>
-              <Text style={[styles.pillText, role === r ? styles.pillTextActive : isDarkMode ? styles.pillTextDark : styles.pillTextLight]}>{r.toUpperCase()}</Text>
+            <View style={styles.row}>
+              {(['manager', 'worker'] as AppRole[]).map((r) => (
+                <Pressable
+                  key={r}
+                  onPress={() => setRole(r)}
+                  style={[
+                    styles.pill,
+                    isDarkMode ? styles.pillDark : styles.pillLight,
+                    role === r && (isDarkMode ? styles.pillActiveDark : styles.pillActiveLight),
+                  ]}>
+                  <Text style={[styles.pillText, role === r ? styles.pillTextActive : isDarkMode ? styles.pillTextDark : styles.pillTextLight]}>{r.toUpperCase()}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Pressable style={[styles.btn, loading && styles.disabled]} onPress={onSignUp} disabled={loading}>
+              <Text style={styles.btnText}>{loading ? 'Creating...' : 'Create Account'}</Text>
             </Pressable>
-          ))}
-        </View>
 
-        <Pressable style={[styles.btn, loading && styles.disabled]} onPress={onSignUp} disabled={loading}>
-          <Text style={styles.btnText}>{loading ? 'Creating...' : 'Create Account'}</Text>
-        </Pressable>
-
-        <Link href="/(auth)/signin" style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>Already have an account? Sign in</Link>
-      </View>
-    </View>
+            <Link href="/(auth)/signin" style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>Already have an account? Sign in</Link>
+          </View>
+        </ScrollView>
+      </Pressable>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, justifyContent: 'center' },
+  container: { flex: 1 },
   containerLight: { backgroundColor: '#eef2ff' },
   containerDark: { backgroundColor: '#020617' },
+  flex: { flex: 1 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   card: { borderRadius: 18, borderWidth: 1, padding: 20 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
   cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
