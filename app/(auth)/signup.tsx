@@ -37,7 +37,8 @@ export default function SignUpScreen() {
     setLoading(true);
     try {
       await signUp({ displayName: displayName.trim(), email, password, role });
-      router.replace('/(tabs)');
+      Alert.alert('Verify your email', 'We sent a verification link to your inbox. Verify your email to continue.');
+      router.replace('/(auth)/verify-email');
     } catch (error) {
       Alert.alert('Sign up failed', error instanceof Error ? error.message : 'Unable to create account.');
     } finally {

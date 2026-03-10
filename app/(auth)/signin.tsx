@@ -17,12 +17,13 @@ import { useThemeMode } from '@/context/theme';
 
 export default function SignInScreen() {
   const router = useRouter();
-  const { signIn } = useSession();
+  const { signIn, sendPasswordReset } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const passwordInputRef = useRef<TextInput>(null);
 
   const onSignIn = async () => {
@@ -35,6 +36,22 @@ export default function SignInScreen() {
       Alert.alert('Sign in failed', error instanceof Error ? error.message : 'Unable to sign in.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onForgotPassword = async () => {
+    if (!email.trim()) {
+      return Alert.alert('Email required', 'Enter your email first, then tap Forgot password.');
+    }
+
+    setResetting(true);
+    try {
+      await sendPasswordReset(email);
+      Alert.alert('Reset email sent', 'Check your inbox for a password reset link.');
+    } catch (error) {
+      Alert.alert('Reset failed', error instanceof Error ? error.message : 'Unable to send password reset email.');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -72,6 +89,10 @@ export default function SignInScreen() {
               placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
               style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
             />
+
+            <Pressable onPress={onForgotPassword} disabled={resetting}>
+              <Text style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>{resetting ? 'Sending reset email...' : 'Forgot password?'}</Text>
+            </Pressable>
 
             <Pressable style={[styles.btn, loading && styles.disabled]} onPress={onSignIn} disabled={loading}>
               <Text style={styles.btnText}>{loading ? 'Signing in...' : 'Sign In'}</Text>

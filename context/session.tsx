@@ -1,7 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut as firebaseSignOut, updateProfile } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updateProfile,
+} from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { AppRole, UserProfile } from '@/types/dispatch';
 import { acceptPendingInvitesForUser } from '@/services/dispatch';
@@ -11,9 +19,14 @@ type SessionContextType = {
   authUser: User | null;
   loading: boolean;
   needsProfile: boolean;
+  requiresEmailVerification: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (params: { email: string; password: string; displayName: string; role: AppRole }) => Promise<void>;
   saveProfile: (params: { displayName: string; role: AppRole }) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
+  sendVerificationEmail: () => Promise<void>;
+  refreshAuthUser: () => Promise<boolean>;
+  revokeSession: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -36,6 +49,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsProfile, setNeedsProfile] = useState(false);
+
+  const requiresEmailVerification = Boolean(authUser && !authUser.emailVerified);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -65,25 +80,35 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+
+    if (!cred.user.emailVerified) {
+      await firebaseSignOut(auth);
+      throw new Error('Please verify your email address before signing in. Check your inbox for the verification link.');
+    }
+
     await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email || email });
   };
 
   const signUp = async (params: { email: string; password: string; displayName: string; role: AppRole }) => {
-    const cred = await createUserWithEmailAndPassword(auth, params.email.trim(), params.password);
-    await updateProfile(cred.user, { displayName: params.displayName.trim() });
+    const normalizedEmail = params.email.trim();
+    const trimmedName = params.displayName.trim();
+
+    const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, params.password);
+    await updateProfile(cred.user, { displayName: trimmedName });
+    await sendEmailVerification(cred.user);
 
     await setDoc(doc(db, 'users', cred.user.uid), {
       uid: cred.user.uid,
-      displayName: params.displayName.trim(),
+      displayName: trimmedName,
       role: params.role,
-      email: params.email.trim(),
+      email: normalizedEmail,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
 
-    await acceptPendingInvitesForUser({ userId: cred.user.uid, email: params.email.trim() });
+    await acceptPendingInvitesForUser({ userId: cred.user.uid, email: normalizedEmail });
 
-    setProfile({ uid: cred.user.uid, displayName: params.displayName.trim(), role: params.role });
+    setProfile({ uid: cred.user.uid, displayName: trimmedName, role: params.role });
     setNeedsProfile(false);
   };
 
@@ -111,6 +136,39 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNeedsProfile(false);
   };
 
+  const sendPasswordReset = async (email: string) => {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) throw new Error('Email is required.');
+    await sendPasswordResetEmail(auth, normalizedEmail);
+  };
+
+  const sendVerificationEmail = async () => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not authenticated');
+    await sendEmailVerification(user);
+  };
+
+  const refreshAuthUser = async () => {
+    const user = auth.currentUser;
+    if (!user) {
+      setAuthUser(null);
+      return false;
+    }
+
+    await user.reload();
+    const refreshed = auth.currentUser;
+    setAuthUser(refreshed);
+    return Boolean(refreshed?.emailVerified);
+  };
+
+  const revokeSession = async () => {
+    // Session revocation is handled by Firebase Admin in backend tooling.
+    // On client we provide an immediate local revoke by signing out.
+    await firebaseSignOut(auth);
+    setProfile(null);
+    setNeedsProfile(false);
+  };
+
   const signOut = async () => {
     await firebaseSignOut(auth);
     setProfile(null);
@@ -118,8 +176,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value = useMemo(
-    () => ({ profile, authUser, loading, needsProfile, signIn, signUp, saveProfile, signOut }),
-    [profile, authUser, loading, needsProfile]
+    () => ({
+      profile,
+      authUser,
+      loading,
+      needsProfile,
+      requiresEmailVerification,
+      signIn,
+      signUp,
+      saveProfile,
+      sendPasswordReset,
+      sendVerificationEmail,
+      refreshAuthUser,
+      revokeSession,
+      signOut,
+    }),
+    [profile, authUser, loading, needsProfile, requiresEmailVerification]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
