@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useThemeMode } from '@/context/theme';
 
 type ChatMessage = {
@@ -11,9 +11,10 @@ type ChatMessage = {
 };
 
 export default function WorkerChatScreen() {
-  const { themeMode } = useThemeMode();
-  const isDarkMode = themeMode === 'dark';
+  const { resolvedThemeMode } = useThemeMode();
+  const isDarkMode = resolvedThemeMode === 'dark';
   const [draft, setDraft] = useState('');
+  const listRef = useRef<FlatList<ChatMessage>>(null);
   const params = useLocalSearchParams<{
     workerId?: string;
     workerLabel?: string;
@@ -43,6 +44,10 @@ export default function WorkerChatScreen() {
     },
   ]);
 
+  useEffect(() => {
+    listRef.current?.scrollToEnd({ animated: true });
+  }, [messages.length]);
+
   const headerSubtitle = useMemo(() => {
     if (isTeamBroadcast) {
       return `Team broadcast${broadcastCount ? ` • ${broadcastCount} recipients` : ''}`;
@@ -50,6 +55,7 @@ export default function WorkerChatScreen() {
     return 'Direct manager ↔ worker chat';
   }, [broadcastCount, isTeamBroadcast]);
 
+  const canSend = draft.trim().length > 0;
   const sendMessage = () => {
     const text = draft.trim();
     if (!text) return;
@@ -58,7 +64,11 @@ export default function WorkerChatScreen() {
   };
 
   return (
-    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
+    <KeyboardAvoidingView
+      style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}
+      behavior={Platform.select({ ios: 'padding', android: 'height' })}
+      keyboardVerticalOffset={Platform.select({ ios: 84, android: 0 })}
+    >
       <Stack.Screen options={{ title: workerLabel }} />
 
       <View style={[styles.header, isDarkMode ? styles.headerDark : styles.headerLight]}>
@@ -68,19 +78,24 @@ export default function WorkerChatScreen() {
         {params.eventName ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Event: {params.eventName}</Text> : null}
       </View>
 
-      <ScrollView contentContainerStyle={styles.thread}>
-        {messages.map((message) => {
+      <FlatList
+        ref={listRef}
+        data={messages}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.thread}
+        keyboardShouldPersistTaps="handled"
+        renderItem={({ item: message }) => {
           const mine = message.from === 'self';
           return (
-            <View key={message.id} style={[styles.row, mine ? styles.rowSelf : styles.rowOther]}>
+            <View style={[styles.row, mine ? styles.rowSelf : styles.rowOther]}>
               <View style={[styles.bubble, mine ? styles.bubbleSelf : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
                 <Text style={[styles.messageText, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>{message.text}</Text>
                 <Text style={[styles.time, mine ? styles.timeSelf : isDarkMode ? styles.timeDark : styles.timeLight]}>{message.at}</Text>
               </View>
             </View>
           );
-        })}
-      </ScrollView>
+        }}
+      />
 
       <View style={[styles.composer, isDarkMode ? styles.composerDark : styles.composerLight]}>
         <TextInput
@@ -89,13 +104,14 @@ export default function WorkerChatScreen() {
           placeholder={isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
           placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
           style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
-          multiline
+          returnKeyType="send"
+          onSubmitEditing={sendMessage}
         />
-        <Pressable style={styles.sendButton} onPress={sendMessage}>
+        <Pressable style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend}>
           <Text style={styles.sendText}>Send</Text>
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -115,7 +131,7 @@ const styles = StyleSheet.create({
   context: { marginTop: 2, fontSize: 11, fontWeight: '600' },
   contextLight: { color: '#2563eb' },
   contextDark: { color: '#93c5fd' },
-  thread: { paddingHorizontal: 10, paddingVertical: 12, gap: 8 },
+  thread: { paddingHorizontal: 10, paddingVertical: 12, gap: 8, flexGrow: 1 },
   row: { flexDirection: 'row' },
   rowSelf: { justifyContent: 'flex-end' },
   rowOther: { justifyContent: 'flex-start' },
@@ -131,12 +147,13 @@ const styles = StyleSheet.create({
   timeSelf: { color: '#dbeafe' },
   timeLight: { color: '#64748b' },
   timeDark: { color: '#94a3b8' },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1 },
+  composer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1 },
   composerLight: { backgroundColor: '#fff', borderTopColor: '#e2e8f0' },
   composerDark: { backgroundColor: '#0f172a', borderTopColor: '#1e293b' },
-  input: { flex: 1, minHeight: 42, maxHeight: 110, borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  input: { flex: 1, minHeight: 42, borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   inputLight: { borderColor: '#cbd5e1', color: '#0f172a', backgroundColor: '#fff' },
   inputDark: { borderColor: '#334155', color: '#e2e8f0', backgroundColor: '#111827' },
   sendButton: { backgroundColor: '#2563eb', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  sendButtonDisabled: { opacity: 0.45 },
   sendText: { color: '#fff', fontWeight: '700' },
 });

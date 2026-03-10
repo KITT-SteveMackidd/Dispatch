@@ -734,5 +734,13 @@
     "state": "working",
     "zone": "computer",
     "task": "Completed DSP-020: validated Add Member drawer email invite flow and invite email transport/app-link path; ran dispatch TypeScript validation (npx tsc --noEmit) successfully; updated dispatch todo status to Done."
+  },
+  {
+    "id": "evt-dispatch-heartbeat-agent-1-20260310T030109Z",
+    "ts": "2026-03-10T03:01:09.125Z",
+    "agent": "dispatch-heartbeat-agent-1",
+    "state": "working",
+    "zone": "computer",
+    "task": "Completed DSP-025: refined chat layout/composer behavior in dispatch/app/chat/[workerId].tsx (keyboard avoidance, safer composer/send UX, polished bubble styling) and passed dispatch TypeScript validation with npx tsc --noEmit."
   }
 ]
