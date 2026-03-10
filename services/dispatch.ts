@@ -219,7 +219,7 @@ export async function createDispatchEvent(params: {
   location: string;
   description: string;
   roles: CreateEventRoleInput[];
-}) {
+}): Promise<DispatchEvent> {
   const startsAt = new Date(`${params.date.trim()}T${params.time.trim()}:00`);
   if (Number.isNaN(startsAt.getTime())) {
     throw new Error('Enter a valid event date and time.');
@@ -244,7 +244,7 @@ export async function createDispatchEvent(params: {
 
   const workerIds = [...new Set(roles.flatMap((role) => role.assignedWorkerIds || []))];
 
-  await addDoc(collection(db, 'events'), {
+  const eventPayload = {
     managerId: params.managerId,
     workerIds,
     name: params.name.trim(),
@@ -256,7 +256,20 @@ export async function createDispatchEvent(params: {
     roles,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
+
+  const docRef = await addDoc(collection(db, 'events'), eventPayload);
+
+  return {
+    id: docRef.id,
+    managerId: eventPayload.managerId,
+    name: eventPayload.name,
+    location: eventPayload.location,
+    startsAt: eventPayload.startsAt,
+    endsAt: eventPayload.endsAt,
+    teamIds: eventPayload.teamIds,
+    roles: eventPayload.roles,
+  };
 }
 
 export async function loadWorkerTeams(workerId: string): Promise<Team[]> {

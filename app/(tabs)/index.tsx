@@ -200,6 +200,7 @@ export default function EventsScreen() {
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>(INITIAL_TEMPLATE_OPTIONS);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(INITIAL_TEMPLATE_OPTIONS[0]?.id || '');
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [reopenCreateEventAfterTemplateFlow, setReopenCreateEventAfterTemplateFlow] = useState(false);
   const [pendingRoleNotifications, setPendingRoleNotifications] = useState<Array<{
     id: string;
     action: 'assign' | 'remove';
@@ -212,6 +213,7 @@ export default function EventsScreen() {
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
+  const [optimisticCreatedEvents, setOptimisticCreatedEvents] = useState<DispatchEvent[]>([]);
   const [rolePickerRoleId, setRolePickerRoleId] = useState<string | null>(null);
   const [assignmentBusyKey, setAssignmentBusyKey] = useState<string | null>(null);
   const canCreateEvent = profile?.role === 'manager';
@@ -234,8 +236,14 @@ export default function EventsScreen() {
   useEffect(() => {
     if (!profile) return;
     return profile.role === 'manager'
-      ? watchManagerEvents(profile.uid, setEvents)
-      : watchWorkerEvents(profile.uid, setEvents);
+      ? watchManagerEvents(profile.uid, (items) => {
+          setEvents(items);
+          setOptimisticCreatedEvents((prev) => prev.filter((pending) => !items.some((item) => item.id === pending.id)));
+        })
+      : watchWorkerEvents(profile.uid, (items) => {
+          setEvents(items);
+          setOptimisticCreatedEvents((prev) => prev.filter((pending) => !items.some((item) => item.id === pending.id)));
+        });
   }, [profile]);
 
   useEffect(() => {
@@ -346,6 +354,12 @@ export default function EventsScreen() {
     setRolePickerRoleId(null);
   };
 
+  const openTemplatePickerFromCreateEvent = () => {
+    setReopenCreateEventAfterTemplateFlow(true);
+    setCreateEventDrawerOpen(false);
+    setTemplatePickerOpen(true);
+  };
+
   const openCreateTemplateDrawer = (template?: EventTemplateOption) => {
     setTemplatePickerOpen(false);
     if (template) {
@@ -370,6 +384,12 @@ export default function EventsScreen() {
     setCreateTemplateDrawerOpen(true);
   };
 
+  const openCreateTemplateDrawerFromCreateEvent = (template?: EventTemplateOption) => {
+    setReopenCreateEventAfterTemplateFlow(true);
+    setCreateEventDrawerOpen(false);
+    openCreateTemplateDrawer(template);
+  };
+
   const closeCreateTemplateDrawer = () => {
     setCreateTemplateDrawerOpen(false);
     setEditingTemplateId(null);
@@ -378,6 +398,19 @@ export default function EventsScreen() {
     setTemplateDefaultLocationDraft('');
     setTemplateDefaultDescriptionDraft('');
     setTemplateRolesDraft([]);
+
+    if (reopenCreateEventAfterTemplateFlow) {
+      setCreateEventDrawerOpen(true);
+      setReopenCreateEventAfterTemplateFlow(false);
+    }
+  };
+
+  const closeTemplatePicker = () => {
+    setTemplatePickerOpen(false);
+    if (reopenCreateEventAfterTemplateFlow) {
+      setCreateEventDrawerOpen(true);
+      setReopenCreateEventAfterTemplateFlow(false);
+    }
   };
 
   useEffect(() => {
@@ -546,8 +579,12 @@ export default function EventsScreen() {
   };
 
   const upcoming = useMemo(
-    () => events.filter((e) => new Date(e.startsAt).getTime() >= Date.now()).sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt)),
-    [events]
+    () => {
+      const combined = [...events, ...optimisticCreatedEvents];
+      const unique = combined.filter((event, index, list) => list.findIndex((item) => item.id === event.id) === index);
+      return unique.filter((e) => new Date(e.startsAt).getTime() >= Date.now()).sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
+    },
+    [events, optimisticCreatedEvents]
   );
 
   const toggleExpanded = (eventId: string) => {
@@ -756,7 +793,7 @@ export default function EventsScreen() {
     if (!profile?.uid || !selectedTemplate) return;
 
     try {
-      await createDispatchEvent({
+      const createdEvent = await createDispatchEvent({
         managerId: profile.uid,
         name: selectedTemplate.name,
         date: eventDateDraft,
@@ -765,6 +802,7 @@ export default function EventsScreen() {
         description: eventDescriptionDraft,
         roles: createEventRolesDraft,
       });
+      setOptimisticCreatedEvents((prev) => [createdEvent, ...prev.filter((item) => item.id !== createdEvent.id)]);
       Alert.alert('Event created', 'Your event has been created and added to upcoming assignments.');
       closeCreateEventDrawer();
     } catch (error) {
@@ -955,7 +993,7 @@ export default function EventsScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Create new template"
                   style={[styles.templateAddButton, isDarkMode ? styles.templateAddButtonDark : styles.templateAddButtonLight]}
-                  onPress={() => openCreateTemplateDrawer()}>
+                  onPress={() => openCreateTemplateDrawerFromCreateEvent()}>
                   <Text style={[styles.templateAddButtonText, isDarkMode ? styles.templateAddButtonTextDark : styles.templateAddButtonTextLight]}>+ New Template</Text>
                 </Pressable>
               </View>
@@ -964,7 +1002,7 @@ export default function EventsScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Open template selector"
                 style={[styles.templateSelectTrigger, isDarkMode ? styles.templateSelectTriggerDark : styles.templateSelectTriggerLight]}
-                onPress={() => setTemplatePickerOpen(true)}>
+                onPress={openTemplatePickerFromCreateEvent}>
                 <View>
                   <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>{selectedTemplate?.name || 'Select template'}</Text>
                   {selectedTemplate ? (
@@ -981,7 +1019,7 @@ export default function EventsScreen() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Edit ${selectedTemplate.name} template`}
-                    onPress={() => openCreateTemplateDrawer(selectedTemplate)}
+                    onPress={() => openCreateTemplateDrawerFromCreateEvent(selectedTemplate)}
                     style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight]}>
                     <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>Edit</Text>
                   </Pressable>
@@ -1106,8 +1144,8 @@ export default function EventsScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={templatePickerOpen} animationType="slide" transparent onRequestClose={() => setTemplatePickerOpen(false)}>
-        <Pressable style={styles.drawerBackdrop} onPress={() => setTemplatePickerOpen(false)}>
+      <Modal visible={templatePickerOpen} animationType="slide" transparent onRequestClose={closeTemplatePicker}>
+        <Pressable style={styles.drawerBackdrop} onPress={closeTemplatePicker}>
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Select Template</Text>
             <ScrollView style={styles.drawerList}>
@@ -1119,7 +1157,7 @@ export default function EventsScreen() {
                     style={styles.drawerRow}
                     onPress={() => {
                       setSelectedTemplateId(template.id);
-                      setTemplatePickerOpen(false);
+                      closeTemplatePicker();
                     }}>
                     <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>
                       {template.name} {selected ? '✓' : ''}
@@ -1131,7 +1169,7 @@ export default function EventsScreen() {
                 );
               })}
             </ScrollView>
-            <Pressable style={styles.drawerClose} onPress={() => setTemplatePickerOpen(false)}>
+            <Pressable style={styles.drawerClose} onPress={closeTemplatePicker}>
               <Text style={styles.drawerCloseText}>Done</Text>
             </Pressable>
           </Pressable>
