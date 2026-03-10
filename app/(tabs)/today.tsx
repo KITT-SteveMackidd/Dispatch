@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { loadUserProfilesByIds, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
+import { deleteDispatchEvent, loadUserProfilesByIds, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
 import { AppRole, DispatchEvent, EventTask } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
@@ -53,6 +54,7 @@ export default function TodayScreen() {
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -137,7 +139,9 @@ export default function TodayScreen() {
   };
 
   const today = useMemo(() => {
-    return events.filter((event) => occursToday(event, nowMs));
+    return events
+      .filter((event) => occursToday(event, nowMs))
+      .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
   }, [events, nowMs]);
 
   const getProgress = (event: DispatchEvent): TaskProgress => {
@@ -265,6 +269,27 @@ export default function TodayScreen() {
     setExpandedEventIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
 
+  const handleDeleteEvent = (event: DispatchEvent) => {
+    if (!profile || profile.role !== 'manager') return;
+
+    Alert.alert('Delete Event', `Delete "${event.name}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel', onPress: () => swipeableRefs.current[event.id]?.close() },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteDispatchEvent({ eventId: event.id, managerId: profile.uid });
+          } catch (error) {
+            Alert.alert('Unable to delete event', error instanceof Error ? error.message : 'Please try again.');
+          } finally {
+            swipeableRefs.current[event.id]?.close();
+          }
+        },
+      },
+    ]);
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} active dispatches.</Text>
@@ -286,7 +311,7 @@ export default function TodayScreen() {
           const nextTask = profile?.role === 'worker' ? workerNextTask(item, profile.uid) : null;
           const countdownClock = formatCountdownClock(nextTask?.dueAt);
 
-          return (
+          const card = (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
                 <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
@@ -382,6 +407,22 @@ export default function TodayScreen() {
               {!isManager && isExpanded ? renderWorkerChecklist(item) : null}
             </Pressable>
           );
+
+          if (!isManager) return card;
+
+          return (
+            <Swipeable
+              ref={(ref) => { swipeableRefs.current[item.id] = ref; }}
+              renderRightActions={() => (
+                <Pressable style={styles.swipeDeleteAction} onPress={() => handleDeleteEvent(item)}>
+                  <Text style={styles.swipeDeleteActionText}>Delete</Text>
+                </Pressable>
+              )}
+              rightThreshold={40}
+              overshootRight={false}>
+              {card}
+            </Swipeable>
+          );
         }}
       />
     </View>
@@ -400,6 +441,15 @@ const styles = StyleSheet.create({
   emptyDark: { color: '#94a3b8' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  swipeDeleteAction: {
+    marginBottom: 10,
+    borderRadius: 12,
+    width: 92,
+    backgroundColor: '#b91c1c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swipeDeleteActionText: { color: '#fee2e2', fontWeight: '700' },
   cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontWeight: '700', fontSize: 20, marginBottom: 6, flex: 1 },
