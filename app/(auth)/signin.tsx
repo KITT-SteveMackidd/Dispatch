@@ -75,7 +75,7 @@ export default function SignInScreen() {
               returnKeyType="next"
               onSubmitEditing={() => passwordInputRef.current?.focus()}
               blurOnSubmit={false}
-              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+              placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
               style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
             />
             <TextInput
@@ -86,7 +86,7 @@ export default function SignInScreen() {
               placeholder="Password"
               returnKeyType="go"
               onSubmitEditing={onSignIn}
-              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+              placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
               style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
             />
 
@@ -111,28 +111,28 @@ export default function SignInScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#181B24' },
+  containerDark: { backgroundColor: '#101A2F' },
   flex: { flex: 1 },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   card: { borderRadius: 18, borderWidth: 1, padding: 20 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
-  cardDark: { backgroundColor: '#232832', borderColor: '#1e293b' },
+  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
   eyebrow: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
   eyebrowLight: { color: '#2563eb' },
-  eyebrowDark: { color: '#93c5fd' },
+  eyebrowDark: { color: '#0EC3C9' },
   title: { fontSize: 30, fontWeight: '700', marginTop: 4 },
   titleLight: { color: '#232832' },
-  titleDark: { color: '#f8fafc' },
+  titleDark: { color: '#F4F8FF' },
   subtitle: { marginBottom: 18, marginTop: 6 },
   subtitleLight: { color: '#64748b' },
-  subtitleDark: { color: '#94a3b8' },
+  subtitleDark: { color: '#F4F8FF' },
   input: { padding: 13, borderRadius: 12, marginBottom: 10, borderWidth: 1 },
   inputLight: { backgroundColor: '#f8fafc', color: '#232832', borderColor: '#e2e8f0' },
-  inputDark: { backgroundColor: '#232832', color: '#f8fafc', borderColor: '#334155' },
+  inputDark: { backgroundColor: '#1A2540', color: '#F4F8FF', borderColor: '#001A4D' },
   btn: { backgroundColor: '#2563eb', borderRadius: 12, padding: 13, alignItems: 'center', marginTop: 8 },
   disabled: { opacity: 0.65 },
   btnText: { color: 'white', fontWeight: '700' },
   link: { marginTop: 12, fontWeight: '600' },
   linkLight: { color: '#2563eb' },
-  linkDark: { color: '#93c5fd' },
+  linkDark: { color: '#0EC3C9' },
 });

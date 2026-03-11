@@ -47,12 +47,12 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: isDarkMode ? '#94a3b8' : '#64748b',
-        headerStyle: { backgroundColor: isDarkMode ? '#232832' : '#f8fafc' },
-        headerTintColor: isDarkMode ? '#f8fafc' : '#232832',
+        tabBarInactiveTintColor: isDarkMode ? '#F4F8FF' : '#94a3b8',
+        headerStyle: { backgroundColor: isDarkMode ? '#1A2540' : '#f8fafc' },
+        headerTintColor: isDarkMode ? '#F4F8FF' : '#1A2540',
         headerShadowVisible: false,
-        tabBarStyle: { backgroundColor: isDarkMode ? '#232832' : '#ffffff', borderTopColor: isDarkMode ? '#1e293b' : '#e2e8f0' },
-        sceneStyle: { backgroundColor: isDarkMode ? '#181B24' : '#eef2ff' },
+        tabBarStyle: { backgroundColor: isDarkMode ? '#1A2540' : '#ffffff', borderTopColor: isDarkMode ? '#001A4D' : '#e2e8f0' },
+        sceneStyle: { backgroundColor: isDarkMode ? '#101A2F' : '#eef2ff' },
       }}>
       <Tabs.Screen
         name="today"
@@ -61,7 +61,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Feather name="clock" size={18} color={color} />,
           headerRight: () => (
             <Pressable style={{ marginRight: 14 }}>
-              <Feather name="bell" size={18} color={isDarkMode ? '#cbd5e1' : '#334155'} />
+              <Feather name="bell" size={18} color={isDarkMode ? '#F4F8FF' : '#334155'} />
             </Pressable>
           ),
         }}
@@ -76,13 +76,13 @@ export default function TabLayout() {
               style={{
                 marginRight: 14,
                 borderWidth: 1,
-                borderColor: isDarkMode ? '#334155' : '#cbd5e1',
-                backgroundColor: isDarkMode ? '#232832' : '#ffffff',
+                borderColor: isDarkMode ? '#001A4D' : '#e2e8f0',
+                backgroundColor: isDarkMode ? '#1A2540' : '#ffffff',
                 borderRadius: 8,
                 paddingHorizontal: 10,
                 paddingVertical: 4,
               }}>
-              <Text style={{ color: isDarkMode ? '#cbd5e1' : '#475569', fontSize: 12, fontWeight: '600' }}>Filter</Text>
+              <Text style={{ color: isDarkMode ? '#F4F8FF' : '#475569', fontSize: 12, fontWeight: '600' }}>Filter</Text>
             </Pressable>
           ),
         }}
@@ -109,9 +109,9 @@ export default function TabLayout() {
                 paddingHorizontal: 10,
                 paddingVertical: 6,
                 borderRadius: 8,
-                backgroundColor: isDarkMode ? '#1e293b' : '#e2e8f0',
+                backgroundColor: isDarkMode ? '#001A4D' : '#e2e8f0',
               }}>
-              <Text style={{ color: isDarkMode ? '#e2e8f0' : '#334155', fontWeight: '700', fontSize: 12 }}>Sign out</Text>
+              <Text style={{ color: isDarkMode ? '#F4F8FF' : '#334155', fontWeight: '700', fontSize: 12 }}>Sign out</Text>
             </Pressable>
           ),
         }}

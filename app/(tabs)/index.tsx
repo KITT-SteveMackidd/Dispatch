@@ -1203,7 +1203,7 @@ export default function EventsScreen() {
                 onChangeText={setEventDateDraft}
                 autoCapitalize="none"
                 placeholder="2026-06-15"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 returnKeyType="next"
                 blurOnSubmit={false}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
@@ -1217,7 +1217,7 @@ export default function EventsScreen() {
                 onChangeText={setEventTimeDraft}
                 autoCapitalize="none"
                 placeholder="14:30"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 returnKeyType="next"
                 blurOnSubmit={false}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
@@ -1230,7 +1230,7 @@ export default function EventsScreen() {
                 value={eventLocationDraft}
                 onChangeText={setEventLocationDraft}
                 placeholder="Downtown"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 returnKeyType="next"
                 blurOnSubmit={false}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
@@ -1243,7 +1243,7 @@ export default function EventsScreen() {
                 value={eventDescriptionDraft}
                 onChangeText={setEventDescriptionDraft}
                 placeholder="Describe this event for workers"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 multiline
                 returnKeyType="done"
                 onSubmitEditing={Keyboard.dismiss}
@@ -1358,7 +1358,7 @@ export default function EventsScreen() {
                 value={templateNameDraft}
                 onChangeText={setTemplateNameDraft}
                 placeholder="Example: Saturday Street Crew"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
@@ -1371,7 +1371,7 @@ export default function EventsScreen() {
                 onChangeText={setTemplateDefaultTimeDraft}
                 autoCapitalize="none"
                 placeholder="14:30"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 returnKeyType="done"
                 onSubmitEditing={Keyboard.dismiss}
                 blurOnSubmit
@@ -1385,7 +1385,7 @@ export default function EventsScreen() {
                 value={templateDefaultLocationDraft}
                 onChangeText={setTemplateDefaultLocationDraft}
                 placeholder="Downtown"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
             </View>
@@ -1396,7 +1396,7 @@ export default function EventsScreen() {
                 value={templateDefaultDescriptionDraft}
                 onChangeText={setTemplateDefaultDescriptionDraft}
                 placeholder="Describe this template"
-                placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                 multiline
                 style={[styles.templateTextArea, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
               />
@@ -1428,7 +1428,7 @@ export default function EventsScreen() {
                       value={role.name}
                       onChangeText={(value) => updateTemplateRoleDraftName(role.id, value)}
                       placeholder={`Role ${index + 1}`}
-                      placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                      placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                       style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                     />
 
@@ -1449,7 +1449,7 @@ export default function EventsScreen() {
                           value={task.name}
                           onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { name: value })}
                           placeholder="Task name"
-                          placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                           style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                         />
                         <TextInput
@@ -1460,7 +1460,7 @@ export default function EventsScreen() {
                           onSubmitEditing={Keyboard.dismiss}
                           blurOnSubmit
                           placeholder="Minutes from event start"
-                          placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+                          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                           style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                         />
                         <Pressable
@@ -1505,11 +1505,11 @@ export default function EventsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#181B24' },
+  containerDark: { backgroundColor: '#101A2F' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   filter: { fontWeight: '600' },
   filterLight: { color: '#334155' },
-  filterDark: { color: '#cbd5e1' },
+  filterDark: { color: '#F4F8FF' },
   createButton: {
     width: 34,
     height: 34,
@@ -1521,26 +1521,26 @@ const styles = StyleSheet.create({
   createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
   empty: { marginTop: 20 },
   emptyLight: { color: '#64748b' },
-  emptyDark: { color: '#94a3b8' },
+  emptyDark: { color: '#F4F8FF' },
   pendingNotificationsCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
   pendingNotificationsCardLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
-  pendingNotificationsCardDark: { borderColor: '#1e3a8a', backgroundColor: '#232832' },
+  pendingNotificationsCardDark: { borderColor: '#00133D', backgroundColor: '#1A2540' },
   pendingNotificationsTitle: { fontWeight: '700', fontSize: 13 },
   pendingNotificationsTitleLight: { color: '#1e3a8a' },
-  pendingNotificationsTitleDark: { color: '#bfdbfe' },
+  pendingNotificationsTitleDark: { color: '#F4F8FF' },
   pendingNotificationRow: { gap: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#334155' },
   pendingNotificationText: { fontSize: 12 },
   pendingNotificationActions: { flexDirection: 'row', gap: 8 },
   pendingActionButton: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   pendingActionButtonText: { fontSize: 13, fontWeight: '700' },
   pendingActionDeclineLight: { borderColor: '#fecaca', backgroundColor: '#fff1f2' },
-  pendingActionDeclineDark: { borderColor: '#7f1d1d', backgroundColor: '#3f0b0b' },
+  pendingActionDeclineDark: { borderColor: '#F98D2F', backgroundColor: '#00133D' },
   pendingActionDeclineTextLight: { color: '#b91c1c' },
-  pendingActionDeclineTextDark: { color: '#fecaca' },
+  pendingActionDeclineTextDark: { color: '#F4F8FF' },
   pendingActionAcceptLight: { borderColor: '#93c5fd', backgroundColor: '#dbeafe' },
-  pendingActionAcceptDark: { borderColor: '#1d4ed8', backgroundColor: '#1e3a8a' },
+  pendingActionAcceptDark: { borderColor: '#001A4D', backgroundColor: '#00133D' },
   pendingActionAcceptTextLight: { color: '#1d4ed8' },
-  pendingActionAcceptTextDark: { color: '#dbeafe' },
+  pendingActionAcceptTextDark: { color: '#F4F8FF' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
   swipeDeleteAction: {
@@ -1552,91 +1552,91 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   swipeDeleteActionText: { color: '#fee2e2', fontWeight: '700' },
-  cardDark: { backgroundColor: '#232832', borderColor: '#1e293b' },
+  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontWeight: '700', fontSize: 20, flex: 1, marginRight: 8 },
   titleLight: { color: '#232832' },
-  titleDark: { color: '#f8fafc' },
+  titleDark: { color: '#F4F8FF' },
   statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
   statusPillLight: { backgroundColor: '#e2e8f0' },
-  statusPillDark: { backgroundColor: '#334155' },
+  statusPillDark: { backgroundColor: '#001A4D' },
   statusText: { fontSize: 11, fontWeight: '700' },
   statusTextLight: { color: '#475569' },
-  statusTextDark: { color: '#cbd5e1' },
+  statusTextDark: { color: '#F4F8FF' },
   meta: { marginTop: 6, fontSize: 12 },
   metaLight: { color: '#64748b' },
-  metaDark: { color: '#94a3b8' },
+  metaDark: { color: '#F4F8FF' },
   expandHint: { marginTop: 8, fontSize: 12, fontWeight: '600' },
   expandHintLight: { color: '#2563eb' },
-  expandHintDark: { color: '#93c5fd' },
+  expandHintDark: { color: '#0EC3C9' },
   managerExpanded: { marginTop: 10, gap: 10 },
   roleCard: { borderWidth: 1, borderRadius: 10, padding: 10 },
   roleCardLight: { borderColor: '#e2e8f0', backgroundColor: '#f8fafc' },
-  roleCardDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  roleCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   roleHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   roleTitle: { fontWeight: '700', fontSize: 14 },
   roleTitleLight: { color: '#232832' },
-  roleTitleDark: { color: '#e2e8f0' },
+  roleTitleDark: { color: '#F4F8FF' },
   roleMeta: { fontSize: 12, fontWeight: '600' },
   roleMetaLight: { color: '#64748b' },
-  roleMetaDark: { color: '#94a3b8' },
+  roleMetaDark: { color: '#F4F8FF' },
   avatarRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   avatarChip: { alignItems: 'center', width: 66 },
   avatarCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   avatarCircleLight: { backgroundColor: '#dbeafe' },
-  avatarCircleDark: { backgroundColor: '#1e3a8a' },
+  avatarCircleDark: { backgroundColor: '#00133D' },
   avatarText: { fontWeight: '700', color: '#bfdbfe' },
   avatarName: { marginTop: 4, fontSize: 11 },
   avatarNameLight: { color: '#334155' },
-  avatarNameDark: { color: '#cbd5e1' },
+  avatarNameDark: { color: '#F4F8FF' },
   roleTaskToggle: { marginTop: 10, alignSelf: 'flex-start' },
   roleActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   drawerButton: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8 },
   drawerButtonLight: { backgroundColor: '#e2e8f0' },
-  drawerButtonDark: { backgroundColor: '#334155' },
+  drawerButtonDark: { backgroundColor: '#001A4D' },
   drawerButtonText: { fontSize: 12, fontWeight: '700' },
   drawerButtonTextLight: { color: '#334155' },
-  drawerButtonTextDark: { color: '#e2e8f0' },
+  drawerButtonTextDark: { color: '#F4F8FF' },
   drawerDestructiveButton: { marginBottom: 10, backgroundColor: '#7f1d1d' },
   drawerDestructiveButtonText: { color: '#fecaca', textAlign: 'center', fontWeight: '700' },
   taskList: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 8, gap: 8 },
   taskRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   taskName: { flex: 1, fontSize: 13 },
   taskNameLight: { color: '#232832' },
-  taskNameDark: { color: '#e2e8f0' },
+  taskNameDark: { color: '#F4F8FF' },
   taskStatus: { fontSize: 12, fontWeight: '600' },
   taskStatusDone: { color: '#22c55e' },
   taskEmpty: { marginTop: 8, fontSize: 12 },
   taskEmptyLight: { color: '#64748b' },
-  taskEmptyDark: { color: '#94a3b8' },
+  taskEmptyDark: { color: '#F4F8FF' },
   roleEmpty: { fontSize: 12 },
   roleEmptyLight: { color: '#64748b' },
-  roleEmptyDark: { color: '#94a3b8' },
+  roleEmptyDark: { color: '#F4F8FF' },
   rolePreviewContainer: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 8 },
   rolePreviewContainerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  rolePreviewContainerDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  rolePreviewContainerDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   rolePreviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   rolePreviewLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   rolePreviewAvatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   rolePreviewAvatarLight: { backgroundColor: '#dbeafe' },
-  rolePreviewAvatarDark: { backgroundColor: '#1e3a8a' },
+  rolePreviewAvatarDark: { backgroundColor: '#00133D' },
   rolePreviewAvatarAssignedLight: { backgroundColor: '#0ea5e9' },
-  rolePreviewAvatarAssignedDark: { backgroundColor: '#2563eb' },
+  rolePreviewAvatarAssignedDark: { backgroundColor: '#0EC3C9' },
   rolePreviewAvatarText: { fontSize: 11, fontWeight: '700', color: '#bfdbfe' },
   rolePreviewName: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
   rolePreviewNameLight: { color: '#232832' },
-  rolePreviewNameDark: { color: '#e2e8f0' },
+  rolePreviewNameDark: { color: '#F4F8FF' },
   rolePreviewMeta: { fontSize: 12 },
   rolePreviewMetaLight: { color: '#64748b' },
-  rolePreviewMetaDark: { color: '#94a3b8' },
+  rolePreviewMetaDark: { color: '#F4F8FF' },
   templateRoleEditor: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 10 },
   templateRoleEditorLight: { borderColor: '#cbd5e1', backgroundColor: '#f1f5f9' },
-  templateRoleEditorDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  templateRoleEditorDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateRoleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   templateRoleTaskHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   templateTaskRow: { borderWidth: 1, borderRadius: 8, padding: 8, gap: 6 },
   templateTaskRowLight: { borderColor: '#cbd5e1', backgroundColor: '#ffffff' },
-  templateTaskRowDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  templateTaskRowDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateTaskLabel: { fontSize: 12, fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   keyboardAvoidingFill: { width: '100%' },
@@ -1644,24 +1644,24 @@ const styles = StyleSheet.create({
   createEventScroll: { marginTop: 8 },
   createEventScrollContent: { paddingBottom: 16 },
   drawerLight: { backgroundColor: '#fff' },
-  drawerDark: { backgroundColor: '#232832' },
+  drawerDark: { backgroundColor: '#1A2540' },
   drawerTitle: { fontWeight: '700', fontSize: 18 },
   drawerTitleLight: { color: '#232832' },
-  drawerTitleDark: { color: '#f8fafc' },
+  drawerTitleDark: { color: '#F4F8FF' },
   drawerSub: { fontSize: 12, marginTop: 4 },
   drawerSubLight: { color: '#64748b' },
-  drawerSubDark: { color: '#94a3b8' },
+  drawerSubDark: { color: '#F4F8FF' },
   drawerList: { marginTop: 12 },
   drawerRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#334155' },
   drawerName: { fontWeight: '600' },
   drawerNameLight: { color: '#232832' },
-  drawerNameDark: { color: '#e2e8f0' },
+  drawerNameDark: { color: '#F4F8FF' },
   drawerMeta: { marginTop: 4, fontSize: 12 },
   drawerMetaLight: { color: '#64748b' },
-  drawerMetaDark: { color: '#94a3b8' },
+  drawerMetaDark: { color: '#F4F8FF' },
   inviteTeamCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10 },
   inviteTeamCardLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  inviteTeamCardDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  inviteTeamCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   inviteTeamHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   inviteTeamMembers: { marginTop: 8, gap: 6 },
   inviteMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
@@ -1672,55 +1672,55 @@ const styles = StyleSheet.create({
   templateHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   templateSelectTrigger: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   templateSelectTriggerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  templateSelectTriggerDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  templateSelectTriggerDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateLabel: { fontSize: 13, fontWeight: '700', flex: 1 },
   templateAddButton: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1 },
   templateAddButtonLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
-  templateAddButtonDark: { borderColor: '#1d4ed8', backgroundColor: '#1e3a8a' },
+  templateAddButtonDark: { borderColor: '#001A4D', backgroundColor: '#00133D' },
   templateAddButtonText: { fontSize: 12, fontWeight: '700' },
   templateAddButtonTextLight: { color: '#1d4ed8' },
-  templateAddButtonTextDark: { color: '#bfdbfe' },
+  templateAddButtonTextDark: { color: '#F4F8FF' },
   templateLabelLight: { color: '#334155' },
-  templateLabelDark: { color: '#cbd5e1' },
+  templateLabelDark: { color: '#F4F8FF' },
   templateOption: { borderRadius: 10, borderWidth: 1, padding: 10 },
   templateOptionLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  templateOptionDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  templateOptionDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateOptionSelectedLight: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
-  templateOptionSelectedDark: { borderColor: '#60a5fa', backgroundColor: '#1e3a8a' },
+  templateOptionSelectedDark: { borderColor: '#0EC3C9', backgroundColor: '#00133D' },
   templateOptionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   templateName: { fontWeight: '700', flex: 1 },
   templateNameLight: { color: '#232832' },
-  templateNameDark: { color: '#e2e8f0' },
+  templateNameDark: { color: '#F4F8FF' },
   templateBadge: { fontSize: 11, fontWeight: '700', color: '#64748b' },
   templateBadgeSelected: { color: '#bfdbfe' },
   templateMeta: { marginTop: 4, fontSize: 12 },
   templateMetaLight: { color: '#475569' },
-  templateMetaDark: { color: '#cbd5e1' },
+  templateMetaDark: { color: '#F4F8FF' },
   templateActionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
   templateActionButton: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6 },
   templateActionButtonLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
-  templateActionButtonDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  templateActionButtonDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateActionButtonDisabled: { opacity: 0.45 },
   templateActionButtonText: { fontSize: 12, fontWeight: '700' },
   templateActionButtonTextLight: { color: '#1d4ed8' },
-  templateActionButtonTextDark: { color: '#bfdbfe' },
+  templateActionButtonTextDark: { color: '#F4F8FF' },
   templateDeleteButtonLight: { borderColor: '#fecaca', backgroundColor: '#fef2f2' },
-  templateDeleteButtonDark: { borderColor: '#7f1d1d', backgroundColor: '#450a0a' },
+  templateDeleteButtonDark: { borderColor: '#F98D2F', backgroundColor: '#00133D' },
   templateDeleteButtonTextLight: { color: '#b91c1c' },
-  templateDeleteButtonTextDark: { color: '#fecaca' },
+  templateDeleteButtonTextDark: { color: '#F4F8FF' },
   formField: { marginTop: 14, gap: 8 },
   templateInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   templateTextArea: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, minHeight: 88, textAlignVertical: 'top' },
   templateInputLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc', color: '#232832' },
-  templateInputDark: { borderColor: '#334155', backgroundColor: '#232832', color: '#f8fafc' },
+  templateInputDark: { borderColor: '#001A4D', backgroundColor: '#1A2540', color: '#F4F8FF' },
   drawerClose: { marginTop: 12, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerCloseDisabled: { opacity: 0.45 },
   drawerCloseText: { color: '#fff', fontWeight: '700' },
   drawerKeyboardDismiss: { marginTop: 12, borderWidth: 1, borderRadius: 10, alignItems: 'center', paddingVertical: 10 },
   drawerSecondaryButton: { marginTop: 10, borderWidth: 1, borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerSecondaryButtonLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  drawerSecondaryButtonDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  drawerSecondaryButtonDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   drawerSecondaryButtonText: { fontWeight: '700' },
   drawerSecondaryButtonTextLight: { color: '#334155' },
-  drawerSecondaryButtonTextDark: { color: '#cbd5e1' },
+  drawerSecondaryButtonTextDark: { color: '#F4F8FF' },
 });

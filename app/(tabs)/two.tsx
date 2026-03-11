@@ -25,7 +25,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#181B24' },
+  containerDark: { backgroundColor: '#101A2F' },
   card: {
     width: '100%',
     borderRadius: 16,
@@ -33,16 +33,16 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   cardLight: { backgroundColor: '#ffffff', borderColor: '#e2e8f0' },
-  cardDark: { backgroundColor: '#232832', borderColor: '#1e293b' },
+  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
   title: {
     fontSize: 20,
     fontWeight: '700',
   },
   titleLight: { color: '#232832' },
-  titleDark: { color: '#f8fafc' },
+  titleDark: { color: '#F4F8FF' },
   subtitle: {
     marginTop: 8,
   },
   subtitleLight: { color: '#64748b' },
-  subtitleDark: { color: '#94a3b8' },
+  subtitleDark: { color: '#F4F8FF' },
 });

@@ -149,7 +149,7 @@ export default function WorkerChatScreen() {
           value={draft}
           onChangeText={setDraft}
           placeholder={isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
-          placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
+          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
           style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
           returnKeyType="send"
           onSubmitEditing={sendMessage}
@@ -165,19 +165,19 @@ export default function WorkerChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   containerLight: { backgroundColor: '#e2e8f0' },
-  containerDark: { backgroundColor: '#181B24' },
+  containerDark: { backgroundColor: '#101A2F' },
   header: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1 },
   headerLight: { backgroundColor: '#fff', borderBottomColor: '#e2e8f0' },
-  headerDark: { backgroundColor: '#232832', borderBottomColor: '#1e293b' },
+  headerDark: { backgroundColor: '#1A2540', borderBottomColor: '#001A4D' },
   title: { fontSize: 16, fontWeight: '700' },
   titleLight: { color: '#232832' },
-  titleDark: { color: '#f8fafc' },
+  titleDark: { color: '#F4F8FF' },
   subtitle: { marginTop: 2, fontSize: 12 },
   subtitleLight: { color: '#475569' },
-  subtitleDark: { color: '#94a3b8' },
+  subtitleDark: { color: '#F4F8FF' },
   context: { marginTop: 2, fontSize: 11, fontWeight: '600' },
   contextLight: { color: '#2563eb' },
-  contextDark: { color: '#93c5fd' },
+  contextDark: { color: '#0EC3C9' },
   thread: { paddingHorizontal: 10, paddingVertical: 12, gap: 8, flexGrow: 1 },
   row: { flexDirection: 'row' },
   rowSelf: { justifyContent: 'flex-end' },
@@ -185,21 +185,21 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '84%', borderRadius: 14, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6 },
   bubbleSelf: { backgroundColor: '#2563eb', borderBottomRightRadius: 4 },
   bubbleOtherLight: { backgroundColor: '#fff', borderBottomLeftRadius: 4 },
-  bubbleOtherDark: { backgroundColor: '#1e293b', borderBottomLeftRadius: 4 },
+  bubbleOtherDark: { backgroundColor: '#001A4D', borderBottomLeftRadius: 4 },
   messageText: { fontSize: 14 },
   messageTextSelf: { color: '#fff' },
   messageTextLight: { color: '#232832' },
-  messageTextDark: { color: '#e2e8f0' },
+  messageTextDark: { color: '#F4F8FF' },
   time: { marginTop: 4, fontSize: 10, alignSelf: 'flex-end' },
   timeSelf: { color: '#dbeafe' },
   timeLight: { color: '#64748b' },
-  timeDark: { color: '#94a3b8' },
+  timeDark: { color: '#F4F8FF' },
   composer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1 },
   composerLight: { backgroundColor: '#fff', borderTopColor: '#e2e8f0' },
-  composerDark: { backgroundColor: '#232832', borderTopColor: '#1e293b' },
+  composerDark: { backgroundColor: '#1A2540', borderTopColor: '#001A4D' },
   input: { flex: 1, minHeight: 42, borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   inputLight: { borderColor: '#cbd5e1', color: '#232832', backgroundColor: '#fff' },
-  inputDark: { borderColor: '#334155', color: '#e2e8f0', backgroundColor: '#232832' },
+  inputDark: { borderColor: '#001A4D', color: '#F4F8FF', backgroundColor: '#1A2540' },
   sendButton: { backgroundColor: '#2563eb', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
   sendButtonDisabled: { opacity: 0.45 },
   sendText: { color: '#fff', fontWeight: '700' },

@@ -268,7 +268,7 @@ export default function TeamsScreen() {
             {drawerMode === 'add-team' ? (
               <>
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Team name</Text>
-                <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
+                <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
               </>
             ) : (
               <>
@@ -282,7 +282,7 @@ export default function TeamsScreen() {
                 </View>
 
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
-                <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
+                <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
                 <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
                   Invite keeps this worker unlinked until they sign in with that email.
                 </Text>
@@ -312,34 +312,34 @@ export default function TeamsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#181B24' },
+  containerDark: { backgroundColor: '#101A2F' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   subhead: { fontWeight: '600' },
   subheadLight: { color: '#334155' },
-  subheadDark: { color: '#cbd5e1' },
+  subheadDark: { color: '#F4F8FF' },
   createButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1d4ed8', alignItems: 'center', justifyContent: 'center' },
   createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
   empty: { marginTop: 20 },
   emptyLight: { color: '#64748b' },
-  emptyDark: { color: '#94a3b8' },
+  emptyDark: { color: '#F4F8FF' },
   card: { borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
-  cardDark: { backgroundColor: '#232832', borderColor: '#1e293b' },
+  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontWeight: '700', color: '#1d4ed8' },
   title: { fontWeight: '700', fontSize: 16 },
   titleLight: { color: '#232832' },
-  titleDark: { color: '#f8fafc' },
+  titleDark: { color: '#F4F8FF' },
   meta: { marginTop: 2, fontSize: 12 },
   metaLight: { color: '#64748b' },
-  metaDark: { color: '#94a3b8' },
+  metaDark: { color: '#F4F8FF' },
   rightSide: { alignItems: 'flex-end' },
   status: { fontSize: 12, fontWeight: '600' },
   statusLight: { color: '#475569' },
-  statusDark: { color: '#cbd5e1' },
+  statusDark: { color: '#F4F8FF' },
   hint: { fontSize: 11, fontWeight: '600', marginTop: 4 },
   hintLight: { color: '#2563eb' },
-  hintDark: { color: '#93c5fd' },
+  hintDark: { color: '#0EC3C9' },
   unreadBadge: { marginTop: 6, backgroundColor: '#dc2626', borderRadius: 999, minWidth: 20, paddingHorizontal: 6, height: 20, alignItems: 'center', justifyContent: 'center' },
   unreadBadgeText: { color: '#fff', fontWeight: '700', fontSize: 11 },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
@@ -347,13 +347,13 @@ const styles = StyleSheet.create({
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '76%' },
   drawerLight: { backgroundColor: '#fff' },
-  drawerDark: { backgroundColor: '#232832' },
+  drawerDark: { backgroundColor: '#1A2540' },
   drawerTitle: { fontWeight: '700', fontSize: 18 },
   drawerTitleLight: { color: '#232832' },
-  drawerTitleDark: { color: '#f8fafc' },
+  drawerTitleDark: { color: '#F4F8FF' },
   drawerSub: { fontSize: 12, marginTop: 4 },
   drawerSubLight: { color: '#64748b' },
-  drawerSubDark: { color: '#94a3b8' },
+  drawerSubDark: { color: '#F4F8FF' },
   modeRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
   modeButton: { flex: 1, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 10, alignItems: 'center', backgroundColor: '#f8fafc' },
   modeButtonActive: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
@@ -361,23 +361,23 @@ const styles = StyleSheet.create({
   modeTextActive: { color: '#1e40af' },
   fieldLabel: { marginTop: 14, fontSize: 12, fontWeight: '700' },
   fieldLabelLight: { color: '#334155' },
-  fieldLabelDark: { color: '#cbd5e1' },
+  fieldLabelDark: { color: '#F4F8FF' },
   input: { marginTop: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
   inputLight: { borderColor: '#cbd5e1', color: '#232832', backgroundColor: '#fff' },
-  inputDark: { borderColor: '#334155', color: '#e2e8f0', backgroundColor: '#232832' },
+  inputDark: { borderColor: '#001A4D', color: '#F4F8FF', backgroundColor: '#1A2540' },
   teamChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   teamChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   teamChipLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  teamChipDark: { borderColor: '#334155', backgroundColor: '#232832' },
+  teamChipDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   teamChipActive: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
   teamChipText: { fontSize: 12, fontWeight: '600' },
   teamChipTextLight: { color: '#475569' },
-  teamChipTextDark: { color: '#cbd5e1' },
+  teamChipTextDark: { color: '#F4F8FF' },
   teamChipTextActive: { color: '#1e3a8a' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
   helperText: { marginTop: 6, fontSize: 11 },
   helperTextLight: { color: '#64748b' },
-  helperTextDark: { color: '#94a3b8' },
+  helperTextDark: { color: '#F4F8FF' },
   message: { marginTop: 12, fontSize: 12, fontWeight: '600' },
   messageInfo: { color: '#1e40af' },
   messageSuccess: { color: '#15803d' },
