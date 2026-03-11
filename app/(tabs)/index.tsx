@@ -16,6 +16,7 @@ import {
   updateEventTemplate,
   watchManagerEvents,
   watchManagerEventTemplates,
+  watchManagerPendingRoleInvites,
   watchManagerTeams,
   watchWorkerEvents,
   watchWorkerRoleAssignmentNotifications,
@@ -101,6 +102,7 @@ export default function EventsScreen() {
     eventName?: string;
     roleId: string;
   }>>([]);
+  const [pendingInviteWorkerIdsByRoleKey, setPendingInviteWorkerIdsByRoleKey] = useState<Record<string, string[]>>({});
   const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null);
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
@@ -222,6 +224,27 @@ export default function EventsScreen() {
         eventName: item.eventName,
         roleId: item.roleId,
       })));
+    });
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager') {
+      setPendingInviteWorkerIdsByRoleKey({});
+      return;
+    }
+
+    return watchManagerPendingRoleInvites(profile.uid, (items) => {
+      const next: Record<string, string[]> = {};
+
+      items.forEach((item) => {
+        const key = `${item.eventId}:${item.roleId}`;
+        if (!next[key]) next[key] = [];
+        if (item.workerId && !next[key].includes(item.workerId)) {
+          next[key].push(item.workerId);
+        }
+      });
+
+      setPendingInviteWorkerIdsByRoleKey(next);
     });
   }, [profile]);
 
@@ -621,6 +644,7 @@ export default function EventsScreen() {
     const openSlots = Math.max(0, role.openSlots || 0);
     const roleExpandKey = `${event.id}:${role.id}`;
     const roleTasksExpanded = !!expandedRoleTaskIds[roleExpandKey];
+    const pendingInviteWorkerIds = pendingInviteWorkerIdsByRoleKey[roleExpandKey] || [];
 
     return (
       <View key={role.id} style={[styles.roleCard, isDarkMode ? styles.roleCardDark : styles.roleCardLight]}>
@@ -635,6 +659,18 @@ export default function EventsScreen() {
               const initial = workerLabel(workerId).slice(0, 1).toUpperCase();
               return (
                 <View key={`${event.id}-${role.id}-${workerId}`} style={styles.avatarChip}>
+                  <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight]}>
+                    <Text style={styles.avatarText}>{initial}</Text>
+                  </View>
+                  <Text style={[styles.avatarName, isDarkMode ? styles.avatarNameDark : styles.avatarNameLight]} numberOfLines={1}>{workerLabel(workerId)}</Text>
+                </View>
+              );
+            })
+          ) : pendingInviteWorkerIds.length ? (
+            pendingInviteWorkerIds.map((workerId) => {
+              const initial = workerLabel(workerId).slice(0, 1).toUpperCase();
+              return (
+                <View key={`${event.id}-${role.id}-invite-${workerId}`} style={styles.avatarChip}>
                   <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight]}>
                     <Text style={styles.avatarText}>{initial}</Text>
                   </View>

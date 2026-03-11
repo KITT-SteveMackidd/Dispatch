@@ -343,6 +343,17 @@ export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (it
   });
 }
 
+export function watchManagerPendingRoleInvites(managerId: string, cb: (items: RoleAssignmentNotification[]) => void) {
+  const q = query(collection(db, 'roleAssignmentNotifications'), where('managerId', '==', managerId));
+  return onSnapshot(q, (snap) => {
+    const invites = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as Omit<RoleAssignmentNotification, 'id'>) }))
+      .filter((item) => item.action === 'assign' && item.status === 'pending');
+
+    cb(invites);
+  });
+}
+
 export async function createDispatchEvent(params: {
   managerId: string;
   name: string;
