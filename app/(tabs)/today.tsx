@@ -10,6 +10,7 @@ import {
   loadWorkerTeams,
   toggleTaskCompletion,
   watchManagerEvents,
+  watchManagerRoleInvites,
   watchManagerTeams,
   watchWorkerEvents,
 } from '@/services/dispatch';
@@ -71,6 +72,7 @@ export default function TodayScreen() {
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
   const [managerTeams, setManagerTeams] = useState<Team[]>([]);
   const [workerTeams, setWorkerTeams] = useState<Team[]>([]);
+  const [inviteStatusByRoleWorkerKey, setInviteStatusByRoleWorkerKey] = useState<Record<string, 'pending' | 'accepted' | 'declined'>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingTaskIds, setSavingTaskIds] = useState<Record<string, boolean>>({});
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
@@ -108,6 +110,41 @@ export default function TodayScreen() {
     return () => {
       active = false;
     };
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager') {
+      setInviteStatusByRoleWorkerKey({});
+      return;
+    }
+
+    return watchManagerRoleInvites(profile.uid, (items) => {
+      const next: Record<string, { status: 'pending' | 'accepted' | 'declined'; createdAtMs: number }> = {};
+
+      items.forEach((item) => {
+        if (!item.eventId || !item.roleId || !item.workerId) return;
+        if (item.status !== 'pending' && item.status !== 'accepted' && item.status !== 'declined') return;
+
+        const key = `${item.eventId}:${item.roleId}:${item.workerId}`;
+        const createdAtMs = item.createdAt && 'toDate' in item.createdAt && typeof item.createdAt.toDate === 'function'
+          ? item.createdAt.toDate().getTime()
+          : 0;
+
+        if (!next[key] || createdAtMs >= next[key].createdAtMs) {
+          next[key] = {
+            status: item.status,
+            createdAtMs,
+          };
+        }
+      });
+
+      const flattened = Object.entries(next).reduce<Record<string, 'pending' | 'accepted' | 'declined'>>((acc, [key, value]) => {
+        acc[key] = value.status;
+        return acc;
+      }, {});
+
+      setInviteStatusByRoleWorkerKey(flattened);
+    });
   }, [profile]);
 
   useEffect(() => {
@@ -312,8 +349,20 @@ export default function TodayScreen() {
     })[0];
   };
 
+  const isRoleAcceptedForManager = (event: DispatchEvent, role: DispatchEvent['roles'][number]) => {
+    const assignedWorkerIds = role.assignedWorkerIds || [];
+    if (!assignedWorkerIds.length) return false;
+
+    const statuses = assignedWorkerIds.map((workerId) => inviteStatusByRoleWorkerKey[`${event.id}:${role.id}:${workerId}`]);
+    const hasTrackedStatus = statuses.some(Boolean);
+
+    if (!hasTrackedStatus) return true;
+    return statuses.includes('accepted');
+  };
+
   const managerNextTask = (event: DispatchEvent): EventTask | null => {
     const remaining = event.roles
+      .filter((role) => isRoleAcceptedForManager(event, role))
       .flatMap((role) => role.tasks)
       .filter((task) => (task.completedBy?.length ?? 0) === 0);
 
@@ -563,8 +612,10 @@ export default function TodayScreen() {
                       <View style={[styles.progressFill, { width: `${progress.percent}%` }]} />
                     </View>
                   </View>
-                  <Text style={styles.nextTaskLabel}>Next task: {managerNext ? `${managerNext.name} · due ${formatTaskDueTime(item, managerNext)}` : 'All tasks complete'}</Text>
-                  {managerCountdownClock ? <Text style={[styles.timeRemaining, managerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {managerCountdownClock.label}</Text> : null}
+                  <View style={styles.nextTaskRow}>
+                    <Text style={styles.nextTaskLabel}>Next task: {managerNext ? `${managerNext.name} · due ${formatTaskDueTime(item, managerNext)}` : 'All tasks complete'}</Text>
+                    {managerCountdownClock ? <Text style={[styles.timeRemaining, managerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>{managerCountdownClock.label}</Text> : null}
+                  </View>
                 </>
               ) : (
                 <>
@@ -580,8 +631,10 @@ export default function TodayScreen() {
                       <Text style={styles.workerMeta}>Phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
                     </View>
                   </View>
-                  <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskDueTime(item, nextTask)}` : 'All assigned tasks complete'}</Text>
-                  {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {countdownClock.label}</Text> : null}
+                  <View style={styles.nextTaskRow}>
+                    <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskDueTime(item, nextTask)}` : 'All assigned tasks complete'}</Text>
+                    {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue && styles.timeRemainingOverdue]}>{countdownClock.label}</Text> : null}
+                  </View>
                 </>
               )}
 
@@ -623,8 +676,10 @@ export default function TodayScreen() {
 
                             {workerNext ? (
                               <>
-                                <Text style={styles.workerMeta}>Next task: {workerNext.name} · due {formatTaskDueTime(item, workerNext)}</Text>
-                                {workerCountdownClock ? <Text style={[styles.timeRemaining, workerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {workerCountdownClock.label}</Text> : null}
+                                <View style={styles.nextTaskRow}>
+                                  <Text style={styles.workerMeta}>Next task: {workerNext.name} · due {formatTaskDueTime(item, workerNext)}</Text>
+                                  {workerCountdownClock ? <Text style={[styles.timeRemaining, workerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>{workerCountdownClock.label}</Text> : null}
+                                </View>
                               </>
                             ) : (
                               <Text style={styles.workerMeta}>Next task: All assigned tasks complete</Text>
@@ -717,8 +772,9 @@ const styles = StyleSheet.create({
   progressCount: { color: '#334155', fontWeight: '700', fontSize: 12 },
   progressTrack: { height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#2563eb', borderRadius: 999 },
-  nextTaskLabel: { color: '#232832', fontSize: 13, fontWeight: '600', marginTop: 6 },
-  timeRemaining: { color: '#2563eb', fontSize: 12, fontWeight: '600', marginTop: 2 },
+  nextTaskRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 6 },
+  nextTaskLabel: { color: '#232832', fontSize: 13, fontWeight: '600', flex: 1 },
+  timeRemaining: { color: '#2563eb', fontSize: 12, fontWeight: '600' },
   timeRemainingOverdue: { color: '#dc2626' },
   workerSection: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10, gap: 10 },
   workerCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'flex-start' },

@@ -17,6 +17,7 @@ import {
   watchManagerEvents,
   watchManagerEventTemplates,
   watchManagerPendingRoleInvites,
+  watchManagerRoleInvites,
   watchManagerTeams,
   watchWorkerEvents,
   watchWorkerRoleAssignmentNotifications,
@@ -26,6 +27,7 @@ import { useThemeMode } from '@/context/theme';
 
 type ManagerNamesMap = Record<string, string>;
 type UserMap = Record<string, UserProfile>;
+type InviteStatus = 'pending' | 'accepted' | 'declined';
 
 type DrawerState = {
   open: boolean;
@@ -103,6 +105,7 @@ export default function EventsScreen() {
     roleId: string;
   }>>([]);
   const [pendingInviteWorkerIdsByRoleKey, setPendingInviteWorkerIdsByRoleKey] = useState<Record<string, string[]>>({});
+  const [inviteStatusByRoleWorkerKey, setInviteStatusByRoleWorkerKey] = useState<Record<string, InviteStatus>>({});
   const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null);
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
@@ -245,6 +248,41 @@ export default function EventsScreen() {
       });
 
       setPendingInviteWorkerIdsByRoleKey(next);
+    });
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager') {
+      setInviteStatusByRoleWorkerKey({});
+      return;
+    }
+
+    return watchManagerRoleInvites(profile.uid, (items) => {
+      const next: Record<string, { status: InviteStatus; createdAtMs: number }> = {};
+
+      items.forEach((item) => {
+        if (!item.eventId || !item.roleId || !item.workerId) return;
+        if (item.status !== 'pending' && item.status !== 'accepted' && item.status !== 'declined') return;
+
+        const key = `${item.eventId}:${item.roleId}:${item.workerId}`;
+        const createdAtMs = item.createdAt && 'toDate' in item.createdAt && typeof item.createdAt.toDate === 'function'
+          ? item.createdAt.toDate().getTime()
+          : 0;
+
+        if (!next[key] || createdAtMs >= next[key].createdAtMs) {
+          next[key] = {
+            status: item.status,
+            createdAtMs,
+          };
+        }
+      });
+
+      const flattened = Object.entries(next).reduce<Record<string, InviteStatus>>((acc, [key, value]) => {
+        acc[key] = value.status;
+        return acc;
+      }, {});
+
+      setInviteStatusByRoleWorkerKey(flattened);
     });
   }, [profile]);
 
@@ -639,6 +677,21 @@ export default function EventsScreen() {
 
   const workerLabel = (workerId: string) => workerProfiles[workerId]?.displayName || workerId;
 
+  const getInviteStatusForRoleWorker = (eventId: string, roleId: string, workerId: string): InviteStatus => {
+    return inviteStatusByRoleWorkerKey[`${eventId}:${roleId}:${workerId}`] || 'pending';
+  };
+
+  const getAvatarStatusRingStyle = (status: InviteStatus) => {
+    switch (status) {
+      case 'accepted':
+        return isDarkMode ? styles.avatarCircleRingAcceptedDark : styles.avatarCircleRingAcceptedLight;
+      case 'declined':
+        return isDarkMode ? styles.avatarCircleRingDeclinedDark : styles.avatarCircleRingDeclinedLight;
+      default:
+        return isDarkMode ? styles.avatarCircleRingPendingDark : styles.avatarCircleRingPendingLight;
+    }
+  };
+
   const openWorkerTeamChat = (event: DispatchEvent, workerId: string) => {
     const workerTeam = managerTeams.find((team) => (team.workerIds || []).includes(workerId));
 
@@ -673,6 +726,7 @@ export default function EventsScreen() {
           {assignedIds.length ? (
             assignedIds.map((workerId) => {
               const initial = workerLabel(workerId).slice(0, 1).toUpperCase();
+              const inviteStatus = getInviteStatusForRoleWorker(event.id, role.id, workerId);
               return (
                 <Pressable
                   key={`${event.id}-${role.id}-${workerId}`}
@@ -680,7 +734,7 @@ export default function EventsScreen() {
                   onPress={() => openWorkerTeamChat(event, workerId)}
                   hitSlop={6}
                 >
-                  <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight]}>
+                  <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight, getAvatarStatusRingStyle(inviteStatus)]}>
                     <Text style={styles.avatarText}>{initial}</Text>
                   </View>
                   <Text style={[styles.avatarName, isDarkMode ? styles.avatarNameDark : styles.avatarNameLight]} numberOfLines={1}>{workerLabel(workerId)}</Text>
@@ -690,6 +744,7 @@ export default function EventsScreen() {
           ) : pendingInviteWorkerIds.length ? (
             pendingInviteWorkerIds.map((workerId) => {
               const initial = workerLabel(workerId).slice(0, 1).toUpperCase();
+              const inviteStatus = getInviteStatusForRoleWorker(event.id, role.id, workerId);
               return (
                 <Pressable
                   key={`${event.id}-${role.id}-invite-${workerId}`}
@@ -697,7 +752,7 @@ export default function EventsScreen() {
                   onPress={() => openWorkerTeamChat(event, workerId)}
                   hitSlop={6}
                 >
-                  <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight]}>
+                  <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight, getAvatarStatusRingStyle(inviteStatus)]}>
                     <Text style={styles.avatarText}>{initial}</Text>
                   </View>
                   <Text style={[styles.avatarName, isDarkMode ? styles.avatarNameDark : styles.avatarNameLight]} numberOfLines={1}>{workerLabel(workerId)}</Text>
@@ -1681,6 +1736,12 @@ const styles = StyleSheet.create({
   avatarCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   avatarCircleLight: { backgroundColor: '#dbeafe' },
   avatarCircleDark: { backgroundColor: '#00133D' },
+  avatarCircleRingAcceptedLight: { borderWidth: 2, borderColor: '#16a34a' },
+  avatarCircleRingAcceptedDark: { borderWidth: 2, borderColor: '#34d399' },
+  avatarCircleRingDeclinedLight: { borderWidth: 2, borderColor: '#dc2626' },
+  avatarCircleRingDeclinedDark: { borderWidth: 2, borderColor: '#fb7185' },
+  avatarCircleRingPendingLight: { borderWidth: 2, borderColor: '#f59e0b' },
+  avatarCircleRingPendingDark: { borderWidth: 2, borderColor: '#fbbf24' },
   avatarText: { fontWeight: '700', color: '#bfdbfe' },
   avatarName: { marginTop: 4, fontSize: 11 },
   avatarNameLight: { color: '#334155' },
