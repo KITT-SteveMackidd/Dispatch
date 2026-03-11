@@ -3,7 +3,14 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native
 import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { deleteDispatchEvent, loadUserProfilesByIds, toggleTaskCompletion, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
+import {
+  deleteDispatchEvent,
+  ensureTaskBehindScheduleNotification,
+  loadUserProfilesByIds,
+  toggleTaskCompletion,
+  watchManagerEvents,
+  watchWorkerEvents,
+} from '@/services/dispatch';
 import { AppRole, DispatchEvent, EventTask } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
@@ -63,6 +70,7 @@ export default function TodayScreen() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingTaskIds, setSavingTaskIds] = useState<Record<string, boolean>>({});
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
+  const behindScheduleNotificationCache = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -152,6 +160,33 @@ export default function TodayScreen() {
       .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
   }, [events, nowMs]);
 
+  useEffect(() => {
+    if (!profile || profile.role !== 'manager') return;
+
+    const overdue = today.flatMap((event) =>
+      getOverdueIncompleteTasks(event).map(({ role, task, dueAtMs }) => ({ event, role, task, dueAtMs }))
+    );
+
+    overdue.forEach(({ event, role, task, dueAtMs }) => {
+      const cacheKey = `${event.id}:${role.id}:${task.id}`;
+      if (behindScheduleNotificationCache.current[cacheKey]) return;
+
+      behindScheduleNotificationCache.current[cacheKey] = true;
+      ensureTaskBehindScheduleNotification({
+        managerId: event.managerId,
+        eventId: event.id,
+        eventName: event.name,
+        roleId: role.id,
+        roleName: role.name,
+        taskId: task.id,
+        taskName: task.name,
+        dueAt: new Date(dueAtMs).toISOString(),
+      }).catch(() => {
+        delete behindScheduleNotificationCache.current[cacheKey];
+      });
+    });
+  }, [profile, today, nowMs]);
+
   const getProgress = (event: DispatchEvent): TaskProgress => {
     const tasks = event.roles.flatMap((r) => r.tasks);
     const total = tasks.length;
@@ -196,6 +231,19 @@ export default function TodayScreen() {
   };
 
   const formatTaskOffset = (offsetMinutes?: number) => `+${Math.max(0, Math.round(offsetMinutes || 0))}m`;
+
+  const getOverdueIncompleteTasks = (event: DispatchEvent) => {
+    return event.roles.flatMap((role) =>
+      role.tasks
+        .filter((task) => {
+          const dueAtMs = getTaskDueAtMs(event, task);
+          if (!Number.isFinite(dueAtMs)) return false;
+          const completed = (task.completedBy?.length ?? 0) > 0;
+          return !completed && dueAtMs <= nowMs;
+        })
+        .map((task) => ({ role, task, dueAtMs: getTaskDueAtMs(event, task) }))
+    );
+  };
 
   const workerNextTask = (event: DispatchEvent, workerId: string): EventTask | null => {
     const remaining = event.roles
@@ -397,11 +445,17 @@ export default function TodayScreen() {
           const managerNext = isManager ? managerNextTask(item) : null;
           const managerNextDueAtMs = managerNext ? getTaskDueAtMs(item, managerNext) : Number.POSITIVE_INFINITY;
           const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
+          const overdueTaskCount = isManager ? getOverdueIncompleteTasks(item).length : 0;
 
           const card = (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
                 <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
+                {isManager && overdueTaskCount > 0 ? (
+                  <View style={styles.overdueChip}>
+                    <Text style={styles.overdueChipText}>{overdueTaskCount}</Text>
+                  </View>
+                ) : null}
                 <Text style={[styles.expandHint, isDarkMode ? styles.expandHintDark : styles.expandHintLight]}>{isExpanded ? 'Hide' : 'Expand'}</Text>
               </View>
 
@@ -550,6 +604,17 @@ const styles = StyleSheet.create({
   expandHint: { fontSize: 12, fontWeight: '700', marginLeft: 8 },
   expandHintLight: { color: '#2563eb' },
   expandHintDark: { color: '#93c5fd' },
+  overdueChip: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    marginLeft: 8,
+  },
+  overdueChipText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   meta: { fontSize: 12, marginBottom: 2 },
   metaLight: { color: '#64748b' },
   metaDark: { color: '#94a3b8' },
