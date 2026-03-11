@@ -8,9 +8,9 @@
     "scheme": "dispatch",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/dispatch-splash-logo.jpg",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#001a4d"
     },
     "ios": {
       "supportsTablet": true
