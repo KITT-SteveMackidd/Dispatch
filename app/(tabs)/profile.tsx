@@ -29,10 +29,13 @@ export default function ProfileScreen() {
     setNotificationsOpen(true);
     if (!profile?.uid || !unreadIds.length) return;
 
+    const idsToMark = [...unreadIds];
+    setNotifications((prev) => prev.map((item) => (idsToMark.includes(item.id) ? { ...item, read: true } : item)));
+
     try {
-      await markUserNotificationsRead({ userId: profile.uid, notificationIds: unreadIds });
+      await markUserNotificationsRead({ userId: profile.uid, notificationIds: idsToMark });
     } catch {
-      // noop
+      setNotifications((prev) => prev.map((item) => (idsToMark.includes(item.id) ? { ...item, read: false } : item)));
     }
   };
 

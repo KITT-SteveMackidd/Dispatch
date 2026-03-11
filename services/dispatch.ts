@@ -459,21 +459,20 @@ export async function markUserNotificationsRead(params: { userId: string; notifi
   const ids = [...new Set(params.notificationIds.filter(Boolean))];
   if (!ids.length) return;
 
-  await runTransaction(db, async (tx) => {
-    for (const id of ids) {
-      const ref = doc(db, 'userNotifications', id);
-      const snap = await tx.get(ref);
-      if (!snap.exists()) continue;
-
-      const data = snap.data() as Partial<UserNotification>;
-      if (data.userId !== params.userId || data.read) continue;
-
-      tx.update(ref, {
+  const batch = writeBatch(db);
+  ids.forEach((id) => {
+    batch.set(
+      doc(db, 'userNotifications', id),
+      {
+        userId: params.userId,
         read: true,
         readAt: serverTimestamp(),
-      });
-    }
+      },
+      { merge: true }
+    );
   });
+
+  await batch.commit();
 }
 
 export async function ensureTaskBehindScheduleNotification(params: {
