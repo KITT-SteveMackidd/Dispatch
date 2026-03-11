@@ -344,21 +344,23 @@ export default function TodayScreen() {
   const getEventChecklist = (event: DispatchEvent): WorkerChecklistItem[] => {
     if (!profile || profile.role !== 'worker') return [];
 
-    return event.roles.flatMap((role) =>
-      role.tasks.map((task) => {
-        const completedBy = task.completedBy ?? [];
-        return {
-          id: `${role.id}:${task.id}`,
-          roleId: role.id,
-          taskId: task.id,
-          roleName: role.name,
-          assignedToMe: role.assignedWorkerIds.includes(profile.uid),
-          completedCount: completedBy.length,
-          completedByMe: completedBy.includes(profile.uid),
-          task,
-        };
-      })
-    );
+    return event.roles
+      .filter((role) => role.assignedWorkerIds.includes(profile.uid))
+      .flatMap((role) =>
+        role.tasks.map((task) => {
+          const completedBy = task.completedBy ?? [];
+          return {
+            id: `${role.id}:${task.id}`,
+            roleId: role.id,
+            taskId: task.id,
+            roleName: role.name,
+            assignedToMe: true,
+            completedCount: completedBy.length,
+            completedByMe: completedBy.includes(profile.uid),
+            task,
+          };
+        })
+      );
   };
 
   const handleToggleTask = async (event: DispatchEvent, item: WorkerChecklistItem) => {
@@ -420,7 +422,7 @@ export default function TodayScreen() {
                   {item.task.optional ? ' (optional)' : ''}
                 </Text>
                 <Text style={styles.checklistMeta}>Role: {item.roleName}</Text>
-                <Text style={styles.checklistMeta}>{item.assignedToMe ? 'Assigned to you' : 'Not assigned to you'}</Text>
+                <Text style={styles.checklistMeta}>Assigned to you</Text>
                 <Text style={styles.checklistMeta}>
                   {item.completedByMe
                     ? 'Completed by you'
