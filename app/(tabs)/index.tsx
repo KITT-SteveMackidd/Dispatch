@@ -651,18 +651,6 @@ export default function EventsScreen() {
 
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
-  const inviteTeamSummaries = managerTeams
-    .map((team) => {
-      const totalMembers = team.workerIds?.length ?? 0;
-      const selectedMembers = (team.workerIds || []).filter((workerId) => inviteSelectedWorkerIds.includes(workerId)).length;
-      return {
-        id: team.id,
-        name: team.name,
-        totalMembers,
-        selectedMembers,
-      };
-    })
-    .filter((team) => team.totalMembers > 0);
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
   const rolePickerTarget = createEventRolesDraft.find((role) => role.id === rolePickerRoleId) || null;
   const isEditingTemplate = !!editingTemplateId;
@@ -1028,18 +1016,6 @@ export default function EventsScreen() {
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Invite Worker</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {inviteTarget?.role.name || 'Unknown role'}</Text>
-            {inviteTeamSummaries.length ? (
-              <View style={styles.inviteTeamSummaryWrap}>
-                {inviteTeamSummaries.map((team) => (
-                  <View key={`invite-team-summary-${team.id}`} style={[styles.inviteTeamSummaryCard, isDarkMode ? styles.inviteTeamSummaryCardDark : styles.inviteTeamSummaryCardLight]}>
-                    <Text style={[styles.inviteTeamSummaryName, isDarkMode ? styles.inviteTeamSummaryNameDark : styles.inviteTeamSummaryNameLight]} numberOfLines={1}>{team.name}</Text>
-                    <Text style={[styles.inviteTeamSummaryMeta, isDarkMode ? styles.inviteTeamSummaryMetaDark : styles.inviteTeamSummaryMetaLight]}>
-                      {team.selectedMembers}/{team.totalMembers} selected
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
             <ScrollView style={styles.drawerList}>
               {managerTeams.length ? managerTeams.map((team) => {
                 const teamWorkerIds = [...new Set((team.workerIds || []).filter(Boolean))];
@@ -1054,7 +1030,9 @@ export default function EventsScreen() {
                       disabled={inviteSubmitBusy}
                       onPress={() => toggleInviteTeamExpanded(team.id)}>
                       <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{team.name}</Text>
-                      <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{teamExpanded ? 'Hide members' : 'Show members'}</Text>
+                      <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
+                        {selectedCount}/{teamWorkerIds.length} selected · {teamExpanded ? 'Hide members' : 'Show members'}
+                      </Text>
                     </Pressable>
 
                     {teamExpanded ? (
@@ -1673,16 +1651,6 @@ const styles = StyleSheet.create({
   drawerSub: { fontSize: 12, marginTop: 4 },
   drawerSubLight: { color: '#64748b' },
   drawerSubDark: { color: '#94a3b8' },
-  inviteTeamSummaryWrap: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  inviteTeamSummaryCard: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, minWidth: 130 },
-  inviteTeamSummaryCardLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  inviteTeamSummaryCardDark: { borderColor: '#334155', backgroundColor: '#111827' },
-  inviteTeamSummaryName: { fontSize: 12, fontWeight: '700' },
-  inviteTeamSummaryNameLight: { color: '#0f172a' },
-  inviteTeamSummaryNameDark: { color: '#e2e8f0' },
-  inviteTeamSummaryMeta: { marginTop: 4, fontSize: 12 },
-  inviteTeamSummaryMetaLight: { color: '#475569' },
-  inviteTeamSummaryMetaDark: { color: '#94a3b8' },
   drawerList: { marginTop: 12 },
   drawerRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#334155' },
   drawerName: { fontWeight: '600' },
