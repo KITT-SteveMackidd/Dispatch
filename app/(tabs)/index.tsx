@@ -20,7 +20,7 @@ import {
   watchWorkerEvents,
   watchWorkerRoleAssignmentNotifications,
 } from '@/services/dispatch';
-import { DispatchEvent, EventRole, EventTemplate, UserProfile } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTemplate, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
 type ManagerNamesMap = Record<string, string>;
@@ -77,8 +77,12 @@ export default function EventsScreen() {
   const [managerNames, setManagerNames] = useState<ManagerNamesMap>({});
   const [workerProfiles, setWorkerProfiles] = useState<UserMap>({});
   const [teamWorkerIds, setTeamWorkerIds] = useState<string[]>([]);
+  const [managerTeams, setManagerTeams] = useState<Team[]>([]);
+  const [expandedInviteTeamIds, setExpandedInviteTeamIds] = useState<Record<string, boolean>>({});
   const [replaceDrawer, setReplaceDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
+  const [inviteSelectedWorkerIds, setInviteSelectedWorkerIds] = useState<string[]>([]);
+  const [inviteSubmitBusy, setInviteSubmitBusy] = useState(false);
   const [createEventDrawerOpen, setCreateEventDrawerOpen] = useState(false);
   const [createTemplateDrawerOpen, setCreateTemplateDrawerOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
@@ -138,9 +142,13 @@ export default function EventsScreen() {
   }, [profile]);
 
   useEffect(() => {
-    if (profile?.role !== 'manager') return;
+    if (profile?.role !== 'manager') {
+      setManagerTeams([]);
+      return;
+    }
 
     return watchManagerTeams(profile.uid, (teams) => {
+      setManagerTeams(teams);
       const workerIds = [...new Set(teams.flatMap((team) => team.workerIds || []).filter(Boolean))];
       setTeamWorkerIds(workerIds);
     });
@@ -643,6 +651,18 @@ export default function EventsScreen() {
 
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
+  const inviteTeamSummaries = managerTeams
+    .map((team) => {
+      const totalMembers = team.workerIds?.length ?? 0;
+      const selectedMembers = (team.workerIds || []).filter((workerId) => inviteSelectedWorkerIds.includes(workerId)).length;
+      return {
+        id: team.id,
+        name: team.name,
+        totalMembers,
+        selectedMembers,
+      };
+    })
+    .filter((team) => team.totalMembers > 0);
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
   const rolePickerTarget = createEventRolesDraft.find((role) => role.id === rolePickerRoleId) || null;
   const isEditingTemplate = !!editingTemplateId;
@@ -657,6 +677,32 @@ export default function EventsScreen() {
     if (!rolePickerRoleId) return;
     setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === rolePickerRoleId ? { ...role, assignedWorkerId: null } : role)));
     setRolePickerRoleId(null);
+  };
+
+  const toggleInviteWorkerSelection = (workerId: string) => {
+    setInviteSelectedWorkerIds((prev) => (prev.includes(workerId) ? prev.filter((id) => id !== workerId) : [...prev, workerId]));
+  };
+
+  const toggleInviteTeamExpanded = (teamId: string) => {
+    setExpandedInviteTeamIds((prev) => ({ ...prev, [teamId]: !prev[teamId] }));
+  };
+
+  const toggleInviteTeamAllSelection = (workerIds: string[]) => {
+    const uniqueWorkerIds = [...new Set(workerIds.filter(Boolean))];
+    if (!uniqueWorkerIds.length) return;
+
+    setInviteSelectedWorkerIds((prev) => {
+      const selected = new Set(prev);
+      const allSelected = uniqueWorkerIds.every((workerId) => selected.has(workerId));
+
+      if (allSelected) {
+        uniqueWorkerIds.forEach((workerId) => selected.delete(workerId));
+      } else {
+        uniqueWorkerIds.forEach((workerId) => selected.add(workerId));
+      }
+
+      return [...selected];
+    });
   };
 
   const handleRoleAssignmentUpdate = async (params: {
@@ -690,6 +736,62 @@ export default function EventsScreen() {
       Alert.alert('Unable to update role', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setAssignmentBusyKey(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!inviteDrawer.open || !inviteTarget) {
+      setInviteSelectedWorkerIds([]);
+      setExpandedInviteTeamIds({});
+      return;
+    }
+
+    setInviteSelectedWorkerIds(inviteTarget.role.assignedWorkerIds || []);
+    setExpandedInviteTeamIds(Object.fromEntries((managerTeams || []).map((team) => [team.id, true])));
+  }, [inviteDrawer.open, inviteTarget?.event.id, inviteTarget?.role.id, inviteTarget?.role.assignedWorkerIds?.join(','), managerTeams]);
+
+  const handleSendRoleInvites = async () => {
+    if (!profile?.uid || !inviteTarget || inviteSubmitBusy) return;
+
+    const currentlyAssigned = new Set(inviteTarget.role.assignedWorkerIds || []);
+    const selected = new Set(inviteSelectedWorkerIds);
+    const toAssign = inviteSelectedWorkerIds.filter((workerId) => !currentlyAssigned.has(workerId));
+    const toRemove = [...currentlyAssigned].filter((workerId) => !selected.has(workerId));
+
+    if (!toAssign.length && !toRemove.length) {
+      Alert.alert('No changes', 'Select different workers to send invites.');
+      return;
+    }
+
+    try {
+      setInviteSubmitBusy(true);
+
+      for (const workerId of toAssign) {
+        await updateEventRoleAssignment({
+          eventId: inviteTarget.event.id,
+          roleId: inviteTarget.role.id,
+          managerId: profile.uid,
+          workerId,
+          action: 'assign',
+        });
+      }
+
+      for (const workerId of toRemove) {
+        await updateEventRoleAssignment({
+          eventId: inviteTarget.event.id,
+          roleId: inviteTarget.role.id,
+          managerId: profile.uid,
+          workerId,
+          action: 'remove',
+        });
+      }
+
+      Alert.alert('Invites sent', `Sent ${toAssign.length} assignment invite${toAssign.length === 1 ? '' : 's'}${toRemove.length ? ` and ${toRemove.length} removal update${toRemove.length === 1 ? '' : 's'}` : ''}.`);
+      setInviteDrawer(INITIAL_DRAWER);
+    } catch (error) {
+      Alert.alert('Unable to send invites', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setInviteSubmitBusy(false);
     }
   };
 
@@ -926,32 +1028,76 @@ export default function EventsScreen() {
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Invite Worker</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {inviteTarget?.role.name || 'Unknown role'}</Text>
+            {inviteTeamSummaries.length ? (
+              <View style={styles.inviteTeamSummaryWrap}>
+                {inviteTeamSummaries.map((team) => (
+                  <View key={`invite-team-summary-${team.id}`} style={[styles.inviteTeamSummaryCard, isDarkMode ? styles.inviteTeamSummaryCardDark : styles.inviteTeamSummaryCardLight]}>
+                    <Text style={[styles.inviteTeamSummaryName, isDarkMode ? styles.inviteTeamSummaryNameDark : styles.inviteTeamSummaryNameLight]} numberOfLines={1}>{team.name}</Text>
+                    <Text style={[styles.inviteTeamSummaryMeta, isDarkMode ? styles.inviteTeamSummaryMetaDark : styles.inviteTeamSummaryMetaLight]}>
+                      {team.selectedMembers}/{team.totalMembers} selected
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
             <ScrollView style={styles.drawerList}>
-              {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
-                const assigned = !!inviteTarget?.role.assignedWorkerIds.includes(workerId);
-                const busy = assignmentBusyKey === `${inviteTarget?.event.id}:${inviteTarget?.role.id}:${workerId}`;
+              {managerTeams.length ? managerTeams.map((team) => {
+                const teamWorkerIds = [...new Set((team.workerIds || []).filter(Boolean))];
+                const selectedCount = teamWorkerIds.filter((workerId) => inviteSelectedWorkerIds.includes(workerId)).length;
+                const allSelected = teamWorkerIds.length > 0 && selectedCount === teamWorkerIds.length;
+                const teamExpanded = !!expandedInviteTeamIds[team.id];
+
                 return (
-                  <View key={`invite-${workerId}`} style={styles.drawerRow}>
-                    <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
+                  <View key={`invite-team-${team.id}`} style={[styles.inviteTeamCard, isDarkMode ? styles.inviteTeamCardDark : styles.inviteTeamCardLight]}>
                     <Pressable
-                      disabled={busy || !inviteTarget}
-                      onPress={() => {
-                        if (!inviteTarget) return;
-                        handleRoleAssignmentUpdate({
-                          eventId: inviteTarget.event.id,
-                          roleId: inviteTarget.role.id,
-                          workerId,
-                          currentlyAssigned: assigned,
-                        });
-                      }}>
-                      <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
-                        {busy ? 'Sending…' : assigned ? 'Remove + notify' : 'Assign + notify'}
-                      </Text>
+                      style={styles.inviteTeamHeader}
+                      disabled={inviteSubmitBusy}
+                      onPress={() => toggleInviteTeamExpanded(team.id)}>
+                      <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{team.name}</Text>
+                      <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>{teamExpanded ? 'Hide members' : 'Show members'}</Text>
                     </Pressable>
+
+                    {teamExpanded ? (
+                      <View style={styles.inviteTeamMembers}>
+                        <Pressable
+                          style={styles.inviteMemberRow}
+                          disabled={inviteSubmitBusy || !teamWorkerIds.length}
+                          onPress={() => toggleInviteTeamAllSelection(teamWorkerIds)}>
+                          <View style={[styles.inviteCheckbox, allSelected && styles.inviteCheckboxSelected]}>
+                            <Text style={styles.inviteCheckboxMark}>{allSelected ? '✓' : ''}</Text>
+                          </View>
+                          <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>All</Text>
+                        </Pressable>
+
+                        {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
+                          const selected = inviteSelectedWorkerIds.includes(workerId);
+                          return (
+                            <Pressable
+                              key={`invite-${team.id}-${workerId}`}
+                              style={styles.inviteMemberRow}
+                              disabled={inviteSubmitBusy || !inviteTarget}
+                              onPress={() => toggleInviteWorkerSelection(workerId)}>
+                              <View style={[styles.inviteCheckbox, selected && styles.inviteCheckboxSelected]}>
+                                <Text style={styles.inviteCheckboxMark}>{selected ? '✓' : ''}</Text>
+                              </View>
+                              <Text style={[styles.drawerName, isDarkMode ? styles.drawerNameDark : styles.drawerNameLight]}>{workerLabel(workerId)}</Text>
+                            </Pressable>
+                          );
+                        }) : (
+                          <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No members in this team.</Text>
+                        )}
+                      </View>
+                    ) : null}
                   </View>
                 );
               }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
             </ScrollView>
+            <Pressable
+              style={[styles.drawerClose, inviteSubmitBusy && styles.drawerCloseDisabled]}
+              onPress={handleSendRoleInvites}
+              disabled={!inviteTarget || inviteSubmitBusy}>
+              <Text style={styles.drawerCloseText}>{inviteSubmitBusy ? 'Sending…' : 'Send invite updates'}</Text>
+            </Pressable>
             <Pressable style={styles.drawerClose} onPress={() => setInviteDrawer(INITIAL_DRAWER)}>
               <Text style={styles.drawerCloseText}>Close</Text>
             </Pressable>
@@ -1527,6 +1673,16 @@ const styles = StyleSheet.create({
   drawerSub: { fontSize: 12, marginTop: 4 },
   drawerSubLight: { color: '#64748b' },
   drawerSubDark: { color: '#94a3b8' },
+  inviteTeamSummaryWrap: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  inviteTeamSummaryCard: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, minWidth: 130 },
+  inviteTeamSummaryCardLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  inviteTeamSummaryCardDark: { borderColor: '#334155', backgroundColor: '#111827' },
+  inviteTeamSummaryName: { fontSize: 12, fontWeight: '700' },
+  inviteTeamSummaryNameLight: { color: '#0f172a' },
+  inviteTeamSummaryNameDark: { color: '#e2e8f0' },
+  inviteTeamSummaryMeta: { marginTop: 4, fontSize: 12 },
+  inviteTeamSummaryMetaLight: { color: '#475569' },
+  inviteTeamSummaryMetaDark: { color: '#94a3b8' },
   drawerList: { marginTop: 12 },
   drawerRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#334155' },
   drawerName: { fontWeight: '600' },
@@ -1535,6 +1691,15 @@ const styles = StyleSheet.create({
   drawerMeta: { marginTop: 4, fontSize: 12 },
   drawerMetaLight: { color: '#64748b' },
   drawerMetaDark: { color: '#94a3b8' },
+  inviteTeamCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10 },
+  inviteTeamCardLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  inviteTeamCardDark: { borderColor: '#334155', backgroundColor: '#111827' },
+  inviteTeamHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  inviteTeamMembers: { marginTop: 8, gap: 6 },
+  inviteMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
+  inviteCheckbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: '#64748b', alignItems: 'center', justifyContent: 'center' },
+  inviteCheckboxSelected: { backgroundColor: '#1d4ed8', borderColor: '#1d4ed8' },
+  inviteCheckboxMark: { color: '#fff', fontWeight: '700', fontSize: 12, lineHeight: 14 },
   templateSection: { marginTop: 14, gap: 8 },
   templateHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   templateSelectTrigger: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
