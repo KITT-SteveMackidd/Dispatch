@@ -20,7 +20,7 @@ import {
   watchWorkerEvents,
   watchWorkerRoleAssignmentNotifications,
 } from '@/services/dispatch';
-import { DispatchEvent, EventRole, EventTemplate, Team, UserProfile } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTask, EventTemplate, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
 type ManagerNamesMap = Record<string, string>;
@@ -126,7 +126,41 @@ export default function EventsScreen() {
 
   const getTemplateRoleCount = (template: EventTemplateOption) => template.roles?.length ?? 0;
   const getTemplateTaskCount = (template: EventTemplateOption) => (template.roles || []).reduce((sum, role) => sum + (role.tasks?.length || 0), 0);
-  const formatTaskOffset = (offsetMinutes?: number) => `+${Math.max(0, Math.round(offsetMinutes || 0))}m`;
+
+  const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
+    const startsAtMs = +new Date(event.startsAt);
+    const offsetMinutes = Number(task.expectedOffsetMinutes);
+
+    if (Number.isFinite(startsAtMs) && Number.isFinite(offsetMinutes)) {
+      return startsAtMs + Math.max(0, offsetMinutes) * 60 * 1000;
+    }
+
+    if (task.dueAt) {
+      const parsedDueAt = +new Date(task.dueAt);
+      if (Number.isFinite(parsedDueAt)) return parsedDueAt;
+    }
+
+    return Number.NaN;
+  };
+
+  const formatTaskDueTime = (event: DispatchEvent, task: EventTask) => {
+    const dueAtMs = getTaskDueAtMs(event, task);
+    if (!Number.isFinite(dueAtMs)) return 'TBD';
+    return new Date(dueAtMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+
+  const parseEventStartDraftMs = () => {
+    if (!eventDateDraft || !eventTimeDraft) return Number.NaN;
+    const startsAtMs = +new Date(`${eventDateDraft}T${eventTimeDraft}`);
+    return Number.isFinite(startsAtMs) ? startsAtMs : Number.NaN;
+  };
+
+  const formatTaskDueTimeFromDraft = (offsetMinutes?: number) => {
+    const startsAtMs = parseEventStartDraftMs();
+    const safeOffset = Math.max(0, Math.round(offsetMinutes || 0));
+    if (!Number.isFinite(startsAtMs)) return `+${safeOffset}m from start`;
+    return new Date(startsAtMs + safeOffset * 60 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
 
   useEffect(() => {
     if (!profile) return;
@@ -572,7 +606,7 @@ export default function EventsScreen() {
       <View style={styles.taskList}>
         {workerTasks.map((task) => (
           <View key={task.id} style={styles.taskRow}>
-            <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.taskName} · due {formatTaskOffset(task.expectedOffsetMinutes || 0)}{task.optional ? ' (optional)' : ''}</Text>
+            <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.taskName} · due {formatTaskDueTime(event, { id: task.id, name: task.taskName, expectedOffsetMinutes: task.expectedOffsetMinutes, optional: task.optional })}{task.optional ? ' (optional)' : ''}</Text>
             <Text style={[styles.taskStatus, isDarkMode ? styles.metaDark : styles.metaLight, task.doneByMe && styles.taskStatusDone]}>{task.doneByMe ? 'Done' : task.roleName}</Text>
           </View>
         ))}
@@ -627,7 +661,7 @@ export default function EventsScreen() {
           <View style={styles.taskList}>
             {role.tasks.map((task) => (
               <View key={task.id} style={styles.taskRow}>
-                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name} · due {formatTaskOffset(task.expectedOffsetMinutes)}{task.optional ? ' (optional)' : ''}</Text>
+                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name} · due {formatTaskDueTime(event, task)}{task.optional ? ' (optional)' : ''}</Text>
               </View>
             ))}
           </View>
@@ -1182,7 +1216,7 @@ export default function EventsScreen() {
                         </Text>
                         {!!role.tasks.length ? (
                           <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>
-                            Next due: {formatTaskOffset(Math.min(...role.tasks.map((task) => task.expectedOffsetMinutes)))} from start
+                            Next due: {formatTaskDueTimeFromDraft(Math.min(...role.tasks.map((task) => task.expectedOffsetMinutes)))}
                           </Text>
                         ) : null}
                       </View>

@@ -230,7 +230,11 @@ export default function TodayScreen() {
     return Number.POSITIVE_INFINITY;
   };
 
-  const formatTaskOffset = (offsetMinutes?: number) => `+${Math.max(0, Math.round(offsetMinutes || 0))}m`;
+  const formatTaskDueTime = (event: DispatchEvent, task: EventTask) => {
+    const dueAtMs = getTaskDueAtMs(event, task);
+    if (!Number.isFinite(dueAtMs)) return 'TBD';
+    return new Date(dueAtMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
 
   const getOverdueIncompleteTasks = (event: DispatchEvent) => {
     return event.roles.flatMap((role) =>
@@ -368,7 +372,7 @@ export default function TodayScreen() {
               </Pressable>
               <View style={styles.checklistContent}>
                 <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>
-                  {item.task.name} · due {formatTaskOffset(item.task.expectedOffsetMinutes)}
+                  {item.task.name} · due {formatTaskDueTime(event, item.task)}
                   {item.task.optional ? ' (optional)' : ''}
                 </Text>
                 <Text style={styles.checklistMeta}>Role: {item.roleName}</Text>
@@ -472,7 +476,7 @@ export default function TodayScreen() {
                       <View style={[styles.progressFill, { width: `${progress.percent}%` }]} />
                     </View>
                   </View>
-                  <Text style={styles.nextTaskLabel}>Next task: {managerNext ? `${managerNext.name} · due ${formatTaskOffset(managerNext.expectedOffsetMinutes)}` : 'All tasks complete'}</Text>
+                  <Text style={styles.nextTaskLabel}>Next task: {managerNext ? `${managerNext.name} · due ${formatTaskDueTime(item, managerNext)}` : 'All tasks complete'}</Text>
                   {managerCountdownClock ? <Text style={[styles.timeRemaining, managerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {managerCountdownClock.label}</Text> : null}
                 </>
               ) : (
@@ -482,7 +486,7 @@ export default function TodayScreen() {
                   </View>
                   <Text style={styles.meta}>Assigned by {managerInfo?.displayName || 'Manager'}</Text>
                   <Text style={styles.meta}>Manager phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
-                  <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskOffset(nextTask.expectedOffsetMinutes)}` : 'All assigned tasks complete'}</Text>
+                  <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskDueTime(item, nextTask)}` : 'All assigned tasks complete'}</Text>
                   {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {countdownClock.label}</Text> : null}
                 </>
               )}
@@ -534,7 +538,7 @@ export default function TodayScreen() {
 
                             {workerNext ? (
                               <>
-                                <Text style={styles.workerMeta}>Next task: {workerNext.name} · due {formatTaskOffset(workerNext.expectedOffsetMinutes)}</Text>
+                                <Text style={styles.workerMeta}>Next task: {workerNext.name} · due {formatTaskDueTime(item, workerNext)}</Text>
                                 {workerCountdownClock ? <Text style={[styles.timeRemaining, workerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {workerCountdownClock.label}</Text> : null}
                               </>
                             ) : (
