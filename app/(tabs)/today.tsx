@@ -9,9 +9,10 @@ import {
   loadUserProfilesByIds,
   toggleTaskCompletion,
   watchManagerEvents,
+  watchManagerTeams,
   watchWorkerEvents,
 } from '@/services/dispatch';
-import { AppRole, DispatchEvent, EventTask } from '@/types/dispatch';
+import { AppRole, DispatchEvent, EventTask, Team } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
 type ManagerInfo = { displayName: string; phoneNumber?: string };
@@ -67,6 +68,7 @@ export default function TodayScreen() {
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
+  const [managerTeams, setManagerTeams] = useState<Team[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingTaskIds, setSavingTaskIds] = useState<Record<string, boolean>>({});
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
@@ -75,6 +77,15 @@ export default function TodayScreen() {
   useEffect(() => {
     if (!profile) return;
     return profile.role === 'manager' ? watchManagerEvents(profile.uid, setEvents) : watchWorkerEvents(profile.uid, setEvents);
+  }, [profile]);
+
+  useEffect(() => {
+    if (!profile || profile.role !== 'manager') {
+      setManagerTeams([]);
+      return;
+    }
+
+    return watchManagerTeams(profile.uid, setManagerTeams);
   }, [profile]);
 
   useEffect(() => {
@@ -411,6 +422,24 @@ export default function TodayScreen() {
     );
   };
 
+  const openWorkerTeamChat = (event: DispatchEvent, workerId: string, workerLabel?: string) => {
+    const eventTeamIds = new Set(event.teamIds || []);
+    const workerTeam = managerTeams.find((team) => eventTeamIds.has(team.id) && (team.workerIds || []).includes(workerId))
+      || managerTeams.find((team) => (team.workerIds || []).includes(workerId));
+
+    router.push({
+      pathname: '/chat/[workerId]',
+      params: {
+        workerId,
+        workerLabel: workerLabel || workerId,
+        eventName: event.name,
+        teamId: workerTeam?.id,
+        teamName: workerTeam?.name,
+        teamMemberIds: workerTeam?.workerIds?.join(',') || '',
+      },
+    });
+  };
+
   const toggleExpand = (eventId: string) => {
     setExpandedEventIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
@@ -516,16 +545,7 @@ export default function TodayScreen() {
                       return (
                         <View key={worker.workerId} style={styles.workerCard}>
                           <Pressable
-                            onPress={() => {
-                              router.push({
-                                pathname: '/chat/[workerId]',
-                                params: {
-                                  workerId: worker.workerId,
-                                  workerLabel: workerInfo?.displayName || worker.workerId,
-                                  eventName: item.name,
-                                },
-                              });
-                            }}
+                            onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
                             style={styles.avatar}
                             hitSlop={8}
                           >
