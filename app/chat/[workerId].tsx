@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { buildChatThreadId, markTeamChatRead, sendChatMessage, watchChatMessages } from '@/services/dispatch';
@@ -36,6 +36,10 @@ export default function WorkerChatScreen() {
   const memberIds = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean);
   const broadcastCount = memberIds.length;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
+  const [showVoicePanel, setShowVoicePanel] = useState(false);
+  const [isListening, setIsListening] = useState(false);
 
   const threadId = useMemo(() => {
     if (!profile) return null;
@@ -87,6 +91,43 @@ export default function WorkerChatScreen() {
     }
     return 'Direct manager ↔ worker chat';
   }, [broadcastCount, isTeamBroadcast]);
+
+
+
+  const emojiOptions = ['😀', '😂', '😍', '🙏', '👍', '🔥', '✅', '🎉', '📍', '⏰'];
+  const attachmentOptions = [
+    { key: 'photo', label: 'Photo' },
+    { key: 'video', label: 'Video' },
+    { key: 'file', label: 'File' },
+    { key: 'contact', label: 'Contact' },
+    { key: 'location', label: 'Location' },
+  ];
+  const voiceQuickPhrases = [
+    'On my way now.',
+    'Task completed ✅',
+    'Running 10 minutes behind.',
+    'Need help at this station.',
+  ];
+
+  const appendToDraft = (snippet: string) => {
+    setDraft((current) => [current.trimEnd(), snippet].filter(Boolean).join(current.trim() ? ' ' : ''));
+  };
+
+  const handleAttachmentSelect = (label: string) => {
+    appendToDraft(`[${label} attachment]`);
+    setShowAttachmentPicker(false);
+  };
+
+  const toggleVoiceListening = () => {
+    setShowVoicePanel(true);
+    setIsListening((prev) => !prev);
+    Alert.alert(
+      isListening ? 'Talk-to-text stopped' : 'Talk-to-text started',
+      isListening
+        ? 'Voice capture paused. Tap a quick phrase or continue typing.'
+        : 'Simulated voice capture is active. Tap a quick phrase to insert transcript text.'
+    );
+  };
 
   const canSend = draft.trim().length > 0;
   const sendMessage = async () => {
@@ -145,18 +186,81 @@ export default function WorkerChatScreen() {
       />
 
       <View style={[styles.composer, isDarkMode ? styles.composerDark : styles.composerLight]}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder={isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
-          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-          style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
-          returnKeyType="send"
-          onSubmitEditing={sendMessage}
-        />
-        <Pressable style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend}>
-          <Text style={styles.sendText}>Send</Text>
-        </Pressable>
+        <View style={styles.composerTools}>
+          <Pressable
+            style={[styles.toolButton, isDarkMode ? styles.toolButtonDark : styles.toolButtonLight]}
+            onPress={() => {
+              setShowAttachmentPicker((prev) => !prev);
+              setShowEmojiPicker(false);
+              setShowVoicePanel(false);
+            }}>
+            <Text style={styles.toolIcon}>＋</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.toolButton, isDarkMode ? styles.toolButtonDark : styles.toolButtonLight]}
+            onPress={() => {
+              setShowEmojiPicker((prev) => !prev);
+              setShowAttachmentPicker(false);
+              setShowVoicePanel(false);
+            }}>
+            <Text style={styles.toolIcon}>😊</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.toolButton, isDarkMode ? styles.toolButtonDark : styles.toolButtonLight, isListening && styles.toolButtonActive]}
+            onPress={toggleVoiceListening}>
+            <Text style={styles.toolIcon}>🎤</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.inputRow}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
+            placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
+            style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+            returnKeyType="send"
+            onSubmitEditing={sendMessage}
+          />
+          <Pressable style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend}>
+            <Text style={styles.sendText}>Send</Text>
+          </Pressable>
+        </View>
+
+        {showAttachmentPicker ? (
+          <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
+            {attachmentOptions.map((option) => (
+              <Pressable key={option.key} style={styles.pickerChip} onPress={() => handleAttachmentSelect(option.label)}>
+                <Text style={[styles.pickerChipText, isDarkMode ? styles.pickerChipTextDark : styles.pickerChipTextLight]}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {showEmojiPicker ? (
+          <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
+            {emojiOptions.map((emoji) => (
+              <Pressable key={emoji} style={styles.emojiChip} onPress={() => appendToDraft(emoji)}>
+                <Text style={styles.emojiText}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {showVoicePanel ? (
+          <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
+            <Text style={[styles.voiceHint, isDarkMode ? styles.voiceHintDark : styles.voiceHintLight]}>
+              {isListening ? 'Listening… tap phrase to insert transcript' : 'Talk-to-text paused'}
+            </Text>
+            <View style={styles.voicePhraseRow}>
+              {voiceQuickPhrases.map((phrase) => (
+                <Pressable key={phrase} style={styles.pickerChip} onPress={() => appendToDraft(phrase)}>
+                  <Text style={[styles.pickerChipText, isDarkMode ? styles.pickerChipTextDark : styles.pickerChipTextLight]}>{phrase}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
     </KeyboardAvoidingView>
   );
@@ -194,7 +298,7 @@ const styles = StyleSheet.create({
   timeSelf: { color: '#dbeafe' },
   timeLight: { color: '#64748b' },
   timeDark: { color: '#F4F8FF' },
-  composer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1 },
+  composer: { gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1 },
   composerLight: { backgroundColor: '#fff', borderTopColor: '#e2e8f0' },
   composerDark: { backgroundColor: '#1A2540', borderTopColor: '#001A4D' },
   input: { flex: 1, minHeight: 42, borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
@@ -203,4 +307,25 @@ const styles = StyleSheet.create({
   sendButton: { backgroundColor: '#2563eb', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
   sendButtonDisabled: { opacity: 0.45 },
   sendText: { color: '#fff', fontWeight: '700' },
+  composerTools: { flexDirection: 'row', gap: 8 },
+  toolButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  toolButtonLight: { borderColor: '#cbd5e1', backgroundColor: '#fff' },
+  toolButtonDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  toolButtonActive: { borderColor: '#0EC3C9' },
+  toolIcon: { fontSize: 16 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  picker: { borderRadius: 12, padding: 8, borderWidth: 1, gap: 8 },
+  pickerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
+  pickerDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  pickerChip: { borderRadius: 999, borderWidth: 1, borderColor: '#3b82f6', paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
+  pickerChipText: { fontSize: 12, fontWeight: '600' },
+  pickerChipTextLight: { color: '#1e3a8a' },
+  pickerChipTextDark: { color: '#BFDBFE' },
+  emojiChip: { paddingHorizontal: 8, paddingVertical: 6 },
+  emojiText: { fontSize: 22 },
+  voiceHint: { fontSize: 12, fontWeight: '600' },
+  voiceHintLight: { color: '#1e3a8a' },
+  voiceHintDark: { color: '#93c5fd' },
+  voicePhraseRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+
 });
