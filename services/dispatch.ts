@@ -50,11 +50,12 @@ export type RoleAssignmentNotification = {
 export type UserNotification = {
   id: string;
   userId: string;
-  kind: 'role_invite_response';
+  kind: 'role_invite_response' | 'task_behind_schedule';
   title: string;
   body: string;
   relatedEventId?: string;
   relatedRoleId?: string;
+  relatedTaskId?: string;
   read: boolean;
   createdAt?: { toDate?: () => Date } | Date | null;
 };
@@ -472,6 +473,39 @@ export async function markUserNotificationsRead(params: { userId: string; notifi
         readAt: serverTimestamp(),
       });
     }
+  });
+}
+
+export async function ensureTaskBehindScheduleNotification(params: {
+  managerId: string;
+  eventId: string;
+  eventName: string;
+  roleId: string;
+  roleName: string;
+  taskId: string;
+  taskName: string;
+  dueAt: string;
+}) {
+  const notificationId = `behind_schedule__${params.eventId}__${params.roleId}__${params.taskId}`;
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'userNotifications', notificationId);
+    const snap = await tx.get(ref);
+    if (snap.exists()) return;
+
+    tx.set(ref, {
+      userId: params.managerId,
+      kind: 'task_behind_schedule',
+      title: 'Task behind schedule',
+      body: `${params.eventName}: ${params.roleName} is behind on "${params.taskName}".`,
+      relatedEventId: params.eventId,
+      relatedRoleId: params.roleId,
+      relatedTaskId: params.taskId,
+      dueAt: params.dueAt,
+      read: false,
+      createdAt: serverTimestamp(),
+      statusReason: `Task due at ${params.dueAt} passed before completion.`,
+    });
   });
 }
 
@@ -949,6 +983,38 @@ export async function respondToRoleAssignmentNotification(params: {
       createdAt: serverTimestamp(),
     });
   });
+
+  if (params.response === 'accept') {
+    const acceptedNotificationRef = doc(db, 'roleAssignmentNotifications', params.notificationId);
+    const acceptedNotificationSnap = await getDoc(acceptedNotificationRef);
+    if (!acceptedNotificationSnap.exists()) return;
+
+    const acceptedNotification = acceptedNotificationSnap.data() as Partial<RoleAssignmentNotification>;
+    if (acceptedNotification.action !== 'assign' || !acceptedNotification.eventId || !acceptedNotification.roleId) return;
+
+    const competingNotifications = await getDocs(
+      query(
+        collection(db, 'roleAssignmentNotifications'),
+        where('eventId', '==', acceptedNotification.eventId),
+        where('roleId', '==', acceptedNotification.roleId),
+        where('action', '==', 'assign'),
+        where('status', '==', 'pending')
+      )
+    );
+
+    await Promise.all(
+      competingNotifications.docs
+        .filter((docSnap) => docSnap.id !== params.notificationId)
+        .map((docSnap) =>
+          updateDoc(docSnap.ref, {
+            status: 'declined',
+            statusReason: 'Role accepted by another worker; this competing invite was removed.',
+            respondedAt: serverTimestamp(),
+            response: 'decline',
+          })
+        )
+    );
+  }
 }
 
 export async function toggleTaskCompletion(params: {
