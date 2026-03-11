@@ -220,8 +220,11 @@ export default function TodayScreen() {
     });
   }, [profile, today, nowMs]);
 
-  const getProgress = (event: DispatchEvent): TaskProgress => {
-    const tasks = event.roles.flatMap((r) => r.tasks);
+  const getProgress = (event: DispatchEvent, options?: { excludeUnfilledRoles?: boolean }): TaskProgress => {
+    const roles = options?.excludeUnfilledRoles
+      ? event.roles.filter((role) => (role.assignedWorkerIds?.length ?? 0) > 0)
+      : event.roles;
+    const tasks = roles.flatMap((r) => r.tasks);
     const total = tasks.length;
     const done = tasks.filter((t) => (t.completedBy?.length ?? 0) > 0).length;
     const percent = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -518,12 +521,12 @@ export default function TodayScreen() {
         contentContainerStyle={{ paddingTop: 10 }}
         ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No dispatches for today.</Text>}
         renderItem={({ item }) => {
-          const progress = getProgress(item);
+          const isManager = profile?.role === 'manager';
+          const progress = getProgress(item, { excludeUnfilledRoles: isManager });
           const b = badge(item, progress);
           const startsAtDate = new Date(item.startsAt);
           const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
           const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-          const isManager = profile?.role === 'manager';
           const isExpanded = !!expandedEventIds[item.id];
           const workers = isManager ? getWorkerSummaries(item) : [];
           const managerInfo = managerInfoById[item.managerId];
