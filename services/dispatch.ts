@@ -34,6 +34,14 @@ export type PersistedChatMessage = {
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
+export type ChatThreadHead = {
+  id: string;
+  teamId?: string | null;
+  lastMessageText?: string;
+  lastMessageSenderId?: string;
+  updatedAt?: { toDate?: () => Date } | Date | null;
+};
+
 export type RoleAssignmentNotification = {
   id: string;
   workerId: string;
@@ -94,6 +102,14 @@ export function watchChatMessages(threadId: string, cb: (items: PersistedChatMes
   return onSnapshot(q, (snap) => {
     const messages = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PersistedChatMessage, 'id'>) }));
     cb(messages);
+  });
+}
+
+export function watchIncomingChatThreadHeads(userId: string, cb: (items: ChatThreadHead[]) => void) {
+  const q = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), orderBy('updatedAt', 'desc'), limit(30));
+  return onSnapshot(q, (snap) => {
+    const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ChatThreadHead, 'id'>) }));
+    cb(items);
   });
 }
 

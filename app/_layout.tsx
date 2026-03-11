@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 
 import { SessionProvider, useSession } from '@/context/session';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
+import { usePushNotificationBridge } from '@/services/push-notifications';
 
 export { ErrorBoundary } from 'expo-router';
 SplashScreen.preventAutoHideAsync();
@@ -43,6 +44,7 @@ export default function RootLayout() {
 function RootNavigator() {
   const { resolvedThemeMode, isLoaded } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
+  usePushNotificationBridge();
 
   if (loading || !isLoaded) return null;
 
