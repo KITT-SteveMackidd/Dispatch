@@ -207,11 +207,22 @@ export default function TodayScreen() {
     return { total, done, percent };
   };
 
-  const badge = (progress: TaskProgress) => {
-    const { total, done } = progress;
-    if (done === total && total > 0) return { text: 'On Track', bg: '#dcfce7', fg: '#15803d' };
-    if (done === 0) return { text: 'Pending', bg: '#dbeafe', fg: '#1d4ed8' };
-    return { text: `${Math.max(total - done, 1)} Tasks Behind`, bg: '#ffedd5', fg: '#c2410c' };
+  const badge = (event: DispatchEvent, progress: TaskProgress) => {
+    const { done } = progress;
+    const dueNow = event.roles
+      .flatMap((role) => role.tasks)
+      .filter((task) => {
+        const dueAtMs = getTaskDueAtMs(event, task);
+        return Number.isFinite(dueAtMs) && dueAtMs <= nowMs;
+      }).length;
+
+    const scheduleDelta = done - dueNow;
+
+    if (scheduleDelta < 0) {
+      return { text: `${Math.abs(scheduleDelta)} Tasks behind`, bg: '#ffedd5', fg: '#c2410c' };
+    }
+
+    return { text: `${scheduleDelta} Tasks ahead`, bg: '#dcfce7', fg: '#15803d' };
   };
 
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
@@ -435,7 +446,7 @@ export default function TodayScreen() {
         ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No dispatches for today.</Text>}
         renderItem={({ item }) => {
           const progress = getProgress(item);
-          const b = badge(progress);
+          const b = badge(item, progress);
           const startsAtDate = new Date(item.startsAt);
           const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
           const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
