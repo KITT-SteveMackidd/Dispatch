@@ -639,6 +639,22 @@ export default function EventsScreen() {
 
   const workerLabel = (workerId: string) => workerProfiles[workerId]?.displayName || workerId;
 
+  const openWorkerTeamChat = (event: DispatchEvent, workerId: string) => {
+    const workerTeam = managerTeams.find((team) => (team.workerIds || []).includes(workerId));
+
+    router.push({
+      pathname: '/chat/[workerId]',
+      params: {
+        workerId,
+        workerLabel: workerLabel(workerId),
+        eventName: event.name,
+        teamId: workerTeam?.id,
+        teamName: workerTeam?.name,
+        teamMemberIds: workerTeam?.workerIds?.join(',') || '',
+      },
+    });
+  };
+
   const renderManagerRole = (event: DispatchEvent, role: EventRole) => {
     const assignedIds = role.assignedWorkerIds || [];
     const openSlots = Math.max(0, role.openSlots || 0);
@@ -658,24 +674,34 @@ export default function EventsScreen() {
             assignedIds.map((workerId) => {
               const initial = workerLabel(workerId).slice(0, 1).toUpperCase();
               return (
-                <View key={`${event.id}-${role.id}-${workerId}`} style={styles.avatarChip}>
+                <Pressable
+                  key={`${event.id}-${role.id}-${workerId}`}
+                  style={styles.avatarChip}
+                  onPress={() => openWorkerTeamChat(event, workerId)}
+                  hitSlop={6}
+                >
                   <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight]}>
                     <Text style={styles.avatarText}>{initial}</Text>
                   </View>
                   <Text style={[styles.avatarName, isDarkMode ? styles.avatarNameDark : styles.avatarNameLight]} numberOfLines={1}>{workerLabel(workerId)}</Text>
-                </View>
+                </Pressable>
               );
             })
           ) : pendingInviteWorkerIds.length ? (
             pendingInviteWorkerIds.map((workerId) => {
               const initial = workerLabel(workerId).slice(0, 1).toUpperCase();
               return (
-                <View key={`${event.id}-${role.id}-invite-${workerId}`} style={styles.avatarChip}>
+                <Pressable
+                  key={`${event.id}-${role.id}-invite-${workerId}`}
+                  style={styles.avatarChip}
+                  onPress={() => openWorkerTeamChat(event, workerId)}
+                  hitSlop={6}
+                >
                   <View style={[styles.avatarCircle, isDarkMode ? styles.avatarCircleDark : styles.avatarCircleLight]}>
                     <Text style={styles.avatarText}>{initial}</Text>
                   </View>
                   <Text style={[styles.avatarName, isDarkMode ? styles.avatarNameDark : styles.avatarNameLight]} numberOfLines={1}>{workerLabel(workerId)}</Text>
-                </View>
+                </Pressable>
               );
             })
           ) : (
