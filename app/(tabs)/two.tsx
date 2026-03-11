@@ -25,7 +25,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#020617' },
+  containerDark: { backgroundColor: '#181B24' },
   card: {
     width: '100%',
     borderRadius: 16,
@@ -33,12 +33,12 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   cardLight: { backgroundColor: '#ffffff', borderColor: '#e2e8f0' },
-  cardDark: { backgroundColor: '#0f172a', borderColor: '#1e293b' },
+  cardDark: { backgroundColor: '#232832', borderColor: '#1e293b' },
   title: {
     fontSize: 20,
     fontWeight: '700',
   },
-  titleLight: { color: '#0f172a' },
+  titleLight: { color: '#232832' },
   titleDark: { color: '#f8fafc' },
   subtitle: {
     marginTop: 8,

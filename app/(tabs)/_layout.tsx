@@ -48,11 +48,11 @@ export default function TabLayout() {
       screenOptions={{
         tabBarActiveTintColor: '#2563eb',
         tabBarInactiveTintColor: isDarkMode ? '#94a3b8' : '#64748b',
-        headerStyle: { backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' },
-        headerTintColor: isDarkMode ? '#f8fafc' : '#0f172a',
+        headerStyle: { backgroundColor: isDarkMode ? '#232832' : '#f8fafc' },
+        headerTintColor: isDarkMode ? '#f8fafc' : '#232832',
         headerShadowVisible: false,
-        tabBarStyle: { backgroundColor: isDarkMode ? '#0f172a' : '#ffffff', borderTopColor: isDarkMode ? '#1e293b' : '#e2e8f0' },
-        sceneStyle: { backgroundColor: isDarkMode ? '#020617' : '#eef2ff' },
+        tabBarStyle: { backgroundColor: isDarkMode ? '#232832' : '#ffffff', borderTopColor: isDarkMode ? '#1e293b' : '#e2e8f0' },
+        sceneStyle: { backgroundColor: isDarkMode ? '#181B24' : '#eef2ff' },
       }}>
       <Tabs.Screen
         name="today"
@@ -77,7 +77,7 @@ export default function TabLayout() {
                 marginRight: 14,
                 borderWidth: 1,
                 borderColor: isDarkMode ? '#334155' : '#cbd5e1',
-                backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+                backgroundColor: isDarkMode ? '#232832' : '#ffffff',
                 borderRadius: 8,
                 paddingHorizontal: 10,
                 paddingVertical: 4,
