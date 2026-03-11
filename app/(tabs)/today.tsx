@@ -7,6 +7,7 @@ import {
   deleteDispatchEvent,
   ensureTaskBehindScheduleNotification,
   loadUserProfilesByIds,
+  loadWorkerTeams,
   toggleTaskCompletion,
   watchManagerEvents,
   watchManagerTeams,
@@ -69,6 +70,7 @@ export default function TodayScreen() {
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
   const [managerTeams, setManagerTeams] = useState<Team[]>([]);
+  const [workerTeams, setWorkerTeams] = useState<Team[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingTaskIds, setSavingTaskIds] = useState<Record<string, boolean>>({});
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
@@ -80,12 +82,32 @@ export default function TodayScreen() {
   }, [profile]);
 
   useEffect(() => {
-    if (!profile || profile.role !== 'manager') {
+    if (!profile) {
       setManagerTeams([]);
+      setWorkerTeams([]);
       return;
     }
 
-    return watchManagerTeams(profile.uid, setManagerTeams);
+    if (profile.role === 'manager') {
+      setWorkerTeams([]);
+      return watchManagerTeams(profile.uid, setManagerTeams);
+    }
+
+    setManagerTeams([]);
+    let active = true;
+    loadWorkerTeams(profile.uid)
+      .then((teams) => {
+        if (!active) return;
+        setWorkerTeams(teams);
+      })
+      .catch(() => {
+        if (!active) return;
+        setWorkerTeams([]);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [profile]);
 
   useEffect(() => {
@@ -440,6 +462,26 @@ export default function TodayScreen() {
     });
   };
 
+  const openManagerChat = (event: DispatchEvent) => {
+    const managerId = event.managerId;
+    const managerLabel = managerInfoById[managerId]?.displayName || 'Manager';
+    const eventTeamIds = new Set(event.teamIds || []);
+    const managerTeam = workerTeams.find((team) => eventTeamIds.has(team.id) && team.managerId === managerId)
+      || workerTeams.find((team) => team.managerId === managerId);
+
+    router.push({
+      pathname: '/chat/[workerId]',
+      params: {
+        workerId: managerId,
+        workerLabel: managerLabel,
+        eventName: event.name,
+        teamId: managerTeam?.id,
+        teamName: managerTeam?.name,
+        teamMemberIds: managerTeam?.workerIds?.join(',') || '',
+      },
+    });
+  };
+
   const toggleExpand = (eventId: string) => {
     setExpandedEventIds((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
@@ -524,8 +566,15 @@ export default function TodayScreen() {
                   <View style={[styles.badge, { backgroundColor: b.bg }]}>
                     <Text style={[styles.badgeText, { color: b.fg }]}>{b.text}</Text>
                   </View>
-                  <Text style={styles.meta}>Assigned by {managerInfo?.displayName || 'Manager'}</Text>
-                  <Text style={styles.meta}>Manager phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
+                  <View style={styles.managerRow}>
+                    <Pressable onPress={() => openManagerChat(item)} style={styles.avatar} hitSlop={8}>
+                      <Text style={styles.avatarText}>{(managerInfo?.displayName || 'Manager').slice(0, 1).toUpperCase()}</Text>
+                    </Pressable>
+                    <View style={styles.managerDetails}>
+                      <Text style={styles.workerName}>{managerInfo?.displayName || 'Manager'}</Text>
+                      <Text style={styles.workerMeta}>Phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
+                    </View>
+                  </View>
                   <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskDueTime(item, nextTask)}` : 'All assigned tasks complete'}</Text>
                   {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue && styles.timeRemainingOverdue]}>Countdown: {countdownClock.label}</Text> : null}
                 </>
@@ -655,6 +704,8 @@ const styles = StyleSheet.create({
   metaDark: { color: '#F4F8FF' },
   badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginTop: 10 },
   badgeText: { fontWeight: '700', fontSize: 12 },
+  managerRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  managerDetails: { flex: 1 },
   progressSection: { marginTop: 12 },
   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   progressLabel: { color: '#334155', fontWeight: '600', fontSize: 12 },
