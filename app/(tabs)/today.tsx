@@ -3,7 +3,7 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native
 import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { deleteDispatchEvent, loadUserProfilesByIds, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
+import { deleteDispatchEvent, loadUserProfilesByIds, toggleTaskCompletion, watchManagerEvents, watchWorkerEvents } from '@/services/dispatch';
 import { AppRole, DispatchEvent, EventTask } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
@@ -23,6 +23,8 @@ type WorkerSummary = {
 
 type WorkerChecklistItem = {
   id: string;
+  roleId: string;
+  taskId: string;
   roleName: string;
   assignedToMe: boolean;
   completedCount: number;
@@ -59,6 +61,7 @@ export default function TodayScreen() {
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [savingTaskIds, setSavingTaskIds] = useState<Record<string, boolean>>({});
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
 
   useEffect(() => {
@@ -250,6 +253,8 @@ export default function TodayScreen() {
         const completedBy = task.completedBy ?? [];
         return {
           id: `${role.id}:${task.id}`,
+          roleId: role.id,
+          taskId: task.id,
           roleName: role.name,
           assignedToMe: role.assignedWorkerIds.includes(profile.uid),
           completedCount: completedBy.length,
@@ -258,6 +263,32 @@ export default function TodayScreen() {
         };
       })
     );
+  };
+
+  const handleToggleTask = async (event: DispatchEvent, item: WorkerChecklistItem) => {
+    if (!profile || profile.role !== 'worker') return;
+    if (!item.assignedToMe || savingTaskIds[item.id]) return;
+
+    const shouldComplete = !item.completedByMe;
+
+    setSavingTaskIds((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      await toggleTaskCompletion({
+        eventId: event.id,
+        roleId: item.roleId,
+        taskId: item.task.id,
+        workerId: profile.uid,
+        complete: shouldComplete,
+      });
+    } catch (error) {
+      Alert.alert('Unable to update task', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setSavingTaskIds((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    }
   };
 
   const renderWorkerChecklist = (event: DispatchEvent) => {
@@ -269,13 +300,24 @@ export default function TodayScreen() {
     return (
       <View style={styles.checklistContainer}>
         {tasks.map((item) => {
-          const isComplete = item.completedCount > 0;
+          const isComplete = item.completedByMe;
+          const isSaving = !!savingTaskIds[item.id];
+          const canToggle = item.assignedToMe && !isSaving;
 
           return (
             <View key={item.id} style={styles.checklistItem}>
-              <View style={[styles.checkbox, isComplete && styles.checkboxComplete]}>
+              <Pressable
+                onPress={() => handleToggleTask(event, item)}
+                disabled={!canToggle}
+                style={[
+                  styles.checkbox,
+                  isComplete && styles.checkboxComplete,
+                  !item.assignedToMe && styles.checkboxDisabled,
+                  isSaving && styles.checkboxSaving,
+                ]}
+              >
                 {isComplete ? <Text style={styles.checkboxMark}>✓</Text> : null}
-              </View>
+              </Pressable>
               <View style={styles.checklistContent}>
                 <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>
                   {item.task.name} · due {formatTaskOffset(item.task.expectedOffsetMinutes)}
@@ -290,6 +332,9 @@ export default function TodayScreen() {
                       ? `Completed by ${item.completedCount} worker${item.completedCount > 1 ? 's' : ''}`
                       : 'Not completed yet'}
                 </Text>
+                {item.assignedToMe ? (
+                  <Text style={styles.checklistMeta}>{isSaving ? 'Saving…' : isComplete ? 'Tap to uncheck' : 'Tap to check off'}</Text>
+                ) : null}
                 {Number.isFinite(getTaskDueAtMs(event, item.task)) ? (
                   <Text style={styles.checklistMeta}>
                     Due {new Date(getTaskDueAtMs(event, item.task)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
@@ -532,6 +577,8 @@ const styles = StyleSheet.create({
   checklistItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', justifyContent: 'center', marginTop: 1, backgroundColor: '#f8fafc' },
   checkboxComplete: { borderColor: '#15803d', backgroundColor: '#dcfce7' },
+  checkboxDisabled: { opacity: 0.45 },
+  checkboxSaving: { opacity: 0.65 },
   checkboxMark: { color: '#15803d', fontWeight: '800', fontSize: 12 },
   checklistContent: { flex: 1 },
   checklistTask: { color: '#0f172a', fontWeight: '600', fontSize: 14 },
