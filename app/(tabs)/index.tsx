@@ -747,7 +747,7 @@ export default function EventsScreen() {
     }
 
     setInviteSelectedWorkerIds(inviteTarget.role.assignedWorkerIds || []);
-    setExpandedInviteTeamIds(Object.fromEntries((managerTeams || []).map((team) => [team.id, true])));
+    setExpandedInviteTeamIds({});
   }, [inviteDrawer.open, inviteTarget?.event.id, inviteTarget?.role.id, inviteTarget?.role.assignedWorkerIds?.join(','), managerTeams]);
 
   const handleSendRoleInvites = async () => {
