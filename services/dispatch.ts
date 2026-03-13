@@ -113,6 +113,16 @@ export type UpsertEventTemplateInput = {
   defaultDescription?: string;
 };
 
+function toDateMs(value?: { toDate?: () => Date } | Date | null) {
+  if (!value) return 0;
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : 0;
+  if (typeof value.toDate === 'function') {
+    const d = value.toDate();
+    return Number.isFinite(d.getTime()) ? d.getTime() : 0;
+  }
+  return 0;
+}
+
 export function buildChatThreadId(params: {
   teamId?: string;
   selfId: string;
@@ -136,11 +146,44 @@ export function watchChatMessages(threadId: string, cb: (items: PersistedChatMes
 }
 
 export function watchIncomingChatThreadHeads(userId: string, cb: (items: ChatThreadHead[]) => void) {
-  const q = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), orderBy('updatedAt', 'desc'), limit(30));
-  return onSnapshot(q, (snap) => {
-    const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ChatThreadHead, 'id'>) }));
-    cb(items);
-  });
+  const withOrderQuery = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), orderBy('updatedAt', 'desc'), limit(30));
+
+  const subscribeWithoutOrder = () => {
+    const fallbackQuery = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), limit(100));
+    return onSnapshot(fallbackQuery, (snap) => {
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<ChatThreadHead, 'id'>) }))
+        .sort((a, b) => {
+          const aMs = toDateMs(a.updatedAt);
+          const bMs = toDateMs(b.updatedAt);
+          return bMs - aMs;
+        })
+        .slice(0, 30);
+      cb(items);
+    });
+  };
+
+  let unsubscribe = () => {};
+
+  unsubscribe = onSnapshot(
+    withOrderQuery,
+    (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ChatThreadHead, 'id'>) }));
+      cb(items);
+    },
+    (error) => {
+      if (error?.code === 'failed-precondition') {
+        console.warn('Missing composite index for chatThreads watcher; using client-side sort fallback.', error);
+        unsubscribe();
+        unsubscribe = subscribeWithoutOrder();
+        return;
+      }
+      console.error('watchIncomingChatThreadHeads failed', error);
+      cb([]);
+    }
+  );
+
+  return () => unsubscribe();
 }
 
 export async function uploadChatAttachment(params: {
