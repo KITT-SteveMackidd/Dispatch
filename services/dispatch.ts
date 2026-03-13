@@ -22,7 +22,7 @@ import {
 import { sendSignInLinkToEmail } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
-import { DispatchEvent, EventRole, EventTemplate, EventTemplateRole, Team, UserProfile } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, Team, UserProfile } from '@/types/dispatch';
 
 export type TeamUnreadCount = {
   teamId: string;
@@ -87,7 +87,7 @@ export type UserNotification = {
 export type WorkerInvite = {
   id: string;
   managerId: string;
-  teamId: string;
+  teamId?: string;
   teamName?: string;
   email: string;
   workerId?: string | null;
@@ -214,6 +214,34 @@ export async function uploadChatAttachment(params: {
     size: blob.size,
     url,
   } satisfies ChatAttachment;
+}
+
+export async function uploadTemplateTaskAttachment(params: {
+  managerId: string;
+  taskId: string;
+  uri: string;
+  kind: 'photo' | 'document';
+  name: string;
+  mimeType?: string;
+}) {
+  const response = await fetch(params.uri);
+  const blob = await response.blob();
+  const ext = params.name.includes('.') ? params.name.split('.').pop() : params.kind === 'photo' ? 'jpg' : 'bin';
+  const safeExt = (ext || 'bin').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'bin';
+  const objectPath = `dispatchTemplateAttachments/${params.managerId}/${params.taskId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+  const objectRef = ref(storage, objectPath);
+
+  await uploadBytes(objectRef, blob, {
+    contentType: params.mimeType || blob.type || 'application/octet-stream',
+  });
+
+  const url = await getDownloadURL(objectRef);
+  return {
+    id: objectPath,
+    kind: params.kind,
+    name: params.name,
+    url,
+  } satisfies EventTaskAttachment;
 }
 
 export async function sendChatMessage(params: {
@@ -754,11 +782,11 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
 
 async function sendInviteEmail(params: {
   email: string;
-  teamName: string;
+  teamName?: string;
   appLink: string;
   inviteId: string;
   managerId: string;
-  teamId: string;
+  teamId?: string;
 }): Promise<{
   status: 'sent' | 'queued';
   reason: string;
@@ -927,7 +955,7 @@ export async function acceptPendingInvitesForUser(params: { userId: string; emai
 
 export async function inviteWorkerByEmailToTeam(params: {
   managerId: string;
-  teamId: string;
+  teamId?: string;
   email: string;
   managerName?: string;
 }) {
@@ -945,19 +973,26 @@ export async function inviteWorkerByEmailToTeam(params: {
   const foundWorker = usersSnap.docs[0];
   const foundWorkerId = foundWorker?.id;
 
+  let teamName = 'Solo worker';
+
   await runTransaction(db, async (tx) => {
-    const teamRef = doc(db, 'teams', teamId);
-    const teamSnap = await tx.get(teamRef);
+    if (teamId) {
+      const teamRef = doc(db, 'teams', teamId);
+      const teamSnap = await tx.get(teamRef);
 
-    if (!teamSnap.exists()) throw new Error('Team not found');
+      if (!teamSnap.exists()) throw new Error('Team not found');
 
-    const team = teamSnap.data() as Omit<Team, 'id'>;
-    if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
+      const team = teamSnap.data() as Omit<Team, 'id'>;
+      if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
+      teamName = team.name || 'Dispatch Team';
+
+      if (foundWorkerId) {
+        const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
+        tx.update(teamRef, { workerIds: nextWorkerIds });
+      }
+    }
 
     if (foundWorkerId) {
-      const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
-      tx.update(teamRef, { workerIds: nextWorkerIds });
-
       const threadId = [managerId, foundWorkerId].sort().join('__');
       tx.set(
         doc(db, 'chatThreads', threadId),
@@ -975,9 +1010,14 @@ export async function inviteWorkerByEmailToTeam(params: {
     }
   });
 
+  if (teamId) {
+    const teamSnap = await getDoc(doc(db, 'teams', teamId));
+    if (teamSnap.exists()) {
+      teamName = ((teamSnap.data() as Omit<Team, 'id'>).name || 'Dispatch Team');
+    }
+  }
+
   const appLink = getInviteAppLink();
-  const teamSnap = await getDoc(doc(db, 'teams', teamId));
-  const teamName = teamSnap.exists() ? ((teamSnap.data() as Omit<Team, 'id'>).name || 'Dispatch Team') : 'Dispatch Team';
 
   const inviteRef = await addDoc(collection(db, 'workerInvites'), {
     managerId,
@@ -988,7 +1028,7 @@ export async function inviteWorkerByEmailToTeam(params: {
     workerId: foundWorkerId || null,
     status: foundWorkerId ? 'linked' : 'pending',
     statusReason: foundWorkerId
-      ? 'Worker account already exists and was linked to team immediately.'
+      ? (teamId ? 'Worker account already exists and was linked to team immediately.' : 'Worker account already exists and was linked as a solo worker immediately.')
       : 'Pending account creation/login acceptance.',
     createdAt: serverTimestamp(),
   });
@@ -1006,7 +1046,7 @@ export async function inviteWorkerByEmailToTeam(params: {
     await updateDoc(inviteRef, {
       status: foundWorkerId ? 'linked' : delivery.status,
       statusReason: foundWorkerId
-        ? 'Worker linked immediately; invite email also delivered.'
+        ? (teamId ? 'Worker linked to team immediately; invite email also delivered.' : 'Solo worker linked immediately; invite email also delivered.')
         : delivery.reason,
       sentAt: serverTimestamp(),
       emailDelivery: delivery.via,
@@ -1039,15 +1079,17 @@ export async function linkPendingEmailInvites(params: { workerId: string; email:
   await runTransaction(db, async (tx) => {
     for (const inviteDoc of invitesSnap.docs) {
       const invite = inviteDoc.data() as { teamId?: string; managerId?: string };
-      if (!invite.teamId || !invite.managerId) continue;
+      if (!invite.managerId) continue;
 
-      const teamRef = doc(db, 'teams', invite.teamId);
-      const teamSnap = await tx.get(teamRef);
-      if (!teamSnap.exists()) continue;
-
-      const team = teamSnap.data() as Omit<Team, 'id'>;
-      const nextWorkerIds = [...new Set([...(team.workerIds || []), params.workerId])];
-      tx.update(teamRef, { workerIds: nextWorkerIds });
+      if (invite.teamId) {
+        const teamRef = doc(db, 'teams', invite.teamId);
+        const teamSnap = await tx.get(teamRef);
+        if (teamSnap.exists()) {
+          const team = teamSnap.data() as Omit<Team, 'id'>;
+          const nextWorkerIds = [...new Set([...(team.workerIds || []), params.workerId])];
+          tx.update(teamRef, { workerIds: nextWorkerIds });
+        }
+      }
 
       tx.update(inviteDoc.ref, {
         workerId: params.workerId,

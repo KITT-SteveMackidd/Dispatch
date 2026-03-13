@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -15,6 +17,7 @@ import {
   sortDispatchEvents,
   updateEventRoleAssignment,
   updateEventTemplate,
+  uploadTemplateTaskAttachment,
   watchManagerEvents,
   watchManagerEventTemplates,
   watchManagerPendingRoleInvites,
@@ -99,6 +102,7 @@ export default function EventsScreen() {
   const [templateDefaultDescriptionDraft, setTemplateDefaultDescriptionDraft] = useState('');
   const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
   const [templateTaskOffsetDrafts, setTemplateTaskOffsetDrafts] = useState<Record<string, string>>({});
+  const [templateAttachmentBusyKey, setTemplateAttachmentBusyKey] = useState<string | null>(null);
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
@@ -679,17 +683,77 @@ export default function EventsScreen() {
     }));
   };
 
-  const parseTemplateTaskAttachments = (value: string) => {
-    return value
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((url, index) => ({
-        id: `attachment-${Date.now()}-${index + 1}`,
-        name: `Attachment ${index + 1}`,
-        url,
-        kind: /\.(png|jpg|jpeg|gif|webp|heic|heif)(\?.*)?$/i.test(url) ? 'photo' as const : 'document' as const,
+  const addTemplateTaskAttachment = async (roleId: string, taskId: string, kind: 'photo' | 'document') => {
+    if (!profile?.uid) return;
+    const busyKey = `${roleId}:${taskId}:${kind}`;
+    if (templateAttachmentBusyKey) return;
+
+    try {
+      let selected: { uri: string; name: string; mimeType?: string } | null = null;
+
+      if (kind === 'photo') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permission required', 'Photo library permission is required to attach images.');
+          return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: false, quality: 0.85 });
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        selected = {
+          uri: asset.uri,
+          name: asset.fileName || `photo-${Date.now()}.jpg`,
+          mimeType: asset.mimeType,
+        };
+      } else {
+        const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        selected = {
+          uri: asset.uri,
+          name: asset.name || `document-${Date.now()}`,
+          mimeType: asset.mimeType,
+        };
+      }
+
+      if (!selected) return;
+      setTemplateAttachmentBusyKey(busyKey);
+      const uploaded = await uploadTemplateTaskAttachment({
+        managerId: profile.uid,
+        taskId,
+        uri: selected.uri,
+        kind,
+        name: selected.name,
+        mimeType: selected.mimeType,
+      });
+
+      setTemplateRolesDraft((prev) => prev.map((role) => {
+        if (role.id !== roleId) return role;
+        return {
+          ...role,
+          tasks: role.tasks.map((task) => task.id === taskId
+            ? { ...task, attachments: [...(task.attachments || []), uploaded] }
+            : task),
+        };
       }));
+    } catch (error) {
+      Alert.alert('Attachment error', error instanceof Error ? error.message : 'Unable to attach file.');
+    } finally {
+      setTemplateAttachmentBusyKey(null);
+    }
+  };
+
+  const removeTemplateTaskAttachment = (roleId: string, taskId: string, attachmentId: string) => {
+    setTemplateRolesDraft((prev) => prev.map((role) => {
+      if (role.id !== roleId) return role;
+      return {
+        ...role,
+        tasks: role.tasks.map((task) => task.id === taskId
+          ? { ...task, attachments: (task.attachments || []).filter((attachment) => attachment.id !== attachmentId) }
+          : task),
+      };
+    }));
   };
 
   const removeTemplateTaskDraft = (roleId: string, taskId: string) => {
@@ -1824,13 +1888,41 @@ export default function EventsScreen() {
                           multiline
                           style={[styles.templateTextArea, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                         />
-                        <TextInput
-                          value={(task.attachments || []).map((attachment) => attachment.url).join(', ')}
-                          onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { attachments: parseTemplateTaskAttachments(value) })}
-                          placeholder="Photo/document URLs (comma separated)"
-                          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-                          style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
-                        />
+                        <View style={styles.templateTaskAttachmentSection}>
+                          <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>Attachments</Text>
+                          <View style={styles.templateTaskAttachmentButtons}>
+                            <Pressable
+                              style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight, templateAttachmentBusyKey && styles.templateActionButtonDisabled]}
+                              disabled={!!templateAttachmentBusyKey}
+                              onPress={() => addTemplateTaskAttachment(role.id, task.id, 'photo')}>
+                              <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>
+                                + Photo
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight, templateAttachmentBusyKey && styles.templateActionButtonDisabled]}
+                              disabled={!!templateAttachmentBusyKey}
+                              onPress={() => addTemplateTaskAttachment(role.id, task.id, 'document')}>
+                              <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>
+                                + Document
+                              </Text>
+                            </Pressable>
+                          </View>
+                          {(task.attachments || []).length ? (
+                            <View style={styles.templateAttachmentList}>
+                              {(task.attachments || []).map((attachment) => (
+                                <View key={attachment.id} style={[styles.templateAttachmentItem, isDarkMode ? styles.templateTaskRowDark : styles.templateTaskRowLight]}>
+                                  <Text style={[styles.templateAttachmentName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]} numberOfLines={1}>
+                                    {attachment.kind === 'photo' ? '🖼️' : '📄'} {attachment.name}
+                                  </Text>
+                                  <Pressable onPress={() => removeTemplateTaskAttachment(role.id, task.id, attachment.id)}>
+                                    <Text style={[styles.templateDeleteButtonTextLight, isDarkMode && styles.templateDeleteButtonTextDark]}>Remove</Text>
+                                  </Pressable>
+                                </View>
+                              ))}
+                            </View>
+                          ) : null}
+                        </View>
                         <TextInput
                           value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes)}
                           onChangeText={(value) => {
@@ -2036,6 +2128,11 @@ const styles = StyleSheet.create({
   templateTaskRowLight: { borderColor: '#cbd5e1', backgroundColor: '#ffffff' },
   templateTaskRowDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateTaskLabel: { fontSize: 12, fontWeight: '700' },
+  templateTaskAttachmentSection: { gap: 6 },
+  templateTaskAttachmentButtons: { flexDirection: 'row', gap: 8 },
+  templateAttachmentList: { gap: 6 },
+  templateAttachmentItem: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  templateAttachmentName: { flex: 1, fontSize: 12, fontWeight: '600' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   keyboardAvoidingFill: { width: '100%', flex: 1, justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
