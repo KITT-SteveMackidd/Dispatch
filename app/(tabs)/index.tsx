@@ -744,6 +744,38 @@ export default function EventsScreen() {
     return { event, role };
   };
 
+  const openTaskAttachment = (taskName: string, attachments?: Array<{ id: string; name: string; url: string; kind: 'photo' | 'document' }>) => {
+    const validAttachments = (attachments || []).filter((item) => item?.url?.trim());
+    if (!validAttachments.length) return;
+
+    const openUrl = async (url: string) => {
+      try {
+        await Linking.openURL(url);
+      } catch {
+        Alert.alert('Unable to open attachment', 'Please check the attachment URL and try again.');
+      }
+    };
+
+    if (validAttachments.length === 1) {
+      openUrl(validAttachments[0].url);
+      return;
+    }
+
+    Alert.alert(
+      `${taskName} attachments`,
+      'Choose an attachment to open.',
+      [
+        ...validAttachments.slice(0, 3).map((attachment) => ({
+          text: `${attachment.kind === 'photo' ? '🖼️' : '📄'} ${attachment.name || 'Attachment'}`,
+          onPress: () => {
+            openUrl(attachment.url);
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
   const renderWorkerTaskList = (event: DispatchEvent) => {
     if (!profile) return null;
 
@@ -756,6 +788,7 @@ export default function EventsScreen() {
           taskName: task.name,
           expectedOffsetMinutes: task.expectedOffsetMinutes,
           optional: !!task.optional,
+          attachments: task.attachments || [],
           doneByMe: (task.completedBy ?? []).includes(profile.uid),
         }))
       );
@@ -769,6 +802,11 @@ export default function EventsScreen() {
         {workerTasks.map((task) => (
           <View key={task.id} style={styles.taskRow}>
             <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.taskName} · due {formatTaskDueTime(event, { id: task.id, name: task.taskName, expectedOffsetMinutes: task.expectedOffsetMinutes, optional: task.optional })}{task.optional ? ' (optional)' : ''}</Text>
+            {task.attachments?.length ? (
+              <Pressable onPress={() => openTaskAttachment(task.taskName, task.attachments)} hitSlop={6}>
+                <Text style={styles.taskAttachmentIcon}>📎</Text>
+              </Pressable>
+            ) : null}
             <Text style={[styles.taskStatus, isDarkMode ? styles.metaDark : styles.metaLight, task.doneByMe && styles.taskStatusDone]}>{task.doneByMe ? 'Done' : task.roleName}</Text>
           </View>
         ))}
@@ -880,6 +918,11 @@ export default function EventsScreen() {
             {role.tasks.map((task) => (
               <View key={task.id} style={styles.taskRow}>
                 <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name} · due {formatTaskDueTime(event, task)}{task.optional ? ' (optional)' : ''}</Text>
+                {task.attachments?.length ? (
+                  <Pressable onPress={() => openTaskAttachment(task.name, task.attachments)} hitSlop={6}>
+                    <Text style={styles.taskAttachmentIcon}>📎</Text>
+                  </Pressable>
+                ) : null}
               </View>
             ))}
           </View>
@@ -1923,6 +1966,7 @@ const styles = StyleSheet.create({
   taskName: { flex: 1, fontSize: 13 },
   taskNameLight: { color: '#232832' },
   taskNameDark: { color: '#F4F8FF' },
+  taskAttachmentIcon: { fontSize: 16, marginLeft: 8 },
   taskStatus: { fontSize: 12, fontWeight: '600' },
   taskStatusDone: { color: '#22c55e' },
   taskEmpty: { marginTop: 8, fontSize: 12 },

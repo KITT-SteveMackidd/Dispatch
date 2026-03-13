@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
@@ -441,6 +441,38 @@ export default function TodayScreen() {
     }
   };
 
+  const openTaskAttachment = (taskName: string, task: EventTask) => {
+    const validAttachments = (task.attachments || []).filter((item) => item?.url?.trim());
+    if (!validAttachments.length) return;
+
+    const openUrl = async (url: string) => {
+      try {
+        await Linking.openURL(url);
+      } catch {
+        Alert.alert('Unable to open attachment', 'Please check the attachment URL and try again.');
+      }
+    };
+
+    if (validAttachments.length === 1) {
+      openUrl(validAttachments[0].url);
+      return;
+    }
+
+    Alert.alert(
+      `${taskName} attachments`,
+      'Choose an attachment to open.',
+      [
+        ...validAttachments.slice(0, 3).map((attachment) => ({
+          text: `${attachment.kind === 'photo' ? '🖼️' : '📄'} ${attachment.name || 'Attachment'}`,
+          onPress: () => {
+            openUrl(attachment.url);
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
   const renderWorkerChecklist = (event: DispatchEvent) => {
     if (profile?.role !== 'worker') return null;
 
@@ -469,10 +501,17 @@ export default function TodayScreen() {
                 {isComplete ? <Text style={styles.checkboxMark}>✓</Text> : null}
               </Pressable>
               <View style={styles.checklistContent}>
-                <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>
-                  {item.task.name} · due {formatTaskDueTime(event, item.task)}
-                  {item.task.optional ? ' (optional)' : ''}
-                </Text>
+                <View style={styles.checklistTaskRow}>
+                  <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>
+                    {item.task.name} · due {formatTaskDueTime(event, item.task)}
+                    {item.task.optional ? ' (optional)' : ''}
+                  </Text>
+                  {item.task.attachments?.length ? (
+                    <Pressable onPress={() => openTaskAttachment(item.task.name, item.task)} hitSlop={6}>
+                      <Text style={styles.taskAttachmentIcon}>📎</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
                 <Text style={styles.checklistMeta}>Role: {item.roleName}</Text>
                 <Text style={styles.checklistMeta}>Assigned to you</Text>
                 <Text style={styles.checklistMeta}>
@@ -793,8 +832,10 @@ const styles = StyleSheet.create({
   checkboxSaving: { opacity: 0.65 },
   checkboxMark: { color: '#15803d', fontWeight: '800', fontSize: 12 },
   checklistContent: { flex: 1 },
-  checklistTask: { color: '#232832', fontWeight: '600', fontSize: 14 },
+  checklistTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  checklistTask: { color: '#232832', fontWeight: '600', fontSize: 14, flex: 1 },
   checklistTaskComplete: { color: '#166534', textDecorationLine: 'line-through' },
+  taskAttachmentIcon: { fontSize: 16 },
   checklistMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
   emptyChecklist: { color: '#64748b', marginTop: 10, fontSize: 13 },
 });
