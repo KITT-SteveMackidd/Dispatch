@@ -4,7 +4,7 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { saveUserPushToken, watchIncomingChatThreadHeads, watchUserNotifications } from '@/services/dispatch';
+import { saveUserPushToken, watchIncomingChatThreadHeads, watchUserNotifications, watchWorkerRoleAssignmentNotifications } from '@/services/dispatch';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
 
 Notifications.setNotificationHandler({
@@ -68,6 +68,7 @@ export function usePushNotificationBridge() {
   const { profile } = useSession();
   const seenChatUpdateRef = useRef<Record<string, number>>({});
   const seenUserNotificationIdsRef = useRef<Set<string>>(new Set());
+  const seenRoleNotificationIdsRef = useRef<Set<string>>(new Set());
 
   useNotificationRouting(profile?.uid);
 
@@ -146,9 +147,34 @@ export function usePushNotificationBridge() {
       });
     });
 
+    const unsubRoleAssignmentNotifications = watchWorkerRoleAssignmentNotifications(profile.uid, (items) => {
+      items.forEach((item) => {
+        if (seenRoleNotificationIdsRef.current.has(item.id)) return;
+        seenRoleNotificationIdsRef.current.add(item.id);
+
+        const roleLabel = item.roleName?.trim() || 'assigned role';
+        const actionLabel = item.action === 'assign' ? 'New role invite' : 'Role update';
+        const body = item.statusReason?.trim()
+          || `${item.eventName || 'Event'}: ${item.action === 'assign' ? `You were invited to ${roleLabel}.` : `You were removed from ${roleLabel}.`}`;
+
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: actionLabel,
+            body,
+            data: {
+              kind: 'user_notification',
+              relatedEventId: item.eventId,
+            } satisfies NotificationRouteData,
+          },
+          trigger: null,
+        }).catch(() => undefined);
+      });
+    });
+
     return () => {
       unsubChats();
       unsubUserNotifications();
+      unsubRoleAssignmentNotifications();
     };
   }, [profile?.uid]);
 }
