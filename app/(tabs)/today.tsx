@@ -441,36 +441,12 @@ export default function TodayScreen() {
     }
   };
 
-  const openTaskAttachment = (taskName: string, task: EventTask) => {
-    const validAttachments = (task.attachments || []).filter((item) => item?.url?.trim());
-    if (!validAttachments.length) return;
-
-    const openUrl = async (url: string) => {
-      try {
-        await Linking.openURL(url);
-      } catch {
-        Alert.alert('Unable to open attachment', 'Please check the attachment URL and try again.');
-      }
-    };
-
-    if (validAttachments.length === 1) {
-      openUrl(validAttachments[0].url);
-      return;
+  const openAttachmentUrl = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Unable to open attachment', 'Please check the attachment URL and try again.');
     }
-
-    Alert.alert(
-      `${taskName} attachments`,
-      'Choose an attachment to open.',
-      [
-        ...validAttachments.slice(0, 3).map((attachment) => ({
-          text: `${attachment.kind === 'photo' ? '🖼️' : '📄'} ${attachment.name || 'Attachment'}`,
-          onPress: () => {
-            openUrl(attachment.url);
-          },
-        })),
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
   };
 
   const renderWorkerChecklist = (event: DispatchEvent) => {
@@ -507,23 +483,33 @@ export default function TodayScreen() {
                     {item.task.optional ? ' (optional)' : ''}
                   </Text>
                   {item.task.attachments?.length ? (
-                    <Pressable onPress={() => openTaskAttachment(item.task.name, item.task)} hitSlop={6}>
-                      <Text style={styles.taskAttachmentIcon}>📎</Text>
-                    </Pressable>
+                    <View style={styles.taskAttachmentRow}>
+                      {item.task.attachments
+                        .filter((attachment) => attachment?.url?.trim())
+                        .map((attachment) => (
+                          <Pressable
+                            key={attachment.id}
+                            onPress={() => openAttachmentUrl(attachment.url)}
+                            hitSlop={6}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Open ${attachment.kind === 'photo' ? 'photo' : 'document'} attachment`}
+                          >
+                            <Text style={styles.taskAttachmentIcon}>{attachment.kind === 'photo' ? '🖼️' : '📄'}</Text>
+                          </Pressable>
+                        ))}
+                    </View>
                   ) : null}
                 </View>
+                {!!item.task.description?.trim() ? <Text style={styles.checklistDescription}>{item.task.description.trim()}</Text> : null}
                 <Text style={styles.checklistMeta}>Role: {item.roleName}</Text>
-                <Text style={styles.checklistMeta}>Assigned to you</Text>
                 <Text style={styles.checklistMeta}>
                   {item.completedByMe
                     ? 'Completed by you'
                     : item.completedCount > 0
                       ? `Completed by ${item.completedCount} worker${item.completedCount > 1 ? 's' : ''}`
-                      : 'Not completed yet'}
+                      : 'In progress'}
                 </Text>
-                {item.assignedToMe ? (
-                  <Text style={styles.checklistMeta}>{isSaving ? 'Saving…' : isComplete ? 'Tap to uncheck' : 'Tap to check off'}</Text>
-                ) : null}
+                {isSaving ? <Text style={styles.checklistMeta}>Saving…</Text> : null}
                 {Number.isFinite(getTaskDueAtMs(event, item.task)) ? (
                   <Text style={styles.checklistMeta}>
                     Due {new Date(getTaskDueAtMs(event, item.task)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
@@ -835,7 +821,9 @@ const styles = StyleSheet.create({
   checklistTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checklistTask: { color: '#232832', fontWeight: '600', fontSize: 14, flex: 1 },
   checklistTaskComplete: { color: '#166534', textDecorationLine: 'line-through' },
+  taskAttachmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   taskAttachmentIcon: { fontSize: 16 },
+  checklistDescription: { color: '#475569', fontSize: 12, marginTop: 3 },
   checklistMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
   emptyChecklist: { color: '#64748b', marginTop: 10, fontSize: 13 },
 });
