@@ -60,6 +60,10 @@ export type RoleAssignmentNotification = {
   eventId: string;
   roleId: string;
   eventName?: string;
+  eventLocation?: string;
+  eventStartsAt?: string;
+  roleName?: string;
+  roleTaskNames?: string[];
   action: 'assign' | 'remove';
   status: 'pending' | 'accepted' | 'declined';
   statusReason?: string;
@@ -859,7 +863,7 @@ export async function inviteWorkerByEmailToTeam(params: {
   email: string;
   managerName?: string;
 }) {
-  const { managerId, teamId, managerName } = params;
+  const { managerId, teamId } = params;
   const normalizedEmail = normalizeEmail(params.email);
   if (!normalizedEmail) throw new Error('Worker email is required');
   if (!isValidEmail(normalizedEmail)) throw new Error('Enter a valid email address');
@@ -903,27 +907,51 @@ export async function inviteWorkerByEmailToTeam(params: {
     }
   });
 
-  await addDoc(collection(db, 'workerInvites'), {
+  const appLink = getInviteAppLink();
+  const teamSnap = await getDoc(doc(db, 'teams', teamId));
+  const teamName = teamSnap.exists() ? ((teamSnap.data() as Omit<Team, 'id'>).name || 'Dispatch Team') : 'Dispatch Team';
+
+  const inviteRef = await addDoc(collection(db, 'workerInvites'), {
     managerId,
     teamId,
+    teamName,
+    appLink,
     email: normalizedEmail,
     workerId: foundWorkerId || null,
     status: foundWorkerId ? 'linked' : 'pending',
+    statusReason: foundWorkerId
+      ? 'Worker account already exists and was linked to team immediately.'
+      : 'Pending account creation/login acceptance.',
     createdAt: serverTimestamp(),
   });
 
-  const appLink = getInviteAppLink();
-  const inviterLabel = managerName?.trim() || 'A Dispatch manager';
+  try {
+    const delivery = await sendInviteEmail({
+      email: normalizedEmail,
+      teamName,
+      appLink,
+      inviteId: inviteRef.id,
+      managerId,
+      teamId,
+    });
 
-  await addDoc(collection(db, 'mail'), {
-    to: [normalizedEmail],
-    message: {
-      subject: `${inviterLabel} invited you to Dispatch`,
-      text: `${inviterLabel} invited you to join Dispatch. Download the app and sign in with this email to get connected automatically: ${appLink}`,
-      html: `<p>${inviterLabel} invited you to join Dispatch.</p><p>Download the app and sign in with this email to get connected automatically.</p><p><a href="${appLink}">Open Dispatch app link</a></p>`,
-    },
-    createdAt: serverTimestamp(),
-  });
+    await updateDoc(inviteRef, {
+      status: foundWorkerId ? 'linked' : delivery.status,
+      statusReason: foundWorkerId
+        ? 'Worker linked immediately; invite email also delivered.'
+        : delivery.reason,
+      sentAt: serverTimestamp(),
+      emailDelivery: delivery.via,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Invite email transport failed';
+    await updateDoc(inviteRef, {
+      status: 'send_failed',
+      statusReason: `Invite saved but delivery failed: ${reason}`,
+      deliveryErrorAt: serverTimestamp(),
+    });
+    throw new Error(`Invite saved, but delivery failed: ${reason}`);
+  }
 
   return { linked: !!foundWorkerId };
 }
@@ -1059,6 +1087,10 @@ export async function updateEventRoleAssignment(params: {
       eventId,
       roleId,
       eventName: event.name,
+      eventLocation: event.location || '',
+      eventStartsAt: event.startsAt || '',
+      roleName: role.name,
+      roleTaskNames: (role.tasks || []).map((task) => task.name).filter(Boolean),
       action,
       status: 'pending',
       statusReason:
