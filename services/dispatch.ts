@@ -94,6 +94,7 @@ export type WorkerInvite = {
   statusReason?: string;
   createdAt?: { toDate?: () => Date } | Date | null;
   sentAt?: { toDate?: () => Date } | Date | null;
+  managerClearedAt?: { toDate?: () => Date } | Date | null;
 };
 
 export type CreateEventRoleInput = {
@@ -551,6 +552,7 @@ export function watchManagerWorkerInvites(managerId: string, cb: (items: WorkerI
   return onSnapshot(q, (snap) => {
     const items = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as Omit<WorkerInvite, 'id'>) }))
+      .filter((invite) => !invite.managerClearedAt)
       .sort((a, b) => {
         const aTime = a.createdAt && 'toDate' in a.createdAt && typeof a.createdAt.toDate === 'function' ? a.createdAt.toDate().getTime() : 0;
         const bTime = b.createdAt && 'toDate' in b.createdAt && typeof b.createdAt.toDate === 'function' ? b.createdAt.toDate().getTime() : 0;

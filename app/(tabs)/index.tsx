@@ -102,6 +102,10 @@ export default function EventsScreen() {
     id: string;
     action: 'assign' | 'remove';
     eventName?: string;
+    eventLocation?: string;
+    eventStartsAt?: string;
+    roleName?: string;
+    roleTaskNames?: string[];
     roleId: string;
   }>>([]);
   const [pendingInviteWorkerIdsByRoleKey, setPendingInviteWorkerIdsByRoleKey] = useState<Record<string, string[]>>({});
@@ -152,6 +156,15 @@ export default function EventsScreen() {
     const dueAtMs = getTaskDueAtMs(event, task);
     if (!Number.isFinite(dueAtMs)) return 'TBD';
     return new Date(dueAtMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+
+  const formatNotificationStartsAt = (startsAt?: string) => {
+    if (!startsAt) return 'TBD';
+    const parsed = new Date(startsAt);
+    if (Number.isNaN(parsed.getTime())) return 'TBD';
+    const date = parsed.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const time = parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${date} • ${time}`;
   };
 
   const parseEventStartDraftMs = () => {
@@ -225,6 +238,10 @@ export default function EventsScreen() {
         id: item.id,
         action: item.action,
         eventName: item.eventName,
+        eventLocation: item.eventLocation,
+        eventStartsAt: item.eventStartsAt,
+        roleName: item.roleName,
+        roleTaskNames: item.roleTaskNames,
         roleId: item.roleId,
       })));
     });
@@ -1034,6 +1051,18 @@ export default function EventsScreen() {
                 <Text style={[styles.pendingNotificationText, isDarkMode ? styles.metaDark : styles.metaLight]}>
                   {notification.eventName || 'Event'} · {notification.action === 'assign' ? 'Assigned to role' : 'Removed from role'}
                 </Text>
+                <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                  Location: {notification.eventLocation?.trim() || 'TBD'}
+                </Text>
+                <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                  Time: {formatNotificationStartsAt(notification.eventStartsAt)}
+                </Text>
+                <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                  Role: {notification.roleName?.trim() || 'TBD'}
+                </Text>
+                <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                  Tasks: {notification.roleTaskNames?.length ? notification.roleTaskNames.join(', ') : 'No tasks listed'}
+                </Text>
                 <View style={styles.pendingNotificationActions}>
                   <Pressable
                     disabled={busy}
@@ -1680,7 +1709,8 @@ const styles = StyleSheet.create({
   pendingNotificationsTitleLight: { color: '#1e3a8a' },
   pendingNotificationsTitleDark: { color: '#F4F8FF' },
   pendingNotificationRow: { gap: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#334155' },
-  pendingNotificationText: { fontSize: 12 },
+  pendingNotificationText: { fontSize: 12, fontWeight: '600' },
+  pendingNotificationDetail: { fontSize: 12 },
   pendingNotificationActions: { flexDirection: 'row', gap: 8 },
   pendingActionButton: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   pendingActionButtonText: { fontSize: 13, fontWeight: '700' },
