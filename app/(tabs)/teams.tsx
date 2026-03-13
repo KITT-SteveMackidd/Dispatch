@@ -34,7 +34,7 @@ export default function TeamsScreen() {
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('add-team');
   const [teamName, setTeamName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteTeamId, setInviteTeamId] = useState('');
+  const [inviteTeamId, setInviteTeamId] = useState<'solo' | string>('solo');
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
   const [drawerMessageTone, setDrawerMessageTone] = useState<'info' | 'success' | 'error'>('info');
@@ -62,7 +62,10 @@ export default function TeamsScreen() {
   }, [profile]);
 
   useEffect(() => {
-    if (!inviteTeamId && teams.length) setInviteTeamId(teams[0].id);
+    if (inviteTeamId === 'solo') return;
+    if (!teams.some((team) => team.id === inviteTeamId)) {
+      setInviteTeamId(teams[0]?.id || 'solo');
+    }
   }, [teams, inviteTeamId]);
 
   useEffect(() => {
@@ -95,7 +98,10 @@ export default function TeamsScreen() {
       return;
     }
 
-    const ids = [...new Set(teams.flatMap((team) => [team.managerId, ...team.workerIds]).filter((id) => id && id !== profile.uid))];
+    const ids = [...new Set([
+      ...teams.flatMap((team) => [team.managerId, ...team.workerIds]),
+      ...invites.map((invite) => invite.workerId).filter(Boolean) as string[],
+    ].filter((id) => id && id !== profile.uid))];
 
     if (!ids.length) {
       setMemberInfoById({});
@@ -123,7 +129,7 @@ export default function TeamsScreen() {
     return () => {
       active = false;
     };
-  }, [teams, profile]);
+  }, [invites, teams, profile]);
 
   const eventCountsByTeam = useMemo(() => {
     const counts = new Map<string, number>();
@@ -140,9 +146,31 @@ export default function TeamsScreen() {
     [invites]
   );
 
+  const soloWorkerIds = useMemo(() => {
+    const teamWorkerIds = new Set(teams.flatMap((team) => team.workerIds || []));
+    return [...new Set(
+      invites
+        .filter((invite) => invite.workerId && !invite.teamId)
+        .map((invite) => invite.workerId as string)
+        .filter((workerId) => !teamWorkerIds.has(workerId))
+    )];
+  }, [invites, teams]);
+
   const getOtherMemberIds = (team: Team) => {
     if (!profile) return [];
     return [...new Set([team.managerId, ...team.workerIds].filter((memberId) => memberId && memberId !== profile.uid))];
+  };
+
+  const openDirectChat = (workerId: string, team?: Team) => {
+    router.push({
+      pathname: '/chat/[workerId]',
+      params: {
+        workerId,
+        workerLabel: memberInfoById[workerId]?.displayName || workerId,
+        teamId: team?.id,
+        teamName: team?.name,
+      },
+    });
   };
 
   const handleTeamPress = (team: Team) => {
@@ -152,16 +180,7 @@ export default function TeamsScreen() {
     if (!otherMemberIds.length) return;
 
     if (otherMemberIds.length === 1) {
-      const memberId = otherMemberIds[0];
-      router.push({
-        pathname: '/chat/[workerId]',
-        params: {
-          workerId: memberId,
-          workerLabel: memberInfoById[memberId]?.displayName || memberId,
-          teamId: team.id,
-          teamName: team.name,
-        },
-      });
+      openDirectChat(otherMemberIds[0], team);
       return;
     }
 
@@ -207,17 +226,13 @@ export default function TeamsScreen() {
         setDrawerMessageTone('success');
         setDrawerMessage('Team created.');
       } else {
-        if (!inviteTeamId) {
-          setDrawerMessageTone('error');
-          setDrawerMessage('Choose a team first.');
-          return;
-        }
-        const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId: inviteTeamId, email: inviteEmail });
+        const teamId = inviteTeamId === 'solo' ? undefined : inviteTeamId;
+        const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId, email: inviteEmail });
         setInviteEmail('');
         setDrawerMessageTone('success');
         setDrawerMessage(
           result.linked
-            ? 'Worker account found and linked to the team.'
+            ? (teamId ? 'Worker account found and linked to the team.' : 'Worker account found and linked as a solo worker.')
             : 'Invite sent. Worker will link automatically after they sign in with this email.'
         );
       }
@@ -333,6 +348,22 @@ export default function TeamsScreen() {
         </View>
       ) : null}
 
+      {soloWorkerIds.length ? (
+        <View style={[styles.soloSection, isDarkMode ? styles.soloSectionDark : styles.soloSectionLight]}>
+          <Text style={[styles.soloSectionTitle, isDarkMode ? styles.titleDark : styles.titleLight]}>Solo Workers</Text>
+          {soloWorkerIds.map((workerId) => (
+            <Pressable key={`solo-${workerId}`} style={[styles.soloWorkerRow, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => openDirectChat(workerId)}>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{(memberInfoById[workerId]?.displayName || workerId).slice(0, 1).toUpperCase()}</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{memberInfoById[workerId]?.displayName || workerId}</Text>
+                <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Not assigned to a team</Text>
+              </View>
+              <Text style={[styles.hint, isDarkMode ? styles.hintDark : styles.hintLight]}>Open chat</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       <FlatList
         data={teams}
         keyExtractor={(i) => i.id}
@@ -387,19 +418,22 @@ export default function TeamsScreen() {
               </>
             ) : (
               <>
-                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Choose team</Text>
+                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Choose team (or solo)</Text>
                 <View style={styles.teamChipWrap}>
+                  <Pressable key="solo" style={[styles.teamChip, isDarkMode ? styles.teamChipDark : styles.teamChipLight, inviteTeamId === 'solo' && styles.teamChipActive]} onPress={() => setInviteTeamId('solo')}>
+                    <Text style={[styles.teamChipText, isDarkMode ? styles.teamChipTextDark : styles.teamChipTextLight, inviteTeamId === 'solo' && styles.teamChipTextActive]}>Solo worker</Text>
+                  </Pressable>
                   {teams.length ? teams.map((team) => (
                     <Pressable key={team.id} style={[styles.teamChip, isDarkMode ? styles.teamChipDark : styles.teamChipLight, inviteTeamId === team.id && styles.teamChipActive]} onPress={() => setInviteTeamId(team.id)}>
                       <Text style={[styles.teamChipText, isDarkMode ? styles.teamChipTextDark : styles.teamChipTextLight, inviteTeamId === team.id && styles.teamChipTextActive]}>{team.name}</Text>
                     </Pressable>
-                  )) : <Text style={styles.emptyHint}>Create a team first.</Text>}
+                  )) : <Text style={styles.emptyHint}>No teams yet. You can still invite as solo.</Text>}
                 </View>
 
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
                 <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
                 <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
-                  Invite keeps this worker unlinked until they sign in with that email.
+                  Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.
                 </Text>
               </>
             )}
@@ -468,6 +502,11 @@ const styles = StyleSheet.create({
   clearAllButtonText: { color: '#1d4ed8', fontSize: 12, fontWeight: '700' },
   inviteStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: '#93c5fd', paddingTop: 8 },
   inviteStatusActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  soloSection: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
+  soloSectionLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
+  soloSectionDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  soloSectionTitle: { fontWeight: '700', fontSize: 13 },
+  soloWorkerRow: { borderRadius: 10, borderWidth: 1, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
   inviteEmail: { fontWeight: '600', fontSize: 13 },
   inviteMeta: { marginTop: 2, fontSize: 11 },
   retryButton: { borderRadius: 8, backgroundColor: '#1d4ed8', paddingHorizontal: 10, paddingVertical: 6 },
