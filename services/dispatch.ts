@@ -19,8 +19,9 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
+import { sendSignInLinkToEmail } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase';
+import { auth, db, storage } from '@/lib/firebase';
 import { DispatchEvent, EventRole, EventTemplate, EventTemplateRole, Team, UserProfile } from '@/types/dispatch';
 
 export type TeamUnreadCount = {
@@ -715,7 +716,11 @@ async function sendInviteEmail(params: {
   inviteId: string;
   managerId: string;
   teamId: string;
-}): Promise<{ status: 'sent' | 'queued'; reason: string; via: 'http-endpoint' | 'firebase-mail-collection' }> {
+}): Promise<{
+  status: 'sent' | 'queued';
+  reason: string;
+  via: 'http-endpoint' | 'firebase-auth-email-link' | 'firebase-mail-collection';
+}> {
   const endpoint = (process.env.EXPO_PUBLIC_INVITE_EMAIL_ENDPOINT || '').trim();
 
   if (endpoint) {
@@ -747,6 +752,24 @@ async function sendInviteEmail(params: {
       reason: 'Invite email delivered through configured HTTP endpoint.',
       via: 'http-endpoint',
     };
+  }
+
+  const fallbackUrl = (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || params.appLink;
+  if (/^https?:\/\//i.test(fallbackUrl)) {
+    try {
+      await sendSignInLinkToEmail(auth, params.email, {
+        url: fallbackUrl,
+        handleCodeInApp: true,
+      });
+
+      return {
+        status: 'sent',
+        reason: 'Invite email sent immediately via Firebase Auth email-link delivery.',
+        via: 'firebase-auth-email-link',
+      };
+    } catch (error) {
+      console.warn('Firebase Auth invite email-link delivery failed, falling back to mail queue.', error);
+    }
   }
 
   const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
