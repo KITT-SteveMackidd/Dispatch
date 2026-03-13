@@ -2,10 +2,14 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
+  GoogleAuthProvider,
+  OAuthProvider,
   createUserWithEmailAndPassword,
+  getAdditionalUserInfo,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   updateProfile,
@@ -21,6 +25,8 @@ type SessionContextType = {
   needsProfile: boolean;
   requiresEmailVerification: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: (params: { idToken: string; accessToken?: string; role?: AppRole }) => Promise<void>;
+  signInWithApple: (params: { idToken: string; displayName?: string; role?: AppRole }) => Promise<void>;
   signUp: (params: { email: string; password: string; displayName: string; role: AppRole }) => Promise<void>;
   saveProfile: (params: { displayName: string; role: AppRole }) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -89,6 +95,94 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email || email });
   };
 
+  const upsertProfile = async (params: { uid: string; displayName: string; role: AppRole; email?: string | null; merge?: boolean }) => {
+    await setDoc(
+      doc(db, 'users', params.uid),
+      {
+        uid: params.uid,
+        displayName: params.displayName,
+        role: params.role,
+        email: params.email || null,
+        updatedAt: serverTimestamp(),
+        ...(params.merge ? {} : { createdAt: serverTimestamp() }),
+      },
+      { merge: params.merge ?? true }
+    );
+
+    setProfile({ uid: params.uid, displayName: params.displayName, role: params.role });
+    setNeedsProfile(false);
+
+    if (params.email) {
+      await acceptPendingInvitesForUser({ userId: params.uid, email: params.email });
+    }
+  };
+
+  const signInWithGoogle = async (params: { idToken: string; accessToken?: string; role?: AppRole }) => {
+    const credential = GoogleAuthProvider.credential(params.idToken, params.accessToken);
+    const cred = await signInWithCredential(auth, credential);
+    const additional = getAdditionalUserInfo(cred);
+
+    const existing = await loadProfile(cred.user.uid);
+    if (!existing && params.role) {
+      await upsertProfile({
+        uid: cred.user.uid,
+        displayName: cred.user.displayName || 'Dispatch User',
+        role: params.role,
+        email: cred.user.email,
+        merge: false,
+      });
+      return;
+    }
+
+    if (cred.user.email) {
+      await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email });
+    }
+
+    if (existing) {
+      setProfile(existing);
+      setNeedsProfile(false);
+    } else {
+      setNeedsProfile(true);
+      if (additional?.isNewUser && !params.role) {
+        setProfile(null);
+      }
+    }
+  };
+
+  const signInWithApple = async (params: { idToken: string; displayName?: string; role?: AppRole }) => {
+    const provider = new OAuthProvider('apple.com');
+    const credential = provider.credential({ idToken: params.idToken });
+    const cred = await signInWithCredential(auth, credential);
+
+    if (params.displayName) {
+      await updateProfile(cred.user, { displayName: params.displayName });
+    }
+
+    const existing = await loadProfile(cred.user.uid);
+    if (!existing && params.role) {
+      await upsertProfile({
+        uid: cred.user.uid,
+        displayName: params.displayName || cred.user.displayName || 'Dispatch User',
+        role: params.role,
+        email: cred.user.email,
+        merge: false,
+      });
+      return;
+    }
+
+    if (cred.user.email) {
+      await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email });
+    }
+
+    if (existing) {
+      setProfile(existing);
+      setNeedsProfile(false);
+    } else {
+      setNeedsProfile(true);
+      setProfile(null);
+    }
+  };
+
   const signUp = async (params: { email: string; password: string; displayName: string; role: AppRole }) => {
     const normalizedEmail = params.email.trim();
     const trimmedName = params.displayName.trim();
@@ -97,19 +191,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await updateProfile(cred.user, { displayName: trimmedName });
     await sendEmailVerification(cred.user);
 
-    await setDoc(doc(db, 'users', cred.user.uid), {
+    await upsertProfile({
       uid: cred.user.uid,
       displayName: trimmedName,
       role: params.role,
       email: normalizedEmail,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      merge: false,
     });
-
-    await acceptPendingInvitesForUser({ userId: cred.user.uid, email: normalizedEmail });
-
-    setProfile({ uid: cred.user.uid, displayName: trimmedName, role: params.role });
-    setNeedsProfile(false);
   };
 
   const saveProfile = async (params: { displayName: string; role: AppRole }) => {
@@ -183,6 +271,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       needsProfile,
       requiresEmailVerification,
       signIn,
+      signInWithGoogle,
+      signInWithApple,
       signUp,
       saveProfile,
       sendPasswordReset,

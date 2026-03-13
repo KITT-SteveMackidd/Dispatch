@@ -7,11 +7,14 @@ import {
   inviteWorkerByEmailToTeam,
   loadUserProfilesByIds,
   loadWorkerTeams,
+  retryWorkerInviteDelivery,
   seedDemoData,
   watchManagerEvents,
   watchManagerTeams,
+  watchManagerWorkerInvites,
   watchUserTeamUnreadCounts,
   watchWorkerEvents,
+  WorkerInvite,
 } from '@/services/dispatch';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
@@ -36,6 +39,8 @@ export default function TeamsScreen() {
   const [drawerMessageTone, setDrawerMessageTone] = useState<'info' | 'success' | 'error'>('info');
   const [memberInfoById, setMemberInfoById] = useState<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>({});
   const [unreadCountByTeamId, setUnreadCountByTeamId] = useState<Record<string, number>>({});
+  const [invites, setInvites] = useState<WorkerInvite[]>([]);
+  const [retryingInviteId, setRetryingInviteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -56,6 +61,15 @@ export default function TeamsScreen() {
   useEffect(() => {
     if (!inviteTeamId && teams.length) setInviteTeamId(teams[0].id);
   }, [teams, inviteTeamId]);
+
+  useEffect(() => {
+    if (!profile || profile.role !== 'manager') {
+      setInvites([]);
+      return;
+    }
+
+    return watchManagerWorkerInvites(profile.uid, setInvites);
+  }, [profile]);
 
   useEffect(() => {
     if (!profile) {
@@ -207,6 +221,23 @@ export default function TeamsScreen() {
     }
   };
 
+  const handleRetryInvite = async (inviteId: string) => {
+    if (!profile || profile.role !== 'manager') return;
+    if (retryingInviteId === inviteId) return;
+
+    try {
+      setRetryingInviteId(inviteId);
+      await retryWorkerInviteDelivery({ managerId: profile.uid, inviteId });
+      setDrawerMessageTone('success');
+      setDrawerMessage('Invite retry sent successfully.');
+    } catch (error) {
+      setDrawerMessageTone('error');
+      setDrawerMessage(error instanceof Error ? error.message : 'Invite retry failed.');
+    } finally {
+      setRetryingInviteId(null);
+    }
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={styles.headerRow}>
@@ -217,6 +248,31 @@ export default function TeamsScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      {profile?.role === 'manager' && invites.length ? (
+        <View style={[styles.inviteStatusCard, isDarkMode ? styles.inviteStatusCardDark : styles.inviteStatusCardLight]}>
+          <Text style={[styles.inviteStatusTitle, isDarkMode ? styles.inviteStatusTitleDark : styles.inviteStatusTitleLight]}>Recent Worker Invites</Text>
+          {invites.slice(0, 5).map((invite) => {
+            const canRetry = invite.status === 'send_failed';
+            return (
+              <View key={invite.id} style={styles.inviteStatusRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.inviteEmail, isDarkMode ? styles.titleDark : styles.titleLight]}>{invite.email}</Text>
+                  <Text style={[styles.inviteMeta, isDarkMode ? styles.metaDark : styles.metaLight]}>{invite.status}{invite.statusReason ? ` · ${invite.statusReason}` : ''}</Text>
+                </View>
+                {canRetry ? (
+                  <Pressable
+                    style={[styles.retryButton, retryingInviteId === invite.id && styles.retryButtonDisabled]}
+                    disabled={retryingInviteId === invite.id}
+                    onPress={() => handleRetryInvite(invite.id)}>
+                    <Text style={styles.retryButtonText}>{retryingInviteId === invite.id ? 'Retrying…' : 'Retry'}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
 
       <FlatList
         data={teams}
@@ -342,6 +398,18 @@ const styles = StyleSheet.create({
   hintDark: { color: '#0EC3C9' },
   unreadBadge: { marginTop: 6, backgroundColor: '#dc2626', borderRadius: 999, minWidth: 20, paddingHorizontal: 6, height: 20, alignItems: 'center', justifyContent: 'center' },
   unreadBadgeText: { color: '#fff', fontWeight: '700', fontSize: 11 },
+  inviteStatusCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
+  inviteStatusCardLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
+  inviteStatusCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  inviteStatusTitle: { fontWeight: '700', fontSize: 13 },
+  inviteStatusTitleLight: { color: '#1e3a8a' },
+  inviteStatusTitleDark: { color: '#F4F8FF' },
+  inviteStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: '#93c5fd', paddingTop: 8 },
+  inviteEmail: { fontWeight: '600', fontSize: 13 },
+  inviteMeta: { marginTop: 2, fontSize: 11 },
+  retryButton: { borderRadius: 8, backgroundColor: '#1d4ed8', paddingHorizontal: 10, paddingVertical: 6 },
+  retryButtonDisabled: { opacity: 0.6 },
+  retryButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   addText: { color: 'white', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },

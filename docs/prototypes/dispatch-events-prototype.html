@@ -71,7 +71,7 @@
     }
 
     .light { background: #f5f8ff; color: #102145; }
-    .dark { background: #000f36; color: #edf4ff; }
+    .dark { background: var(--dark-screen-bg, #000f36); color: #edf4ff; }
 
     .top {
       padding: 22px 20px 12px;
@@ -107,7 +107,7 @@
     }
 
     .light .card { background: #ffffff; border-color: rgba(42, 61, 102, .12); }
-    .dark .card { background: #08215c; border-color: rgba(191, 208, 238, .16); }
+    .dark .card { background: var(--dark-card-bg, #08215c); border-color: rgba(191, 208, 238, .16); }
 
     .event-title { font-size: 16px; font-weight: 700; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
@@ -144,8 +144,8 @@
       font-size: 15px;
       font-weight: 700;
       color: white;
-      background: linear-gradient(135deg, var(--dispatch-orange-500) 0%, var(--dispatch-cyan-500) 55%, var(--dispatch-green-500) 100%);
-      box-shadow: 0 12px 28px rgba(6, 38, 96, .35);
+      background: var(--dispatch-cyan-500);
+      box-shadow: 0 12px 28px rgba(14, 195, 201, .38);
     }
 
     @media (max-width: 980px) {
@@ -228,7 +228,25 @@
     </section>
   </main>
   <script>
-    const mode = new URLSearchParams(window.location.search).get('mode');
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const variant = params.get('variant');
+
+    if (mode === 'dark' && variant) {
+      const darkVariants = {
+        '1': { screen: '#000f36', card: '#08215c' },
+        '2': { screen: '#101a2f', card: '#1a2540' },
+        '3': { screen: '#181b24', card: '#232832' },
+        '4': { screen: '#111111', card: '#1f1f1f' },
+        '5': { screen: '#000000', card: '#141414' }
+      };
+      const v = darkVariants[variant];
+      if (v) {
+        document.documentElement.style.setProperty('--dark-screen-bg', v.screen);
+        document.documentElement.style.setProperty('--dark-card-bg', v.card);
+      }
+    }
+
     if (mode === 'light' || mode === 'dark') {
       document.getElementById('palette').style.display = 'none';
       document.getElementById('boards').style.gridTemplateColumns = '1fr';
@@ -239,7 +257,8 @@
         if (id !== keep) document.getElementById(id).style.display = 'none';
       }
       document.body.style.padding = '24px';
-      document.body.style.background = mode === 'light' ? '#f3f7ff' : '#000f36';
+      const darkBody = getComputedStyle(document.documentElement).getPropertyValue('--dark-screen-bg').trim() || '#000f36';
+      document.body.style.background = mode === 'light' ? '#f3f7ff' : darkBody;
     }
   </script>
 </body>

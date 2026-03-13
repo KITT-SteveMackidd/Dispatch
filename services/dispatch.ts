@@ -19,7 +19,8 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { db, storage } from '@/lib/firebase';
 import { DispatchEvent, EventRole, EventTemplate, EventTemplateRole, Team, UserProfile } from '@/types/dispatch';
 
 export type TeamUnreadCount = {
@@ -27,10 +28,20 @@ export type TeamUnreadCount = {
   unreadCount: number;
 };
 
+export type ChatAttachment = {
+  id: string;
+  kind: 'image' | 'file' | 'audio';
+  name: string;
+  mimeType?: string;
+  size?: number;
+  url: string;
+};
+
 export type PersistedChatMessage = {
   id: string;
   senderId: string;
   text: string;
+  attachments?: ChatAttachment[];
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
@@ -66,6 +77,19 @@ export type UserNotification = {
   relatedTaskId?: string;
   read: boolean;
   createdAt?: { toDate?: () => Date } | Date | null;
+};
+
+export type WorkerInvite = {
+  id: string;
+  managerId: string;
+  teamId: string;
+  teamName?: string;
+  email: string;
+  workerId?: string | null;
+  status: 'pending' | 'queued' | 'sent' | 'send_failed' | 'accepted' | 'linked';
+  statusReason?: string;
+  createdAt?: { toDate?: () => Date } | Date | null;
+  sentAt?: { toDate?: () => Date } | Date | null;
 };
 
 export type CreateEventRoleInput = {
@@ -113,19 +137,52 @@ export function watchIncomingChatThreadHeads(userId: string, cb: (items: ChatThr
   });
 }
 
+export async function uploadChatAttachment(params: {
+  senderId: string;
+  threadId: string;
+  uri: string;
+  kind: 'image' | 'file' | 'audio';
+  name: string;
+  mimeType?: string;
+}) {
+  const response = await fetch(params.uri);
+  const blob = await response.blob();
+  const ext = params.name.includes('.') ? params.name.split('.').pop() : 'bin';
+  const safeExt = (ext || 'bin').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'bin';
+  const objectPath = `chatAttachments/${params.threadId}/${params.senderId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+  const objectRef = ref(storage, objectPath);
+
+  await uploadBytes(objectRef, blob, {
+    contentType: params.mimeType || blob.type || 'application/octet-stream',
+  });
+
+  const url = await getDownloadURL(objectRef);
+  return {
+    id: objectPath,
+    kind: params.kind,
+    name: params.name,
+    mimeType: params.mimeType || blob.type || undefined,
+    size: blob.size,
+    url,
+  } satisfies ChatAttachment;
+}
+
 export async function sendChatMessage(params: {
   threadId: string;
   teamId?: string;
   senderId: string;
   recipientIds: string[];
   text: string;
+  attachments?: ChatAttachment[];
 }) {
   const text = params.text.trim();
-  if (!text) return;
+  const attachments = params.attachments || [];
+  if (!text && !attachments.length) return;
 
   await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
     senderId: params.senderId,
     text,
+    attachments,
     createdAt: serverTimestamp(),
   });
 
@@ -135,7 +192,7 @@ export async function sendChatMessage(params: {
       id: params.threadId,
       teamId: params.teamId || null,
       participants: [params.senderId, ...params.recipientIds],
-      lastMessageText: text,
+      lastMessageText: text || (attachments.length ? `Sent ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` : ''),
       lastMessageSenderId: params.senderId,
       updatedAt: serverTimestamp(),
     },
@@ -485,6 +542,39 @@ export function watchUserUnreadNotificationCount(userId: string, cb: (count: num
   return onSnapshot(q, (snap) => cb(snap.docs.length));
 }
 
+export function watchManagerWorkerInvites(managerId: string, cb: (items: WorkerInvite[]) => void) {
+  const q = query(collection(db, 'workerInvites'), where('managerId', '==', managerId));
+  return onSnapshot(q, (snap) => {
+    const items = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as Omit<WorkerInvite, 'id'>) }))
+      .sort((a, b) => {
+        const aTime = a.createdAt && 'toDate' in a.createdAt && typeof a.createdAt.toDate === 'function' ? a.createdAt.toDate().getTime() : 0;
+        const bTime = b.createdAt && 'toDate' in b.createdAt && typeof b.createdAt.toDate === 'function' ? b.createdAt.toDate().getTime() : 0;
+        return bTime - aTime;
+      });
+
+    cb(items);
+  });
+}
+
+export async function saveUserPushToken(params: {
+  userId: string;
+  token: string;
+  platform: 'ios' | 'android' | 'web' | 'unknown';
+  permissionStatus: 'granted' | 'denied' | 'undetermined';
+}) {
+  await setDoc(
+    doc(db, 'users', params.userId),
+    {
+      pushTokens: arrayUnion(params.token),
+      pushPermissionStatus: params.permissionStatus,
+      pushTokenUpdatedAt: serverTimestamp(),
+      pushPlatform: params.platform,
+    },
+    { merge: true }
+  );
+}
+
 export function watchUserNotifications(userId: string, cb: (items: UserNotification[]) => void) {
   const q = query(collection(db, 'userNotifications'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
   return onSnapshot(q, (snap) => {
@@ -677,6 +767,47 @@ async function sendInviteEmail(params: {
     reason: `Invite email queued in Firestore collection "${collectionName}" for delivery worker.`,
     via: 'firebase-mail-collection',
   };
+}
+
+export async function retryWorkerInviteDelivery(params: { managerId: string; inviteId: string }) {
+  const inviteRef = doc(db, 'workerInvites', params.inviteId);
+  const inviteSnap = await getDoc(inviteRef);
+  if (!inviteSnap.exists()) throw new Error('Invite not found');
+
+  const invite = inviteSnap.data() as Partial<WorkerInvite> & { appLink?: string };
+  if (invite.managerId !== params.managerId) throw new Error('You can only retry your own invites');
+  if (!invite.email || !invite.teamId) throw new Error('Invite data is incomplete for retry');
+
+  const teamSnap = await getDoc(doc(db, 'teams', invite.teamId));
+  const teamName = invite.teamName || (teamSnap.exists() ? (teamSnap.data() as Omit<Team, 'id'>).name : 'Dispatch Team');
+  const appLink = invite.appLink || (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatch.app/download';
+
+  try {
+    const delivery = await sendInviteEmail({
+      email: invite.email,
+      teamName,
+      appLink,
+      inviteId: params.inviteId,
+      managerId: params.managerId,
+      teamId: invite.teamId,
+    });
+
+    await updateDoc(inviteRef, {
+      status: delivery.status,
+      statusReason: `Retry successful: ${delivery.reason}`,
+      sentAt: serverTimestamp(),
+      emailDelivery: delivery.via,
+      retryAt: serverTimestamp(),
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Retry transport failed';
+    await updateDoc(inviteRef, {
+      status: 'send_failed',
+      statusReason: `Retry failed: ${reason}`,
+      retryAt: serverTimestamp(),
+    });
+    throw new Error(reason);
+  }
 }
 
 export async function acceptPendingInvitesForUser(params: { userId: string; email: string }) {

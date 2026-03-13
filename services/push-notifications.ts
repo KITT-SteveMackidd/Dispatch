@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { watchIncomingChatThreadHeads, watchUserNotifications } from '@/services/dispatch';
+import { saveUserPushToken, watchIncomingChatThreadHeads, watchUserNotifications } from '@/services/dispatch';
+import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -15,14 +17,6 @@ Notifications.setNotificationHandler({
   }),
 });
 
-type NotificationRouteData = {
-  kind?: 'chat' | 'user_notification';
-  threadId?: string;
-  senderId?: string;
-  teamId?: string;
-  relatedEventId?: string;
-};
-
 function parseDate(value?: { toDate?: () => Date } | Date | null) {
   if (!value) return 0;
   if (value instanceof Date) return value.getTime();
@@ -30,21 +24,19 @@ function parseDate(value?: { toDate?: () => Date } | Date | null) {
   return 0;
 }
 
-function useNotificationRouting() {
+function useNotificationRouting(currentUserId?: string) {
   const router = useRouter();
 
   useEffect(() => {
     const go = (data?: NotificationRouteData) => {
       if (!data) return;
 
-      if (data.kind === 'chat' && data.senderId) {
+      if (data.kind === 'chat') {
+        const route = resolveChatRouteFromNotification(data, currentUserId);
+        if (!route) return;
         router.push({
           pathname: '/chat/[workerId]',
-          params: {
-            workerId: data.senderId,
-            workerLabel: 'Teammate',
-            teamId: data.teamId,
-          },
+          params: route,
         });
         return;
       }
@@ -77,12 +69,32 @@ export function usePushNotificationBridge() {
   const seenChatUpdateRef = useRef<Record<string, number>>({});
   const seenUserNotificationIdsRef = useRef<Set<string>>(new Set());
 
-  useNotificationRouting();
+  useNotificationRouting(profile?.uid);
 
   useEffect(() => {
     if (!profile?.uid) return;
 
-    Notifications.requestPermissionsAsync().catch(() => undefined);
+    (async () => {
+      const permissions = await Notifications.requestPermissionsAsync().catch(() => null);
+      const status = permissions?.status || 'undetermined';
+
+      if (status !== 'granted') {
+        Alert.alert('Notifications disabled', 'Enable notifications to receive event and chat alerts in real time.');
+        return;
+      }
+
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+      const expoToken = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined).catch(() => null);
+      if (!expoToken?.data) return;
+
+      await saveUserPushToken({
+        userId: profile.uid,
+        token: expoToken.data,
+        platform: Platform.OS === 'ios' || Platform.OS === 'android' || Platform.OS === 'web' ? Platform.OS : 'unknown',
+        permissionStatus: 'granted',
+      }).catch(() => undefined);
+    })();
+
     if (Platform.OS === 'android') {
       Notifications.setNotificationChannelAsync('dispatch-default', {
         name: 'Dispatch Updates',

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -12,13 +12,18 @@ import {
   View,
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useSession } from '@/context/session';
 import { AppRole } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
+WebBrowser.maybeCompleteAuthSession();
+
 export default function SignUpScreen() {
   const router = useRouter();
-  const { signUp } = useSession();
+  const { signUp, signInWithGoogle, signInWithApple } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [displayName, setDisplayName] = useState('');
@@ -28,6 +33,76 @@ export default function SignUpScreen() {
   const [loading, setLoading] = useState(false);
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
+
+  const [googleRequest, googleResponse, promptGoogleAuth] = Google.useAuthRequest({
+    clientId: process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+  });
+
+  useEffect(() => {
+    const run = async () => {
+      if (googleResponse?.type !== 'success') return;
+      const authResult = googleResponse.authentication;
+      const idToken = authResult?.idToken;
+
+      if (!idToken) {
+        Alert.alert('Google sign-up failed', 'No Google ID token was returned.');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await signInWithGoogle({ idToken, accessToken: authResult?.accessToken, role });
+        router.replace('/(tabs)');
+      } catch (error) {
+        Alert.alert('Google sign-up failed', error instanceof Error ? error.message : 'Unable to sign up with Google.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    run();
+  }, [googleResponse, role, router, signInWithGoogle]);
+
+  const onGoogleSignUp = async () => {
+    try {
+      await promptGoogleAuth();
+    } catch (error) {
+      Alert.alert('Google sign-up failed', error instanceof Error ? error.message : 'Unable to start Google sign-up.');
+    }
+  };
+
+  const onAppleSignUp = async () => {
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      if (!credential.identityToken) {
+        Alert.alert('Apple sign-up failed', 'No Apple identity token returned.');
+        return;
+      }
+
+      setLoading(true);
+      const fullName = [credential.fullName?.givenName, credential.fullName?.familyName].filter(Boolean).join(' ').trim();
+      await signInWithApple({
+        idToken: credential.identityToken,
+        displayName: fullName || displayName.trim() || undefined,
+        role,
+      });
+      router.replace('/(tabs)');
+    } catch (error: any) {
+      if (error?.code === 'ERR_REQUEST_CANCELED') return;
+      Alert.alert('Apple sign-up failed', error instanceof Error ? error.message : 'Unable to sign up with Apple.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const onSignUp = async () => {
     if (!displayName.trim() || !email.trim() || !password) {
@@ -111,6 +186,16 @@ export default function SignUpScreen() {
               <Text style={styles.btnText}>{loading ? 'Creating...' : 'Create Account'}</Text>
             </Pressable>
 
+            <Pressable style={[styles.oauthBtn, (!googleRequest || loading) && styles.disabled]} onPress={onGoogleSignUp} disabled={!googleRequest || loading}>
+              <Text style={styles.oauthBtnText}>Sign up with Google ({role})</Text>
+            </Pressable>
+
+            {Platform.OS === 'ios' ? (
+              <Pressable style={[styles.oauthBtn, loading && styles.disabled]} onPress={onAppleSignUp} disabled={loading}>
+                <Text style={styles.oauthBtnText}>Sign up with Apple ({role})</Text>
+              </Pressable>
+            ) : null}
+
             <Link href="/(auth)/signin" style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>Already have an account? Sign in</Link>
           </View>
         </ScrollView>
@@ -151,6 +236,8 @@ const styles = StyleSheet.create({
   pillTextDark: { color: '#F4F8FF' },
   pillTextActive: { color: '#bfdbfe' },
   btn: { backgroundColor: '#2563eb', borderRadius: 12, padding: 13, alignItems: 'center', marginTop: 8 },
+  oauthBtn: { backgroundColor: '#0f172a', borderRadius: 12, padding: 12, alignItems: 'center', marginTop: 8 },
+  oauthBtnText: { color: 'white', fontWeight: '700' },
   disabled: { opacity: 0.65 },
   btnText: { color: 'white', fontWeight: '700' },
   link: { marginTop: 12, fontWeight: '600' },

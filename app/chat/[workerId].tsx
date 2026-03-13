@@ -1,15 +1,19 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import { Audio } from 'expo-av';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { buildChatThreadId, markTeamChatRead, sendChatMessage, watchChatMessages } from '@/services/dispatch';
+import { buildChatThreadId, ChatAttachment, markTeamChatRead, sendChatMessage, uploadChatAttachment, watchChatMessages } from '@/services/dispatch';
 
 type ChatMessage = {
   id: string;
   senderId: string;
   text: string;
   at: string;
+  attachments?: ChatAttachment[];
 };
 
 export default function WorkerChatScreen() {
@@ -40,6 +44,9 @@ export default function WorkerChatScreen() {
   const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
   const [showVoicePanel, setShowVoicePanel] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<Array<{ uri: string; name: string; kind: 'image' | 'file' | 'audio'; mimeType?: string }>>([]);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [sending, setSending] = useState(false);
 
   const threadId = useMemo(() => {
     if (!profile) return null;
@@ -69,6 +76,7 @@ export default function WorkerChatScreen() {
           id: item.id,
           senderId: item.senderId,
           text: item.text,
+          attachments: item.attachments || [],
           at: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
       });
@@ -96,11 +104,9 @@ export default function WorkerChatScreen() {
 
   const emojiOptions = ['😀', '😂', '😍', '🙏', '👍', '🔥', '✅', '🎉', '📍', '⏰'];
   const attachmentOptions = [
-    { key: 'photo', label: 'Photo' },
-    { key: 'video', label: 'Video' },
-    { key: 'file', label: 'File' },
-    { key: 'contact', label: 'Contact' },
-    { key: 'location', label: 'Location' },
+    { key: 'photo', label: 'Photo', kind: 'image' as const },
+    { key: 'file', label: 'File', kind: 'file' as const },
+    { key: 'voice', label: 'Voice Note', kind: 'audio' as const },
   ];
   const voiceQuickPhrases = [
     'On my way now.',
@@ -113,40 +119,114 @@ export default function WorkerChatScreen() {
     setDraft((current) => [current.trimEnd(), snippet].filter(Boolean).join(current.trim() ? ' ' : ''));
   };
 
-  const handleAttachmentSelect = (label: string) => {
-    appendToDraft(`[${label} attachment]`);
-    setShowAttachmentPicker(false);
+  const pickPhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Photo library permission is required to attach images.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: false, quality: 0.8 });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    setPendingAttachments((prev) => [...prev, { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, kind: 'image', mimeType: asset.mimeType }]);
   };
 
-  const toggleVoiceListening = () => {
+  const pickFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    setPendingAttachments((prev) => [...prev, { uri: asset.uri, name: asset.name || `file-${Date.now()}`, kind: 'file', mimeType: asset.mimeType }]);
+  };
+
+  const startRecording = async () => {
+    const permission = await Audio.requestPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Microphone permission is required to record voice notes.');
+      return;
+    }
+
+    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+    const rec = new Audio.Recording();
+    await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+    await rec.startAsync();
+    setRecording(rec);
+    setIsListening(true);
+  };
+
+  const stopRecording = async () => {
+    if (!recording) return;
+    await recording.stopAndUnloadAsync();
+    const uri = recording.getURI();
+    setRecording(null);
+    setIsListening(false);
+
+    if (uri) {
+      setPendingAttachments((prev) => [...prev, { uri, name: `voice-${Date.now()}.m4a`, kind: 'audio', mimeType: 'audio/m4a' }]);
+    }
+  };
+
+  const handleAttachmentSelect = async (key: string) => {
+    try {
+      if (key === 'photo') await pickPhoto();
+      if (key === 'file') await pickFile();
+      if (key === 'voice') {
+        if (recording) await stopRecording();
+        else await startRecording();
+      }
+    } catch (error) {
+      Alert.alert('Attachment error', error instanceof Error ? error.message : 'Unable to attach file.');
+    } finally {
+      setShowAttachmentPicker(false);
+    }
+  };
+
+  const toggleVoiceListening = async () => {
     setShowVoicePanel(true);
-    setIsListening((prev) => !prev);
-    Alert.alert(
-      isListening ? 'Talk-to-text stopped' : 'Talk-to-text started',
-      isListening
-        ? 'Voice capture paused. Tap a quick phrase or continue typing.'
-        : 'Simulated voice capture is active. Tap a quick phrase to insert transcript text.'
-    );
+    if (recording) await stopRecording();
+    else await startRecording();
   };
 
-  const canSend = draft.trim().length > 0;
+  const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
   const sendMessage = async () => {
     const text = draft.trim();
-    if (!text || !profile || !threadId) return;
+    if ((!text && !pendingAttachments.length) || !profile || !threadId || sending) return;
 
     const recipientIds = isTeamBroadcast
       ? memberIds.filter((id) => id !== profile.uid)
       : [workerId].filter((id) => id && id !== profile.uid);
 
-    await sendChatMessage({
-      threadId,
-      teamId,
-      senderId: profile.uid,
-      recipientIds,
-      text,
-    });
+    setSending(true);
+    try {
+      const uploadedAttachments: ChatAttachment[] = [];
+      for (const attachment of pendingAttachments) {
+        const uploaded = await uploadChatAttachment({
+          senderId: profile.uid,
+          threadId,
+          uri: attachment.uri,
+          kind: attachment.kind,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+        });
+        uploadedAttachments.push(uploaded);
+      }
 
-    setDraft('');
+      await sendChatMessage({
+        threadId,
+        teamId,
+        senderId: profile.uid,
+        recipientIds,
+        text,
+        attachments: uploadedAttachments,
+      });
+
+      setDraft('');
+      setPendingAttachments([]);
+    } catch (error) {
+      Alert.alert('Unable to send', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -177,7 +257,16 @@ export default function WorkerChatScreen() {
           return (
             <View style={[styles.row, mine ? styles.rowSelf : styles.rowOther]}>
               <View style={[styles.bubble, mine ? styles.bubbleSelf : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
-                <Text style={[styles.messageText, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>{message.text}</Text>
+                {message.text ? (
+                  <Text style={[styles.messageText, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>{message.text}</Text>
+                ) : null}
+                {(message.attachments || []).map((attachment) => (
+                  <Pressable key={attachment.id} onPress={() => Linking.openURL(attachment.url)}>
+                    <Text style={[styles.attachmentLink, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>
+                      📎 {attachment.name}
+                    </Text>
+                  </Pressable>
+                ))}
                 <Text style={[styles.time, mine ? styles.timeSelf : isDarkMode ? styles.timeDark : styles.timeLight]}>{message.at}</Text>
               </View>
             </View>
@@ -212,6 +301,16 @@ export default function WorkerChatScreen() {
           </Pressable>
         </View>
 
+        {pendingAttachments.length ? (
+          <View style={styles.pendingAttachmentRow}>
+            {pendingAttachments.map((attachment, index) => (
+              <View key={`${attachment.name}-${index}`} style={styles.pendingAttachmentChip}>
+                <Text style={styles.pendingAttachmentText}>{attachment.name}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
         <View style={styles.inputRow}>
           <TextInput
             value={draft}
@@ -222,15 +321,15 @@ export default function WorkerChatScreen() {
             returnKeyType="send"
             onSubmitEditing={sendMessage}
           />
-          <Pressable style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend}>
-            <Text style={styles.sendText}>Send</Text>
+          <Pressable style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend || sending}>
+            <Text style={styles.sendText}>{sending ? '…' : 'Send'}</Text>
           </Pressable>
         </View>
 
         {showAttachmentPicker ? (
           <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
             {attachmentOptions.map((option) => (
-              <Pressable key={option.key} style={styles.pickerChip} onPress={() => handleAttachmentSelect(option.label)}>
+              <Pressable key={option.key} style={styles.pickerChip} onPress={() => handleAttachmentSelect(option.key)}>
                 <Text style={[styles.pickerChipText, isDarkMode ? styles.pickerChipTextDark : styles.pickerChipTextLight]}>{option.label}</Text>
               </Pressable>
             ))}
@@ -292,6 +391,7 @@ const styles = StyleSheet.create({
   bubbleOtherDark: { backgroundColor: '#001A4D', borderBottomLeftRadius: 4 },
   messageText: { fontSize: 14 },
   messageTextSelf: { color: '#fff' },
+  attachmentLink: { marginTop: 4, fontSize: 13, textDecorationLine: 'underline' },
   messageTextLight: { color: '#232832' },
   messageTextDark: { color: '#F4F8FF' },
   time: { marginTop: 4, fontSize: 10, alignSelf: 'flex-end' },
@@ -313,6 +413,9 @@ const styles = StyleSheet.create({
   toolButtonDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   toolButtonActive: { borderColor: '#0EC3C9' },
   toolIcon: { fontSize: 16 },
+  pendingAttachmentRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  pendingAttachmentChip: { borderRadius: 999, borderWidth: 1, borderColor: '#3b82f6', paddingHorizontal: 10, paddingVertical: 4 },
+  pendingAttachmentText: { color: '#1e3a8a', fontSize: 12, fontWeight: '600' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   picker: { borderRadius: 12, padding: 8, borderWidth: 1, gap: 8 },
   pickerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
