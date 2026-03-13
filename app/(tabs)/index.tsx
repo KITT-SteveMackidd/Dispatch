@@ -94,6 +94,7 @@ export default function EventsScreen() {
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState('');
   const [templateDefaultTimeDraft, setTemplateDefaultTimeDraft] = useState('');
+  const [showTemplateDefaultTimePicker, setShowTemplateDefaultTimePicker] = useState(false);
   const [templateDefaultLocationDraft, setTemplateDefaultLocationDraft] = useState('');
   const [templateDefaultDescriptionDraft, setTemplateDefaultDescriptionDraft] = useState('');
   const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
@@ -119,6 +120,7 @@ export default function EventsScreen() {
   const [eventTimeDraft, setEventTimeDraft] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const drawerKeyboardOffset = Platform.select({ ios: 44, android: 24 }) ?? 0;
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
@@ -239,6 +241,25 @@ export default function EventsScreen() {
     const hours = String(selectedTime.getHours()).padStart(2, '0');
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
     setEventTimeDraft(`${hours}:${minutes}`);
+  };
+
+  const parseTemplateDefaultTime = () => {
+    const parsed = parseEventTime();
+    const [hourText = '0', minuteText = '0'] = templateDefaultTimeDraft.split(':');
+    const hours = Number(hourText);
+    const minutes = Number(minuteText);
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+      parsed.setHours(Math.max(0, Math.min(23, hours)), Math.max(0, Math.min(59, minutes)), 0, 0);
+    }
+    return parsed;
+  };
+
+  const handleTemplateDefaultTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
+    setShowTemplateDefaultTimePicker(false);
+    if (event.type === 'dismissed' || !selectedTime) return;
+    const hours = String(selectedTime.getHours()).padStart(2, '0');
+    const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
+    setTemplateDefaultTimeDraft(`${hours}:${minutes}`);
   };
 
   useEffect(() => {
@@ -465,6 +486,7 @@ export default function EventsScreen() {
   const openCreateTemplateDrawer = (template?: EventTemplateOption) => {
     setTemplatePickerOpen(false);
     setTemplateTaskOffsetDrafts({});
+    setShowTemplateDefaultTimePicker(false);
     if (template) {
       setEditingTemplateId(template.id);
       setTemplateNameDraft(template.name);
@@ -495,6 +517,7 @@ export default function EventsScreen() {
 
   const closeCreateTemplateDrawer = () => {
     setCreateTemplateDrawerOpen(false);
+    setShowTemplateDefaultTimePicker(false);
     setEditingTemplateId(null);
     setTemplateNameDraft('');
     setTemplateDefaultTimeDraft('');
@@ -1397,7 +1420,7 @@ export default function EventsScreen() {
           <KeyboardAvoidingView
             style={styles.keyboardAvoidingFill}
             behavior={Platform.select({ ios: 'padding', android: 'height' })}
-            keyboardVerticalOffset={Platform.select({ ios: 20, android: 0 })}>
+            keyboardVerticalOffset={drawerKeyboardOffset}>
             <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={Keyboard.dismiss}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Create Event</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Choose a template to start your event setup.</Text>
@@ -1673,7 +1696,7 @@ export default function EventsScreen() {
           <KeyboardAvoidingView
             style={styles.keyboardAvoidingFill}
             behavior={Platform.select({ ios: 'padding', android: 'height' })}
-            keyboardVerticalOffset={Platform.select({ ios: 20, android: 0 })}>
+            keyboardVerticalOffset={drawerKeyboardOffset}>
             <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={Keyboard.dismiss}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>{isEditingTemplate ? 'Edit Template' : 'Create Template'}</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>{isEditingTemplate ? 'Update this template. Changes are saved permanently.' : 'Add a template you can reuse while creating events.'}</Text>
@@ -1697,18 +1720,27 @@ export default function EventsScreen() {
 
 
             <View style={styles.formField}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Default event time (24h, optional)</Text>
-              <TextInput
-                value={templateDefaultTimeDraft}
-                onChangeText={setTemplateDefaultTimeDraft}
-                autoCapitalize="none"
-                placeholder="14:30"
-                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-                returnKeyType="done"
-                onSubmitEditing={Keyboard.dismiss}
-                blurOnSubmit
-                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
-              />
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Default event time (optional)</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Pick default event time"
+                style={[styles.templateSelectTrigger, isDarkMode ? styles.templateSelectTriggerDark : styles.templateSelectTriggerLight]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setShowTemplateDefaultTimePicker(true);
+                }}>
+                <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>
+                  {templateDefaultTimeDraft || 'Select time'}
+                </Text>
+              </Pressable>
+              {showTemplateDefaultTimePicker ? (
+                <DateTimePicker
+                  value={parseTemplateDefaultTime()}
+                  mode="time"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={handleTemplateDefaultTimeChange}
+                />
+              ) : null}
             </View>
 
             <View style={styles.formField}>
@@ -2005,7 +2037,7 @@ const styles = StyleSheet.create({
   templateTaskRowDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   templateTaskLabel: { fontSize: 12, fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  keyboardAvoidingFill: { width: '100%' },
+  keyboardAvoidingFill: { width: '100%', flex: 1, justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
   createEventScroll: { marginTop: 8 },
   createEventScrollContent: { paddingBottom: 16 },
