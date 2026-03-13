@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -654,6 +654,19 @@ export default function EventsScreen() {
         }),
       };
     }));
+  };
+
+  const parseTemplateTaskAttachments = (value: string) => {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((url, index) => ({
+        id: `attachment-${Date.now()}-${index + 1}`,
+        name: `Attachment ${index + 1}`,
+        url,
+        kind: /\.(png|jpg|jpeg|gif|webp|heic|heif)(\?.*)?$/i.test(url) ? 'photo' as const : 'document' as const,
+      }));
   };
 
   const removeTemplateTaskDraft = (roleId: string, taskId: string) => {
@@ -1722,6 +1735,21 @@ export default function EventsScreen() {
                           value={task.name}
                           onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { name: value })}
                           placeholder="Task name"
+                          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
+                          style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+                        />
+                        <TextInput
+                          value={task.description || ''}
+                          onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { description: value })}
+                          placeholder="Task description"
+                          placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
+                          multiline
+                          style={[styles.templateTextArea, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+                        />
+                        <TextInput
+                          value={(task.attachments || []).map((attachment) => attachment.url).join(', ')}
+                          onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { attachments: parseTemplateTaskAttachments(value) })}
+                          placeholder="Photo/document URLs (comma separated)"
                           placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                           style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                         />

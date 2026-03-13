@@ -8,9 +8,18 @@ export type UserProfile = {
   avatarUrl?: string;
 };
 
+export type EventTaskAttachment = {
+  id: string;
+  name: string;
+  url: string;
+  kind: 'photo' | 'document';
+};
+
 export type EventTask = {
   id: string;
   name: string;
+  description?: string;
+  attachments?: EventTaskAttachment[];
   expectedOffsetMinutes?: number;
   dueAt?: string;
   optional?: boolean;
@@ -46,6 +55,8 @@ export type Team = {
 export type EventTemplateTask = {
   id: string;
   name: string;
+  description?: string;
+  attachments?: EventTaskAttachment[];
   expectedOffsetMinutes: number;
 };
 
