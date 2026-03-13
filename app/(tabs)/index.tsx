@@ -225,7 +225,7 @@ export default function EventsScreen() {
   };
 
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false);
+    setShowDatePicker(false);
     if (event.type === 'dismissed' || !selectedDate) return;
     const year = selectedDate.getFullYear();
     const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
@@ -234,7 +234,7 @@ export default function EventsScreen() {
   };
 
   const handleTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
-    if (Platform.OS === 'android') setShowTimePicker(false);
+    setShowTimePicker(false);
     if (event.type === 'dismissed' || !selectedTime) return;
     const hours = String(selectedTime.getHours()).padStart(2, '0');
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
