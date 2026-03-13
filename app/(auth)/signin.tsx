@@ -31,6 +31,7 @@ export default function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
   const passwordInputRef = useRef<TextInput>(null);
+  const oauthEnabled = false;
 
   const isExpoGo = Constants.appOwnership === 'expo';
 
@@ -172,14 +173,18 @@ export default function SignInScreen() {
               <Text style={styles.btnText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
             </Pressable>
 
-            <Pressable style={[styles.oauthBtn, !googleRequest && styles.disabled]} onPress={onGoogleSignIn} disabled={!googleRequest || loading}>
-              <Text style={styles.oauthBtnText}>Continue with Google</Text>
-            </Pressable>
+            {oauthEnabled ? (
+              <>
+                <Pressable style={[styles.oauthBtn, !googleRequest && styles.disabled]} onPress={onGoogleSignIn} disabled={!googleRequest || loading}>
+                  <Text style={styles.oauthBtnText}>Continue with Google</Text>
+                </Pressable>
 
-            {Platform.OS === 'ios' ? (
-              <Pressable style={styles.oauthBtn} onPress={onAppleSignIn} disabled={loading}>
-                <Text style={styles.oauthBtnText}>Continue with Apple</Text>
-              </Pressable>
+                {Platform.OS === 'ios' ? (
+                  <Pressable style={styles.oauthBtn} onPress={onAppleSignIn} disabled={loading}>
+                    <Text style={styles.oauthBtnText}>Continue with Apple</Text>
+                  </Pressable>
+                ) : null}
+              </>
             ) : null}
 
             <Link href="/(auth)/signup" style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>

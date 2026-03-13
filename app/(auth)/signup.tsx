@@ -34,6 +34,7 @@ export default function SignUpScreen() {
   const [loading, setLoading] = useState(false);
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
+  const oauthEnabled = false;
 
   const isExpoGo = Constants.appOwnership === 'expo';
 
@@ -189,14 +190,18 @@ export default function SignUpScreen() {
               <Text style={styles.btnText}>{loading ? 'Creating...' : 'Create Account'}</Text>
             </Pressable>
 
-            <Pressable style={[styles.oauthBtn, (!googleRequest || loading) && styles.disabled]} onPress={onGoogleSignUp} disabled={!googleRequest || loading}>
-              <Text style={styles.oauthBtnText}>Sign up with Google ({role})</Text>
-            </Pressable>
+            {oauthEnabled ? (
+              <>
+                <Pressable style={[styles.oauthBtn, (!googleRequest || loading) && styles.disabled]} onPress={onGoogleSignUp} disabled={!googleRequest || loading}>
+                  <Text style={styles.oauthBtnText}>Sign up with Google ({role})</Text>
+                </Pressable>
 
-            {Platform.OS === 'ios' ? (
-              <Pressable style={[styles.oauthBtn, loading && styles.disabled]} onPress={onAppleSignUp} disabled={loading}>
-                <Text style={styles.oauthBtnText}>Sign up with Apple ({role})</Text>
-              </Pressable>
+                {Platform.OS === 'ios' ? (
+                  <Pressable style={[styles.oauthBtn, loading && styles.disabled]} onPress={onAppleSignUp} disabled={loading}>
+                    <Text style={styles.oauthBtnText}>Sign up with Apple ({role})</Text>
+                  </Pressable>
+                ) : null}
+              </>
             ) : null}
 
             <Link href="/(auth)/signin" style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>Already have an account? Sign in</Link>
