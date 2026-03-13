@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
@@ -44,6 +45,8 @@ const INITIAL_DRAWER: DrawerState = {
 type TemplateTaskPreview = {
   id: string;
   name: string;
+  description?: string;
+  attachments?: Array<{ id: string; name: string; url: string; kind: 'photo' | 'document' }>;
   expectedOffsetMinutes: number;
 };
 
@@ -94,6 +97,7 @@ export default function EventsScreen() {
   const [templateDefaultLocationDraft, setTemplateDefaultLocationDraft] = useState('');
   const [templateDefaultDescriptionDraft, setTemplateDefaultDescriptionDraft] = useState('');
   const [templateRolesDraft, setTemplateRolesDraft] = useState<TemplateRoleDraft[]>([]);
+  const [templateTaskOffsetDrafts, setTemplateTaskOffsetDrafts] = useState<Record<string, string>>({});
   const [templateOptions, setTemplateOptions] = useState<EventTemplateOption[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
@@ -113,6 +117,8 @@ export default function EventsScreen() {
   const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null);
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
@@ -135,6 +141,27 @@ export default function EventsScreen() {
 
   const getTemplateRoleCount = (template: EventTemplateOption) => template.roles?.length ?? 0;
   const getTemplateTaskCount = (template: EventTemplateOption) => (template.roles || []).reduce((sum, role) => sum + (role.tasks?.length || 0), 0);
+
+  const formatOffsetHhMmSs = (minutes: number) => {
+    const safeMinutes = Math.max(0, Math.round(Number.isFinite(minutes) ? minutes : 0));
+    const hours = Math.floor(safeMinutes / 60).toString().padStart(2, '0');
+    const mins = (safeMinutes % 60).toString().padStart(2, '0');
+    return `${hours}:${mins}:00`;
+  };
+
+  const parseOffsetHhMmSsToMinutes = (raw: string) => {
+    const match = raw.trim().match(/^(\d{1,2}):(\d{1,2}):(\d{1,2})$/);
+    if (!match) return null;
+
+    const hours = Number.parseInt(match[1], 10);
+    const minutes = Number.parseInt(match[2], 10);
+    const seconds = Number.parseInt(match[3], 10);
+
+    if ([hours, minutes, seconds].some((value) => Number.isNaN(value))) return null;
+    if (minutes > 59 || seconds > 59) return null;
+
+    return Math.max(0, Math.round((hours * 3600 + minutes * 60 + seconds) / 60));
+  };
 
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
     const startsAtMs = +new Date(event.startsAt);
@@ -178,6 +205,40 @@ export default function EventsScreen() {
     const safeOffset = Math.max(0, Math.round(offsetMinutes || 0));
     if (!Number.isFinite(startsAtMs)) return `+${safeOffset}m from start`;
     return new Date(startsAtMs + safeOffset * 60 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+
+  const parseEventDate = () => {
+    if (!eventDateDraft) return new Date();
+    const parsed = new Date(`${eventDateDraft}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  };
+
+  const parseEventTime = () => {
+    const baseDate = parseEventDate();
+    const [hourText = '0', minuteText = '0'] = eventTimeDraft.split(':');
+    const hours = Number(hourText);
+    const minutes = Number(minuteText);
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+      baseDate.setHours(Math.max(0, Math.min(23, hours)), Math.max(0, Math.min(59, minutes)), 0, 0);
+    }
+    return baseDate;
+  };
+
+  const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (event.type === 'dismissed' || !selectedDate) return;
+    const year = selectedDate.getFullYear();
+    const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+    const day = String(selectedDate.getDate()).padStart(2, '0');
+    setEventDateDraft(`${year}-${month}-${day}`);
+  };
+
+  const handleTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
+    if (Platform.OS === 'android') setShowTimePicker(false);
+    if (event.type === 'dismissed' || !selectedTime) return;
+    const hours = String(selectedTime.getHours()).padStart(2, '0');
+    const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
+    setEventTimeDraft(`${hours}:${minutes}`);
   };
 
   useEffect(() => {
@@ -379,6 +440,8 @@ export default function EventsScreen() {
     const initialTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
     setEventDateDraft('');
     setEventTimeDraft(initialTemplate?.defaultTime || '');
+    setShowDatePicker(false);
+    setShowTimePicker(false);
     setEventLocationDraft(initialTemplate?.defaultLocation || '');
     setEventDescriptionDraft(initialTemplate?.defaultDescription || '');
     setCreateEventRolesDraft(buildCreateEventRolesDraft(initialTemplate));
@@ -389,6 +452,8 @@ export default function EventsScreen() {
   const closeCreateEventDrawer = () => {
     setCreateEventDrawerOpen(false);
     setRolePickerRoleId(null);
+    setShowDatePicker(false);
+    setShowTimePicker(false);
   };
 
   const openTemplatePickerFromCreateEvent = () => {
@@ -399,6 +464,7 @@ export default function EventsScreen() {
 
   const openCreateTemplateDrawer = (template?: EventTemplateOption) => {
     setTemplatePickerOpen(false);
+    setTemplateTaskOffsetDrafts({});
     if (template) {
       setEditingTemplateId(template.id);
       setTemplateNameDraft(template.name);
@@ -435,6 +501,7 @@ export default function EventsScreen() {
     setTemplateDefaultLocationDraft('');
     setTemplateDefaultDescriptionDraft('');
     setTemplateRolesDraft([]);
+    setTemplateTaskOffsetDrafts({});
 
     if (reopenCreateEventAfterTemplateFlow) {
       setCreateEventDrawerOpen(true);
@@ -476,6 +543,8 @@ export default function EventsScreen() {
           .map((task, taskIndex) => ({
             id: task.id || `task-${Date.now()}-${taskIndex + 1}`,
             name: task.name.trim(),
+            description: task.description?.trim() || undefined,
+            attachments: (task.attachments || []).filter((attachment) => attachment.url.trim().length > 0),
             expectedOffsetMinutes: Number.isFinite(task.expectedOffsetMinutes)
               ? Math.max(0, Math.round(task.expectedOffsetMinutes))
               : 0,
@@ -553,6 +622,8 @@ export default function EventsScreen() {
           {
             id: `task-${Date.now()}-${role.tasks.length + 1}`,
             name: '',
+            description: '',
+            attachments: [],
             expectedOffsetMinutes: role.tasks.length ? role.tasks[role.tasks.length - 1].expectedOffsetMinutes + 15 : 15,
           },
         ],
@@ -954,6 +1025,8 @@ export default function EventsScreen() {
   useEffect(() => {
     if (!createEventDrawerOpen || !selectedTemplate) return;
     setEventTimeDraft(selectedTemplate.defaultTime || '');
+    setShowDatePicker(false);
+    setShowTimePicker(false);
     setEventLocationDraft(selectedTemplate.defaultLocation || '');
     setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
     setCreateEventRolesDraft(buildCreateEventRolesDraft(selectedTemplate));
@@ -1377,31 +1450,51 @@ export default function EventsScreen() {
             </View>
 
             <View style={styles.formField}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event date (YYYY-MM-DD)</Text>
-              <TextInput
-                value={eventDateDraft}
-                onChangeText={setEventDateDraft}
-                autoCapitalize="none"
-                placeholder="2026-06-15"
-                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-                returnKeyType="next"
-                blurOnSubmit={false}
-                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
-              />
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event date</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Pick event date"
+                style={[styles.templateSelectTrigger, isDarkMode ? styles.templateSelectTriggerDark : styles.templateSelectTriggerLight]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setShowDatePicker(true);
+                }}>
+                <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>
+                  {eventDateDraft || 'Select date'}
+                </Text>
+              </Pressable>
+              {showDatePicker ? (
+                <DateTimePicker
+                  value={parseEventDate()}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                  onChange={handleDateChange}
+                />
+              ) : null}
             </View>
 
             <View style={styles.formField}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event time (24h)</Text>
-              <TextInput
-                value={eventTimeDraft}
-                onChangeText={setEventTimeDraft}
-                autoCapitalize="none"
-                placeholder="14:30"
-                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-                returnKeyType="next"
-                blurOnSubmit={false}
-                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
-              />
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Event time</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Pick event time"
+                style={[styles.templateSelectTrigger, isDarkMode ? styles.templateSelectTriggerDark : styles.templateSelectTriggerLight]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setShowTimePicker(true);
+                }}>
+                <Text style={[styles.templateName, isDarkMode ? styles.templateNameDark : styles.templateNameLight]}>
+                  {eventTimeDraft || 'Select time'}
+                </Text>
+              </Pressable>
+              {showTimePicker ? (
+                <DateTimePicker
+                  value={parseEventTime()}
+                  mode="time"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={handleTimeChange}
+                />
+              ) : null}
             </View>
 
             <View style={styles.formField}>
@@ -1633,13 +1726,24 @@ export default function EventsScreen() {
                           style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                         />
                         <TextInput
-                          value={`${task.expectedOffsetMinutes}`}
-                          onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: Number.parseInt(value || '0', 10) || 0 })}
-                          keyboardType="numeric"
+                          value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes)}
+                          onChangeText={(value) => {
+                            const key = `${role.id}:${task.id}`;
+                            setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: value }));
+                            const parsedMinutes = parseOffsetHhMmSsToMinutes(value);
+                            if (parsedMinutes !== null) {
+                              updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: parsedMinutes });
+                            }
+                          }}
+                          onBlur={() => {
+                            const key = `${role.id}:${task.id}`;
+                            setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: formatOffsetHhMmSs(task.expectedOffsetMinutes) }));
+                          }}
+                          keyboardType="numbers-and-punctuation"
                           returnKeyType="done"
                           onSubmitEditing={Keyboard.dismiss}
                           blurOnSubmit
-                          placeholder="Minutes from event start"
+                          placeholder="HH:MM:SS"
                           placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
                           style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
                         />
