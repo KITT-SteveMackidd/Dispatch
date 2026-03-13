@@ -1467,7 +1467,10 @@ export default function EventsScreen() {
                 {createEventRolesDraft.length ? (
                   createEventRolesDraft.map((role) => {
                     const assignedLabel = role.assignedWorkerId ? workerLabel(role.assignedWorkerId) : null;
-                    const avatarInitial = assignedLabel ? assignedLabel.slice(0, 1).toUpperCase() : '+';
+                    const avatarInitial = assignedLabel ? assignedLabel.slice(0, 1).toUpperCase() : '';
+                    const roleOffset = role.tasks.length
+                      ? Math.min(...role.tasks.map((task) => Math.max(0, Math.round(task.expectedOffsetMinutes || 0))))
+                      : 0;
 
                     return (
                       <View key={`${selectedTemplate?.id}-${role.id}`} style={styles.rolePreviewRow}>
@@ -1487,11 +1490,11 @@ export default function EventsScreen() {
                           <Text style={[styles.rolePreviewName, isDarkMode ? styles.rolePreviewNameDark : styles.rolePreviewNameLight]}>{role.name}</Text>
                         </View>
                         <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>
-                          {assignedLabel ? assignedLabel : 'Tap avatar to assign'} · {role.tasks.length} tasks
+                          {role.tasks.length} tasks · Offset {formatOffsetHhMmSs(roleOffset)}
                         </Text>
-                        {!!role.tasks.length ? (
+                        {assignedLabel ? (
                           <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.rolePreviewMetaDark : styles.rolePreviewMetaLight]}>
-                            Next due: {formatTaskDueTimeFromDraft(Math.min(...role.tasks.map((task) => task.expectedOffsetMinutes)))}
+                            Assigned: {assignedLabel}
                           </Text>
                         ) : null}
                       </View>
