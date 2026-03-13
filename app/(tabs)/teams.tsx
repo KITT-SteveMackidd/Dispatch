@@ -16,6 +16,7 @@ import {
   watchWorkerEvents,
   WorkerInvite,
 } from '@/services/dispatch';
+import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from '@/services/worker-invite-notifications';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 
@@ -41,6 +42,8 @@ export default function TeamsScreen() {
   const [unreadCountByTeamId, setUnreadCountByTeamId] = useState<Record<string, number>>({});
   const [invites, setInvites] = useState<WorkerInvite[]>([]);
   const [retryingInviteId, setRetryingInviteId] = useState<string | null>(null);
+  const [clearingInviteId, setClearingInviteId] = useState<string | null>(null);
+  const [clearingAllInvites, setClearingAllInvites] = useState(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -131,6 +134,11 @@ export default function TeamsScreen() {
     });
     return counts;
   }, [events]);
+
+  const visibleInvites = useMemo(
+    () => invites.filter((invite) => !(invite as WorkerInvite & { managerClearedAt?: unknown }).managerClearedAt),
+    [invites]
+  );
 
   const getOtherMemberIds = (team: Team) => {
     if (!profile) return [];
@@ -238,6 +246,43 @@ export default function TeamsScreen() {
     }
   };
 
+  const handleClearInvite = async (inviteId: string) => {
+    if (!profile || profile.role !== 'manager') return;
+    if (clearingInviteId === inviteId || clearingAllInvites) return;
+
+    try {
+      setClearingInviteId(inviteId);
+      await clearWorkerInviteNotification({ managerId: profile.uid, inviteId });
+      setDrawerMessageTone('success');
+      setDrawerMessage('Invite notification cleared.');
+    } catch (error) {
+      setDrawerMessageTone('error');
+      setDrawerMessage(error instanceof Error ? error.message : 'Unable to clear invite notification.');
+    } finally {
+      setClearingInviteId(null);
+    }
+  };
+
+  const handleClearAllInvites = async () => {
+    if (!profile || profile.role !== 'manager' || !visibleInvites.length) return;
+    if (clearingAllInvites) return;
+
+    try {
+      setClearingAllInvites(true);
+      await clearAllWorkerInviteNotifications({
+        managerId: profile.uid,
+        inviteIds: visibleInvites.map((invite) => invite.id),
+      });
+      setDrawerMessageTone('success');
+      setDrawerMessage('Cleared all recent worker invite notifications.');
+    } catch (error) {
+      setDrawerMessageTone('error');
+      setDrawerMessage(error instanceof Error ? error.message : 'Unable to clear invite notifications.');
+    } finally {
+      setClearingAllInvites(false);
+    }
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={styles.headerRow}>
@@ -249,25 +294,39 @@ export default function TeamsScreen() {
         ) : null}
       </View>
 
-      {profile?.role === 'manager' && invites.length ? (
+      {profile?.role === 'manager' && visibleInvites.length ? (
         <View style={[styles.inviteStatusCard, isDarkMode ? styles.inviteStatusCardDark : styles.inviteStatusCardLight]}>
-          <Text style={[styles.inviteStatusTitle, isDarkMode ? styles.inviteStatusTitleDark : styles.inviteStatusTitleLight]}>Recent Worker Invites</Text>
-          {invites.slice(0, 5).map((invite) => {
+          <View style={styles.inviteStatusHeaderRow}>
+            <Text style={[styles.inviteStatusTitle, isDarkMode ? styles.inviteStatusTitleDark : styles.inviteStatusTitleLight]}>Recent Worker Invites</Text>
+            <Pressable style={[styles.clearAllButton, clearingAllInvites && styles.retryButtonDisabled]} onPress={handleClearAllInvites} disabled={clearingAllInvites}>
+              <Text style={styles.clearAllButtonText}>{clearingAllInvites ? 'Clearing…' : 'Clear all'}</Text>
+            </Pressable>
+          </View>
+          {visibleInvites.slice(0, 5).map((invite) => {
             const canRetry = invite.status === 'send_failed';
+            const isClearingThisInvite = clearingInviteId === invite.id;
             return (
               <View key={invite.id} style={styles.inviteStatusRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.inviteEmail, isDarkMode ? styles.titleDark : styles.titleLight]}>{invite.email}</Text>
                   <Text style={[styles.inviteMeta, isDarkMode ? styles.metaDark : styles.metaLight]}>{invite.status}{invite.statusReason ? ` · ${invite.statusReason}` : ''}</Text>
                 </View>
-                {canRetry ? (
+                <View style={styles.inviteStatusActions}>
+                  {canRetry ? (
+                    <Pressable
+                      style={[styles.retryButton, retryingInviteId === invite.id && styles.retryButtonDisabled]}
+                      disabled={retryingInviteId === invite.id}
+                      onPress={() => handleRetryInvite(invite.id)}>
+                      <Text style={styles.retryButtonText}>{retryingInviteId === invite.id ? 'Retrying…' : 'Retry'}</Text>
+                    </Pressable>
+                  ) : null}
                   <Pressable
-                    style={[styles.retryButton, retryingInviteId === invite.id && styles.retryButtonDisabled]}
-                    disabled={retryingInviteId === invite.id}
-                    onPress={() => handleRetryInvite(invite.id)}>
-                    <Text style={styles.retryButtonText}>{retryingInviteId === invite.id ? 'Retrying…' : 'Retry'}</Text>
+                    style={[styles.clearInviteButton, (isClearingThisInvite || clearingAllInvites) && styles.retryButtonDisabled]}
+                    disabled={isClearingThisInvite || clearingAllInvites}
+                    onPress={() => handleClearInvite(invite.id)}>
+                    <Text style={styles.clearInviteButtonText}>{isClearingThisInvite ? 'Clearing…' : 'Clear'}</Text>
                   </Pressable>
-                ) : null}
+                </View>
               </View>
             );
           })}
@@ -401,13 +460,19 @@ const styles = StyleSheet.create({
   inviteStatusCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
   inviteStatusCardLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
   inviteStatusCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  inviteStatusHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   inviteStatusTitle: { fontWeight: '700', fontSize: 13 },
   inviteStatusTitleLight: { color: '#1e3a8a' },
   inviteStatusTitleDark: { color: '#F4F8FF' },
+  clearAllButton: { borderRadius: 8, borderWidth: 1, borderColor: '#1d4ed8', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#fff' },
+  clearAllButtonText: { color: '#1d4ed8', fontSize: 12, fontWeight: '700' },
   inviteStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: '#93c5fd', paddingTop: 8 },
+  inviteStatusActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   inviteEmail: { fontWeight: '600', fontSize: 13 },
   inviteMeta: { marginTop: 2, fontSize: 11 },
   retryButton: { borderRadius: 8, backgroundColor: '#1d4ed8', paddingHorizontal: 10, paddingVertical: 6 },
+  clearInviteButton: { borderRadius: 8, borderWidth: 1, borderColor: '#94a3b8', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 6 },
+  clearInviteButtonText: { color: '#334155', fontSize: 12, fontWeight: '700' },
   retryButtonDisabled: { opacity: 0.6 },
   retryButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
