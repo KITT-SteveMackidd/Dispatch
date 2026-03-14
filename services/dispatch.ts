@@ -654,11 +654,39 @@ export async function saveUserPushToken(params: {
 }
 
 export function watchUserNotifications(userId: string, cb: (items: UserNotification[]) => void) {
-  const q = query(collection(db, 'userNotifications'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snap) => {
-    const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserNotification, 'id'>) }));
-    cb(items);
-  });
+  const withOrderQuery = query(collection(db, 'userNotifications'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
+
+  const subscribeWithoutOrder = () => {
+    const fallbackQuery = query(collection(db, 'userNotifications'), where('userId', '==', userId), limit(100));
+    return onSnapshot(fallbackQuery, (snap) => {
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<UserNotification, 'id'>) }))
+        .sort((a, b) => toDateMs(b.createdAt) - toDateMs(a.createdAt));
+      cb(items);
+    });
+  };
+
+  let unsubscribe = () => {};
+
+  unsubscribe = onSnapshot(
+    withOrderQuery,
+    (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserNotification, 'id'>) }));
+      cb(items);
+    },
+    (error) => {
+      if (error?.code === 'failed-precondition') {
+        console.warn('Missing composite index for userNotifications watcher; using client-side sort fallback.', error);
+        unsubscribe();
+        unsubscribe = subscribeWithoutOrder();
+        return;
+      }
+      console.error('watchUserNotifications failed', error);
+      cb([]);
+    }
+  );
+
+  return () => unsubscribe();
 }
 
 export async function markUserNotificationsRead(params: { userId: string; notificationIds: string[] }) {
