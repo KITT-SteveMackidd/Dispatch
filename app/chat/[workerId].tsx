@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
@@ -188,6 +188,7 @@ export default function WorkerChatScreen() {
   };
 
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
+  const hasPendingImage = pendingAttachments.some((attachment) => attachment.kind === 'image');
   const sendMessage = async () => {
     const text = draft.trim();
     if ((!text && !pendingAttachments.length) || !profile || !threadId || sending) return;
@@ -261,11 +262,19 @@ export default function WorkerChatScreen() {
                   <Text style={[styles.messageText, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>{message.text}</Text>
                 ) : null}
                 {(message.attachments || []).map((attachment) => (
-                  <Pressable key={attachment.id} onPress={() => Linking.openURL(attachment.url)}>
-                    <Text style={[styles.attachmentLink, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>
-                      📎 {attachment.name}
-                    </Text>
-                  </Pressable>
+                  <View key={attachment.id} style={styles.attachmentWrap}>
+                    {attachment.kind === 'image' ? (
+                      <Pressable onPress={() => Linking.openURL(attachment.url)}>
+                        <Image source={{ uri: attachment.url }} style={styles.attachmentImage} resizeMode="cover" />
+                      </Pressable>
+                    ) : (
+                      <Pressable onPress={() => Linking.openURL(attachment.url)}>
+                        <Text style={[styles.attachmentLink, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>
+                          📎 {attachment.name}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
                 ))}
                 <Text style={[styles.time, mine ? styles.timeSelf : isDarkMode ? styles.timeDark : styles.timeLight]}>{message.at}</Text>
               </View>
@@ -305,7 +314,7 @@ export default function WorkerChatScreen() {
           <View style={styles.pendingAttachmentRow}>
             {pendingAttachments.map((attachment, index) => (
               <View key={`${attachment.name}-${index}`} style={styles.pendingAttachmentChip}>
-                <Text style={styles.pendingAttachmentText}>{attachment.name}</Text>
+                <Text style={styles.pendingAttachmentText}>{attachment.kind === 'image' ? '🖼️' : attachment.kind === 'audio' ? '🎤' : '📎'} {attachment.name}</Text>
               </View>
             ))}
           </View>
@@ -315,7 +324,7 @@ export default function WorkerChatScreen() {
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            placeholder={isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
+            placeholder={hasPendingImage ? 'Add a caption…' : isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
             placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
             style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
             returnKeyType="send"
@@ -391,6 +400,8 @@ const styles = StyleSheet.create({
   bubbleOtherDark: { backgroundColor: '#001A4D', borderBottomLeftRadius: 4 },
   messageText: { fontSize: 14 },
   messageTextSelf: { color: '#fff' },
+  attachmentWrap: { marginTop: 6 },
+  attachmentImage: { width: 220, height: 220, borderRadius: 10, backgroundColor: '#0f172a' },
   attachmentLink: { marginTop: 4, fontSize: 13, textDecorationLine: 'underline' },
   messageTextLight: { color: '#232832' },
   messageTextDark: { color: '#F4F8FF' },
