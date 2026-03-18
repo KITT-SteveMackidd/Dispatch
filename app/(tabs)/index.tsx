@@ -68,6 +68,20 @@ type CreateEventRoleDraft = {
   assignedWorkerId: string | null;
 };
 
+type CreateEventRoleEditorState = {
+  open: boolean;
+  mode: 'add' | 'edit';
+  roleId: string | null;
+  name: string;
+};
+
+const INITIAL_CREATE_EVENT_ROLE_EDITOR: CreateEventRoleEditorState = {
+  open: false,
+  mode: 'add',
+  roleId: null,
+  name: '',
+};
+
 type TemplateRoleDraft = {
   id: string;
   name: string;
@@ -128,6 +142,7 @@ export default function EventsScreen() {
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
+  const [createEventRoleEditor, setCreateEventRoleEditor] = useState<CreateEventRoleEditorState>(INITIAL_CREATE_EVENT_ROLE_EDITOR);
   const [optimisticCreatedEvents, setOptimisticCreatedEvents] = useState<DispatchEvent[]>([]);
   const [rolePickerRoleId, setRolePickerRoleId] = useState<string | null>(null);
   const [assignmentBusyKey, setAssignmentBusyKey] = useState<string | null>(null);
@@ -1037,6 +1052,50 @@ export default function EventsScreen() {
   const rolePickerTarget = createEventRolesDraft.find((role) => role.id === rolePickerRoleId) || null;
   const isEditingTemplate = !!editingTemplateId;
 
+  const openAddCreateEventRoleEditor = () => {
+    setCreateEventRoleEditor({ open: true, mode: 'add', roleId: null, name: '' });
+  };
+
+  const openEditCreateEventRoleEditor = (role: CreateEventRoleDraft) => {
+    setCreateEventRoleEditor({ open: true, mode: 'edit', roleId: role.id, name: role.name });
+  };
+
+  const closeCreateEventRoleEditor = () => {
+    setCreateEventRoleEditor(INITIAL_CREATE_EVENT_ROLE_EDITOR);
+  };
+
+  const saveCreateEventRoleEditor = () => {
+    const nextName = createEventRoleEditor.name.trim();
+    if (!nextName.length) {
+      Alert.alert('Role name required', 'Please enter a role name.');
+      return;
+    }
+
+    if (createEventRoleEditor.mode === 'add') {
+      setCreateEventRolesDraft((prev) => [
+        ...prev,
+        {
+          id: `role-${Date.now()}-${prev.length + 1}`,
+          name: nextName,
+          tasks: [],
+          assignedWorkerId: null,
+        },
+      ]);
+      closeCreateEventRoleEditor();
+      return;
+    }
+
+    if (!createEventRoleEditor.roleId) return;
+    setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === createEventRoleEditor.roleId ? { ...role, name: nextName } : role)));
+    closeCreateEventRoleEditor();
+  };
+
+  const deleteCreateEventRoleDraft = (roleId: string) => {
+    setCreateEventRolesDraft((prev) => prev.filter((role) => role.id !== roleId));
+    setRolePickerRoleId((prev) => (prev === roleId ? null : prev));
+    setCreateEventRoleEditor((prev) => (prev.roleId === roleId ? INITIAL_CREATE_EVENT_ROLE_EDITOR : prev));
+  };
+
   const assignWorkerToCreateEventRole = (workerId: string) => {
     if (!rolePickerRoleId) return;
     setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === rolePickerRoleId ? { ...role, assignedWorkerId: workerId } : role)));
@@ -1174,6 +1233,7 @@ export default function EventsScreen() {
     setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
     setCreateEventRolesDraft(buildCreateEventRolesDraft(selectedTemplate));
     setRolePickerRoleId(null);
+    setCreateEventRoleEditor(INITIAL_CREATE_EVENT_ROLE_EDITOR);
   }, [createEventDrawerOpen, selectedTemplate?.id]);
 
   const handleRoleNotificationResponse = async (notificationId: string, response: 'accept' | 'decline') => {
@@ -1191,6 +1251,13 @@ export default function EventsScreen() {
   const handleCreateEvent = async () => {
     if (!profile?.uid || !selectedTemplate) return;
 
+    const sanitizedRoles = createEventRolesDraft
+      .map((role, index) => ({
+        ...role,
+        name: role.name.trim() || `Role ${index + 1}`,
+      }))
+      .filter((role) => role.name.length > 0);
+
     try {
       const createdEvent = await createDispatchEvent({
         managerId: profile.uid,
@@ -1199,7 +1266,7 @@ export default function EventsScreen() {
         time: eventTimeDraft,
         location: eventLocationDraft,
         description: eventDescriptionDraft,
-        roles: createEventRolesDraft,
+        roles: sanitizedRoles,
       });
       setOptimisticCreatedEvents((prev) => [createdEvent, ...prev.filter((item) => item.id !== createdEvent.id)]);
       Alert.alert('Event created', 'Your event has been created and added to upcoming assignments.');
@@ -1549,7 +1616,16 @@ export default function EventsScreen() {
             </View>
 
             <View style={styles.formField}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Roles needed for this event</Text>
+              <View style={styles.templateHeaderRow}>
+                <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Roles needed for this event</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Add role to event"
+                  style={[styles.templateAddButton, isDarkMode ? styles.templateAddButtonDark : styles.templateAddButtonLight]}
+                  onPress={openAddCreateEventRoleEditor}>
+                  <Text style={[styles.templateAddButtonText, isDarkMode ? styles.templateAddButtonTextDark : styles.templateAddButtonTextLight]}>+ Add Role</Text>
+                </Pressable>
+              </View>
               <View style={[styles.rolePreviewContainer, isDarkMode ? styles.rolePreviewContainerDark : styles.rolePreviewContainerLight]}>
                 {createEventRolesDraft.length ? (
                   createEventRolesDraft.map((role) => {
@@ -1584,6 +1660,22 @@ export default function EventsScreen() {
                             Assigned: {assignedLabel}
                           </Text>
                         ) : null}
+                        <View style={styles.templateActionRow}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Edit ${role.name} role`}
+                            onPress={() => openEditCreateEventRoleEditor(role)}
+                            style={[styles.templateActionButton, isDarkMode ? styles.templateActionButtonDark : styles.templateActionButtonLight]}>
+                            <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateActionButtonTextDark : styles.templateActionButtonTextLight]}>Edit</Text>
+                          </Pressable>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Delete ${role.name} role`}
+                            onPress={() => deleteCreateEventRoleDraft(role.id)}
+                            style={[styles.templateActionButton, isDarkMode ? styles.templateDeleteButtonDark : styles.templateDeleteButtonLight]}>
+                            <Text style={[styles.templateActionButtonText, isDarkMode ? styles.templateDeleteButtonTextDark : styles.templateDeleteButtonTextLight]}>Delete</Text>
+                          </Pressable>
+                        </View>
                       </View>
                     );
                   })
@@ -1750,6 +1842,43 @@ export default function EventsScreen() {
             </ScrollView>
             <Pressable style={styles.drawerClose} onPress={() => setRolePickerRoleId(null)}>
               <Text style={styles.drawerCloseText}>Done</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={createEventRoleEditor.open} animationType="slide" transparent onRequestClose={closeCreateEventRoleEditor}>
+        <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventRoleEditor}>
+          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>
+              {createEventRoleEditor.mode === 'add' ? 'Add Role' : 'Edit Role'}
+            </Text>
+            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
+              {createEventRoleEditor.mode === 'add' ? 'Create a role for this event.' : 'Update this event role name.'}
+            </Text>
+            <View style={styles.formField}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Role name</Text>
+              <TextInput
+                value={createEventRoleEditor.name}
+                onChangeText={(value) => setCreateEventRoleEditor((prev) => ({ ...prev, name: value }))}
+                placeholder="Example: Security"
+                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
+                autoFocus
+                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
+              />
+            </View>
+            <Pressable style={styles.drawerClose} onPress={saveCreateEventRoleEditor}>
+              <Text style={styles.drawerCloseText}>{createEventRoleEditor.mode === 'add' ? 'Add role' : 'Save role'}</Text>
+            </Pressable>
+            {createEventRoleEditor.mode === 'edit' && createEventRoleEditor.roleId ? (
+              <Pressable
+                style={[styles.drawerButton, styles.drawerDestructiveButton]}
+                onPress={() => deleteCreateEventRoleDraft(createEventRoleEditor.roleId as string)}>
+                <Text style={styles.drawerDestructiveButtonText}>Delete role</Text>
+              </Pressable>
+            ) : null}
+            <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateEventRoleEditor}>
+              <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
             </Pressable>
           </Pressable>
         </Pressable>
