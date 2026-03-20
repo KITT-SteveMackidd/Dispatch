@@ -12,6 +12,16 @@ if (owner) {
   config.owner = owner;
 }
 
+config.ios = {
+  ...(config.ios || {}),
+  bundleIdentifier: config.ios?.bundleIdentifier || 'com.smackidd.dispatch',
+};
+
+config.android = {
+  ...(config.android || {}),
+  package: config.android?.package || 'com.smackidd.dispatch',
+};
+
 config.runtimeVersion = {
   policy: 'appVersion',
 };
