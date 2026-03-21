@@ -15,6 +15,11 @@ if (owner) {
 config.ios = {
   ...(config.ios || {}),
   bundleIdentifier: config.ios?.bundleIdentifier || 'com.smackidd.dispatch',
+  infoPlist: {
+    ...(config.ios?.infoPlist || {}),
+    ITSAppUsesNonExemptEncryption:
+      config.ios?.infoPlist?.ITSAppUsesNonExemptEncryption ?? false,
+  },
 };
 
 config.android = {
@@ -25,6 +30,10 @@ config.android = {
 config.runtimeVersion = {
   policy: 'appVersion',
 };
+
+config.plugins = Array.from(
+  new Set([...(config.plugins || []), 'expo-web-browser'])
+);
 
 config.updates = {
   ...(config.updates || {}),
