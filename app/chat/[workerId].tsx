@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { Audio } from 'expo-av';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { buildChatThreadId, ChatAttachment, markTeamChatRead, sendChatMessage, uploadChatAttachment, watchChatMessages } from '@/services/dispatch';
@@ -45,7 +44,6 @@ export default function WorkerChatScreen() {
   const [showVoicePanel, setShowVoicePanel] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<Array<{ uri: string; name: string; kind: 'image' | 'file' | 'audio'; mimeType?: string }>>([]);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [sending, setSending] = useState(false);
 
   const threadId = useMemo(() => {
@@ -106,7 +104,6 @@ export default function WorkerChatScreen() {
   const attachmentOptions = [
     { key: 'photo', label: 'Photo', kind: 'image' as const },
     { key: 'file', label: 'File', kind: 'file' as const },
-    { key: 'voice', label: 'Voice Note', kind: 'audio' as const },
   ];
   const voiceQuickPhrases = [
     'On my way now.',
@@ -139,41 +136,10 @@ export default function WorkerChatScreen() {
     setPendingAttachments((prev) => [...prev, { uri: asset.uri, name: asset.name || `file-${Date.now()}`, kind: 'file', mimeType: asset.mimeType }]);
   };
 
-  const startRecording = async () => {
-    const permission = await Audio.requestPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permission required', 'Microphone permission is required to record voice notes.');
-      return;
-    }
-
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-    const rec = new Audio.Recording();
-    await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-    await rec.startAsync();
-    setRecording(rec);
-    setIsListening(true);
-  };
-
-  const stopRecording = async () => {
-    if (!recording) return;
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    setRecording(null);
-    setIsListening(false);
-
-    if (uri) {
-      setPendingAttachments((prev) => [...prev, { uri, name: `voice-${Date.now()}.m4a`, kind: 'audio', mimeType: 'audio/m4a' }]);
-    }
-  };
-
   const handleAttachmentSelect = async (key: string) => {
     try {
       if (key === 'photo') await pickPhoto();
       if (key === 'file') await pickFile();
-      if (key === 'voice') {
-        if (recording) await stopRecording();
-        else await startRecording();
-      }
     } catch (error) {
       Alert.alert('Attachment error', error instanceof Error ? error.message : 'Unable to attach file.');
     } finally {
@@ -183,8 +149,7 @@ export default function WorkerChatScreen() {
 
   const toggleVoiceListening = async () => {
     setShowVoicePanel(true);
-    if (recording) await stopRecording();
-    else await startRecording();
+    setIsListening((current) => !current);
   };
 
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
@@ -358,7 +323,7 @@ export default function WorkerChatScreen() {
         {showVoicePanel ? (
           <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
             <Text style={[styles.voiceHint, isDarkMode ? styles.voiceHintDark : styles.voiceHintLight]}>
-              {isListening ? 'Listening… tap phrase to insert transcript' : 'Talk-to-text paused'}
+              {isListening ? 'Quick voice phrases ready — tap one to insert it.' : 'Voice notes are temporarily disabled on iPhone builds; tap again to show quick phrases.'}
             </Text>
             <View style={styles.voicePhraseRow}>
               {voiceQuickPhrases.map((phrase) => (
