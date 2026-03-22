@@ -50,49 +50,55 @@ In GitHub -> **Settings -> Secrets and variables -> Actions**, add:
 - `EXPO_PUBLIC_EAS_PROJECT_ID`
   - The UUID from `eas project:info`
 
-## 3) Create the first development build
+## 3) Create the first standalone preview build
+
+For an installable app that opens **without a local dev server** and can receive OTA updates from `master`:
 
 From GitHub:
 
 - Open **Actions**
-- Run **Build development client**
-- Choose `android`, `ios`, or `all`
+- Run **Build preview app**
+- Choose `ios`, `android`, or `all`
 
 Or locally:
 
 ```bash
-npx eas build --profile development --platform android
-npx eas build --profile development --platform ios
+npx eas build --profile preview --platform ios
+npx eas build --profile preview --platform android
 ```
 
-## 4) Install the development build on your phone
+## 4) Install the preview build on your phone
 
 When the build finishes, Expo/EAS will provide an install page / QR code.
 
 - **Android:** open the install link or scan the QR code on the device, then install the APK
-- **iPhone:** install through the EAS device install flow / TestFlight / ad hoc flow prompted by Expo
+- **iPhone:** install through the EAS device install flow / ad hoc install prompted by Expo
 
-Once the development client is installed, start the app with:
+This preview build opens as a normal standalone app and does **not** require `npx expo start --dev-client`.
+
+## 5) Use remote updates from `master`
+
+After the preview build is installed:
+
+- push JS/assets changes to `master`
+- GitHub Actions publishes an **EAS Update** to the `production` branch
+- the installed preview app will fetch that update on launch because the preview profile is pinned to the same update channel
+
+## Optional: keep the development client too
+
+The **Build development client** workflow still exists for debugging and local dev-server work:
 
 ```bash
 npx expo start --dev-client
 ```
 
-You can also open the project from the installed dev client.
-
-## 5) Use remote updates from `master`
-
-After the dev client is installed:
-
-- push JS/assets changes to `master`
-- GitHub Actions publishes an **EAS Update** to the `production` branch
-- the installed app will fetch that update on launch
+Use that only when you specifically want live local development.
 
 ## Important note about native changes
 
 **EAS Update only delivers JS, images, fonts, and other bundled assets.**
 
-If you change native dependencies, config plugins, permissions, app icons/splash, or anything requiring a native rebuild, run the **Build development client** workflow again.
+If you change native dependencies, config plugins, permissions, app icons/splash, or anything requiring a native rebuild, run the **Build preview app** workflow again.
 
 ## Optional local commands
 
