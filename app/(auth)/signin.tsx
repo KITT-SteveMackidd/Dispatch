@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -18,14 +18,17 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import Constants from 'expo-constants';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { authPalettes, authStyles } from '@/components/auth/authStyles';
 
 WebBrowser.maybeCompleteAuthSession();
+
+const logoSource = require('../../assets/images/dispatch-splash-logo.jpg');
 
 export default function SignInScreen() {
   const router = useRouter();
   const { signIn, signInWithGoogle, signInWithApple, sendPasswordReset } = useSession();
   const { resolvedThemeMode } = useThemeMode();
-  const isDarkMode = resolvedThemeMode === 'dark';
+  const palette = authPalettes[resolvedThemeMode === 'dark' ? 'dark' : 'light'];
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -132,98 +135,120 @@ export default function SignInScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}
+      style={[authStyles.screen, { backgroundColor: palette.background }]}
       behavior={Platform.select({ ios: 'padding', android: 'height' })}>
-      <Pressable style={styles.flex} onPress={Keyboard.dismiss}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-          <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
-            <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Dispatch</Text>
-            <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Welcome back</Text>
-            <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>Sign in to keep your events moving.</Text>
+      <View style={[authStyles.backgroundGlowTop, { backgroundColor: palette.glow }]} />
+      <View style={[authStyles.backgroundGlowBottom, { backgroundColor: palette.glow }]} />
+      <Pressable style={authStyles.flex} onPress={Keyboard.dismiss}>
+        <ScrollView contentContainerStyle={authStyles.scrollContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+          <View style={authStyles.logoWrap}>
+            <Image source={logoSource} style={authStyles.logo} resizeMode="cover" />
+            <Text style={[authStyles.brand, { color: palette.accent }]}>Dispatch</Text>
+          </View>
 
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              placeholder="Email"
-              returnKeyType="next"
-              onSubmitEditing={() => passwordInputRef.current?.focus()}
-              blurOnSubmit={false}
-              placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
-            />
-            <TextInput
-              ref={passwordInputRef}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              placeholder="Password"
-              returnKeyType="go"
-              onSubmitEditing={onSignIn}
-              placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
-            />
+          <View
+            style={[
+              authStyles.card,
+              {
+                backgroundColor: palette.card,
+                borderColor: palette.cardBorder,
+                shadowColor: palette.shadowColor,
+              },
+            ]}>
+            <Text style={[authStyles.eyebrow, { color: palette.accent }]}>Welcome back</Text>
+            <Text style={[authStyles.title, { color: palette.text }]}>Sign in to Dispatch</Text>
+            <Text style={[authStyles.subtitle, { color: palette.mutedText }]}>Manage your events, crew, and timelines from one polished workspace.</Text>
 
-            <Pressable onPress={onForgotPassword} disabled={resetting}>
-              <Text style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>{resetting ? 'Sending reset email...' : 'Forgot password?'}</Text>
-            </Pressable>
+            <View style={authStyles.form}>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholder="Email address"
+                returnKeyType="next"
+                onSubmitEditing={() => passwordInputRef.current?.focus()}
+                blurOnSubmit={false}
+                placeholderTextColor={palette.placeholder}
+                style={[
+                  authStyles.input,
+                  {
+                    backgroundColor: palette.inputBackground,
+                    color: palette.text,
+                    borderColor: palette.inputBorder,
+                  },
+                ]}
+              />
+              <TextInput
+                ref={passwordInputRef}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                placeholder="Password"
+                returnKeyType="go"
+                onSubmitEditing={onSignIn}
+                placeholderTextColor={palette.placeholder}
+                style={[
+                  authStyles.input,
+                  {
+                    backgroundColor: palette.inputBackground,
+                    color: palette.text,
+                    borderColor: palette.inputBorder,
+                  },
+                ]}
+              />
 
-            <Pressable style={[styles.btn, loading && styles.disabled]} onPress={onSignIn} disabled={loading}>
-              <Text style={styles.btnText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
-            </Pressable>
-
-            {oauthEnabled ? (
-              <>
-                <Pressable style={[styles.oauthBtn, !googleRequest && styles.disabled]} onPress={onGoogleSignIn} disabled={!googleRequest || loading}>
-                  <Text style={styles.oauthBtnText}>Continue with Google</Text>
+              <View style={authStyles.helperRow}>
+                <Pressable onPress={onForgotPassword} disabled={resetting}>
+                  <Text style={[authStyles.linkText, { color: palette.accent }]}>{resetting ? 'Sending reset email…' : 'Forgot password?'}</Text>
                 </Pressable>
+              </View>
 
-                {Platform.OS === 'ios' ? (
-                  <Pressable style={styles.oauthBtn} onPress={onAppleSignIn} disabled={loading}>
-                    <Text style={styles.oauthBtnText}>Continue with Apple</Text>
+              <Pressable
+                style={({ pressed }) => [
+                  authStyles.button,
+                  { backgroundColor: palette.primary, opacity: loading ? 0.65 : 1 },
+                  pressed && !loading ? authStyles.buttonPressed : null,
+                ]}
+                onPress={onSignIn}
+                disabled={loading}>
+                <Text style={authStyles.buttonText}>{loading ? 'Signing in…' : 'Sign in'}</Text>
+              </Pressable>
+
+              {oauthEnabled ? (
+                <>
+                  <Pressable
+                    style={[
+                      authStyles.secondaryButton,
+                      { backgroundColor: palette.inputBackground, borderColor: palette.inputBorder, opacity: !googleRequest || loading ? 0.65 : 1 },
+                    ]}
+                    onPress={onGoogleSignIn}
+                    disabled={!googleRequest || loading}>
+                    <Text style={[authStyles.secondaryButtonText, { color: palette.text }]}>Continue with Google</Text>
                   </Pressable>
-                ) : null}
-              </>
-            ) : null}
 
-            <Link href="/(auth)/signup" style={[styles.link, isDarkMode ? styles.linkDark : styles.linkLight]}>
-              Create an account
-            </Link>
+                  {Platform.OS === 'ios' ? (
+                    <Pressable
+                      style={[
+                        authStyles.secondaryButton,
+                        { backgroundColor: palette.inputBackground, borderColor: palette.inputBorder, opacity: loading ? 0.65 : 1 },
+                      ]}
+                      onPress={onAppleSignIn}
+                      disabled={loading}>
+                      <Text style={[authStyles.secondaryButtonText, { color: palette.text }]}>Continue with Apple</Text>
+                    </Pressable>
+                  ) : null}
+                </>
+              ) : null}
+            </View>
+
+            <View style={authStyles.linkRow}>
+              <Text style={[authStyles.linkLabel, { color: palette.mutedText }]}>New here?</Text>
+              <Link href="/(auth)/signup" style={[authStyles.linkText, { color: palette.accent }]}>Create an account</Link>
+            </View>
           </View>
         </ScrollView>
       </Pressable>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#101A2F' },
-  flex: { flex: 1 },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 20 },
-  card: { borderRadius: 18, borderWidth: 1, padding: 20 },
-  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
-  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
-  eyebrow: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
-  eyebrowLight: { color: '#2563eb' },
-  eyebrowDark: { color: '#0EC3C9' },
-  title: { fontSize: 30, fontWeight: '700', marginTop: 4 },
-  titleLight: { color: '#232832' },
-  titleDark: { color: '#F4F8FF' },
-  subtitle: { marginBottom: 18, marginTop: 6 },
-  subtitleLight: { color: '#64748b' },
-  subtitleDark: { color: '#F4F8FF' },
-  input: { padding: 13, borderRadius: 12, marginBottom: 10, borderWidth: 1 },
-  inputLight: { backgroundColor: '#f8fafc', color: '#232832', borderColor: '#e2e8f0' },
-  inputDark: { backgroundColor: '#1A2540', color: '#F4F8FF', borderColor: '#001A4D' },
-  btn: { backgroundColor: '#2563eb', borderRadius: 12, padding: 13, alignItems: 'center', marginTop: 8 },
-  oauthBtn: { backgroundColor: '#0f172a', borderRadius: 12, padding: 12, alignItems: 'center', marginTop: 8 },
-  oauthBtnText: { color: 'white', fontWeight: '700' },
-  disabled: { opacity: 0.65 },
-  btnText: { color: 'white', fontWeight: '700' },
-  link: { marginTop: 12, fontWeight: '600' },
-  linkLight: { color: '#2563eb' },
-  linkDark: { color: '#0EC3C9' },
-});
