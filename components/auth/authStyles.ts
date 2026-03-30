@@ -31,18 +31,18 @@ type AuthPalette = {
 
 export const authPalettes: Record<'light' | 'dark', AuthPalette> = {
   light: {
-    background: '#F4F7F7',
-    glow: '#D7F3F1',
+    background: '#F3F6F7',
+    glow: '#D8EFED',
     card: '#FFFCF8',
-    cardBorder: '#E6ECE8',
-    text: '#142126',
-    mutedText: '#667781',
+    cardBorder: '#E3EBE8',
+    text: '#122027',
+    mutedText: '#667680',
     inputBackground: '#FFFFFF',
-    inputBorder: '#D6E1DE',
+    inputBorder: '#D4DFDC',
     placeholder: '#8AA09A',
-    primary: '#14B8B0',
-    primaryPressed: '#0F9F98',
-    accent: '#D97745',
+    primary: '#16B6AE',
+    primaryPressed: '#109B95',
+    accent: '#D67B48',
     pillBackground: '#F2F5F4',
     pillBorder: '#D8E2DE',
     pillActiveBackground: '#DBF4F2',
@@ -80,6 +80,18 @@ export const authStyles = StyleSheet.create<{
   scrollContent: ViewStyle;
   backgroundGlowTop: ViewStyle;
   backgroundGlowBottom: ViewStyle;
+  shell: ViewStyle;
+  heroPanel: ViewStyle;
+  heroBadge: ViewStyle;
+  heroBadgeText: TextStyle;
+  heroTitle: TextStyle;
+  heroBody: TextStyle;
+  heroList: ViewStyle;
+  heroListItem: ViewStyle;
+  heroBullet: ViewStyle;
+  heroListText: TextStyle;
+  heroFootnote: TextStyle;
+  formPanel: ViewStyle;
   logoWrap: ViewStyle;
   logo: ImageStyle;
   brand: TextStyle;
@@ -111,7 +123,7 @@ export const authStyles = StyleSheet.create<{
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingVertical: 28,
   },
   backgroundGlowTop: {
@@ -132,9 +144,84 @@ export const authStyles = StyleSheet.create<{
     borderRadius: 999,
     opacity: 0.22,
   },
+  shell: {
+    width: '100%',
+    maxWidth: 1060,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    borderRadius: 32,
+    overflow: 'hidden',
+  },
+  heroPanel: {
+    flexGrow: 1,
+    flexBasis: 320,
+    minHeight: 300,
+    paddingHorizontal: 28,
+    paddingVertical: 30,
+    justifyContent: 'space-between',
+    gap: 20,
+  },
+  heroBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  heroBadgeText: {
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    fontFamily: authFont.semibold,
+  },
+  heroTitle: {
+    fontSize: 34,
+    lineHeight: 40,
+    fontFamily: authFont.extrabold,
+    maxWidth: 320,
+  },
+  heroBody: {
+    fontSize: 15,
+    lineHeight: 24,
+    fontFamily: authFont.regular,
+    maxWidth: 360,
+  },
+  heroList: {
+    gap: 12,
+  },
+  heroListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  heroBullet: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+  },
+  heroListText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: authFont.semibold,
+  },
+  heroFootnote: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: authFont.regular,
+  },
+  formPanel: {
+    flexGrow: 1,
+    flexBasis: 360,
+    minWidth: 300,
+    paddingHorizontal: 22,
+    paddingVertical: 22,
+  },
   logoWrap: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   logo: {
     width: 72,
@@ -183,8 +270,8 @@ export const authStyles = StyleSheet.create<{
     gap: 12,
   },
   input: {
-    minHeight: 54,
-    borderRadius: 16,
+    minHeight: 56,
+    borderRadius: 18,
     borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -219,12 +306,12 @@ export const authStyles = StyleSheet.create<{
     fontFamily: authFont.semibold,
   },
   button: {
-    minHeight: 56,
+    minHeight: 58,
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 18,
-    marginTop: 6,
+    marginTop: 8,
   },
   buttonPressed: {
     opacity: 0.92,
