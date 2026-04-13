@@ -1,8 +1,10 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { buildChatThreadId, ChatAttachment, markTeamChatRead, sendChatMessage, uploadChatAttachment, watchChatMessages } from '@/services/dispatch';
@@ -15,9 +17,18 @@ type ChatMessage = {
   attachments?: ChatAttachment[];
 };
 
+type PendingAttachment = {
+  uri: string;
+  name: string;
+  kind: 'image' | 'file';
+  mimeType?: string;
+};
+
 export default function WorkerChatScreen() {
   const { profile } = useSession();
   const { resolvedThemeMode } = useThemeMode();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [draft, setDraft] = useState('');
   const listRef = useRef<FlatList<ChatMessage>>(null);
@@ -41,10 +52,23 @@ export default function WorkerChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
-  const [showVoicePanel, setShowVoicePanel] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [pendingAttachments, setPendingAttachments] = useState<Array<{ uri: string; name: string; kind: 'image' | 'file' | 'audio'; mimeType?: string }>>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sending, setSending] = useState(false);
+
+  const headerTitle = isTeamBroadcast ? (params.teamName || workerLabel) : workerLabel;
+  const headerSubtitle = useMemo(() => {
+    if (isTeamBroadcast) {
+      if (params.teamThreadPath?.trim()) return params.teamThreadPath.trim();
+      if (broadcastCount) return `${broadcastCount} member${broadcastCount === 1 ? '' : 's'}`;
+      return 'Team chat';
+    }
+
+    if (params.teamName?.trim()) return params.teamName.trim();
+    if (params.eventName?.trim()) return params.eventName.trim();
+    return '';
+  }, [broadcastCount, isTeamBroadcast, params.eventName, params.teamName, params.teamThreadPath]);
+
+  const headerInitial = headerTitle.trim().slice(0, 1).toUpperCase() || 'C';
 
   const threadId = useMemo(() => {
     if (!profile) return null;
@@ -75,7 +99,7 @@ export default function WorkerChatScreen() {
           senderId: item.senderId,
           text: item.text,
           attachments: item.attachments || [],
-          at: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          at: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase(),
         };
       });
       setMessages(mapped);
@@ -91,25 +115,11 @@ export default function WorkerChatScreen() {
     markTeamChatRead({ userId: profile.uid, teamId }).catch(() => undefined);
   }, [profile, teamId, threadId]);
 
-  const headerSubtitle = useMemo(() => {
-    if (isTeamBroadcast) {
-      return `Team broadcast${broadcastCount ? ` • ${broadcastCount} recipients` : ''}`;
-    }
-    return 'Direct manager ↔ worker chat';
-  }, [broadcastCount, isTeamBroadcast]);
-
-
-
   const emojiOptions = ['😀', '😂', '😍', '🙏', '👍', '🔥', '✅', '🎉', '📍', '⏰'];
   const attachmentOptions = [
-    { key: 'photo', label: 'Photo', kind: 'image' as const },
-    { key: 'file', label: 'File', kind: 'file' as const },
-  ];
-  const voiceQuickPhrases = [
-    'On my way now.',
-    'Task completed ✅',
-    'Running 10 minutes behind.',
-    'Need help at this station.',
+    { key: 'file', label: 'Document attach', icon: 'attach-file' as const },
+    { key: 'photo', label: 'Add photos', icon: 'photo-library' as const },
+    { key: 'camera', label: 'Take photo', icon: 'photo-camera' as const },
   ];
 
   const appendToDraft = (snippet: string) => {
@@ -129,6 +139,19 @@ export default function WorkerChatScreen() {
     setPendingAttachments((prev) => [...prev, { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, kind: 'image', mimeType: asset.mimeType }]);
   };
 
+  const takePhoto = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Camera permission is required to take a photo.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    setPendingAttachments((prev) => [...prev, { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, kind: 'image', mimeType: asset.mimeType }]);
+  };
+
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
     if (result.canceled || !result.assets?.length) return;
@@ -140,6 +163,7 @@ export default function WorkerChatScreen() {
     try {
       if (key === 'photo') await pickPhoto();
       if (key === 'file') await pickFile();
+      if (key === 'camera') await takePhoto();
     } catch (error) {
       Alert.alert('Attachment error', error instanceof Error ? error.message : 'Unable to attach file.');
     } finally {
@@ -147,13 +171,9 @@ export default function WorkerChatScreen() {
     }
   };
 
-  const toggleVoiceListening = async () => {
-    setShowVoicePanel(true);
-    setIsListening((current) => !current);
-  };
-
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
   const hasPendingImage = pendingAttachments.some((attachment) => attachment.kind === 'image');
+
   const sendMessage = async () => {
     const text = draft.trim();
     if ((!text && !pendingAttachments.length) || !profile || !threadId || sending) return;
@@ -188,6 +208,8 @@ export default function WorkerChatScreen() {
 
       setDraft('');
       setPendingAttachments([]);
+      setShowAttachmentPicker(false);
+      setShowEmojiPicker(false);
     } catch (error) {
       Alert.alert('Unable to send', error instanceof Error ? error.message : 'Please try again.');
     } finally {
@@ -199,32 +221,52 @@ export default function WorkerChatScreen() {
     <KeyboardAvoidingView
       style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}
       behavior={Platform.select({ ios: 'padding', android: 'height' })}
-      keyboardVerticalOffset={Platform.select({ ios: 84, android: 0 })}
+      keyboardVerticalOffset={Platform.select({ ios: 20, android: 0 })}
     >
-      <Stack.Screen options={{ title: workerLabel }} />
+      <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={[styles.header, isDarkMode ? styles.headerDark : styles.headerLight]}>
-        <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{workerLabel}</Text>
-        <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>{headerSubtitle}</Text>
-        {params.teamName ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Team: {params.teamName}</Text> : null}
-        {params.teamThreadPath ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Thread: {params.teamThreadPath}</Text> : null}
-        {params.eventName ? <Text style={[styles.context, isDarkMode ? styles.contextDark : styles.contextLight]}>Event: {params.eventName}</Text> : null}
+      <View style={[styles.headerShell, isDarkMode ? styles.headerShellDark : styles.headerShellLight, { paddingTop: insets.top }]}>
+        <View style={[styles.headerRow, isDarkMode ? styles.headerRowDark : styles.headerRowLight]}>
+          <Pressable style={styles.backButton} onPress={() => router.back()} hitSlop={8}>
+            <MaterialIcons name="arrow-back-ios" size={28} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+          </Pressable>
+
+          <View style={styles.headerCenter}>
+            <View style={[styles.headerAvatar, isDarkMode ? styles.headerAvatarDark : styles.headerAvatarLight]}>
+              <Text style={[styles.headerAvatarText, isDarkMode ? styles.headerAvatarTextDark : styles.headerAvatarTextLight]}>{headerInitial}</Text>
+            </View>
+            <View style={styles.headerCopy}>
+              <Text style={[styles.headerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]} numberOfLines={1}>
+                {headerTitle}
+              </Text>
+              {headerSubtitle ? (
+                <Text style={[styles.headerSubtitle, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]} numberOfLines={1}>
+                  {headerSubtitle}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+
+          <View style={styles.headerSpacer} />
+        </View>
       </View>
 
       <FlatList
         ref={listRef}
         data={messages}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.thread}
+        contentContainerStyle={[styles.thread, { paddingBottom: 20 }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         renderItem={({ item: message }) => {
           const mine = !!profile && message.senderId === profile.uid;
           return (
-            <View style={[styles.row, mine ? styles.rowSelf : styles.rowOther]}>
-              <View style={[styles.bubble, mine ? styles.bubbleSelf : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
+            <View style={[styles.messageRow, mine ? styles.messageRowSelf : styles.messageRowOther]}>
+              <View style={[styles.bubble, mine ? (isDarkMode ? styles.bubbleSelfDark : styles.bubbleSelfLight) : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
                 {message.text ? (
-                  <Text style={[styles.messageText, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>{message.text}</Text>
+                  <Text style={[styles.messageText, mine ? styles.messageTextSelf : styles.messageTextLight]}>
+                    {message.text}
+                  </Text>
                 ) : null}
                 {(message.attachments || []).map((attachment) => (
                   <View key={attachment.id} style={styles.attachmentWrap}>
@@ -233,85 +275,36 @@ export default function WorkerChatScreen() {
                         <Image source={{ uri: attachment.url }} style={styles.attachmentImage} resizeMode="cover" />
                       </Pressable>
                     ) : (
-                      <Pressable onPress={() => Linking.openURL(attachment.url)}>
-                        <Text style={[styles.attachmentLink, mine ? styles.messageTextSelf : isDarkMode ? styles.messageTextDark : styles.messageTextLight]}>
-                          📎 {attachment.name}
+                      <Pressable style={styles.attachmentFile} onPress={() => Linking.openURL(attachment.url)}>
+                        <MaterialIcons name="attach-file" size={16} color={mine ? '#F7F7F7' : '#121212'} />
+                        <Text style={[styles.attachmentLink, mine ? styles.messageTextSelf : styles.messageTextLight]} numberOfLines={1}>
+                          {attachment.name}
                         </Text>
                       </Pressable>
                     )}
                   </View>
                 ))}
-                <Text style={[styles.time, mine ? styles.timeSelf : isDarkMode ? styles.timeDark : styles.timeLight]}>{message.at}</Text>
+                <Text style={[styles.time, mine ? styles.timeSelf : styles.timeLight]}>{message.at}</Text>
               </View>
             </View>
           );
         }}
       />
 
-      <View style={[styles.composer, isDarkMode ? styles.composerDark : styles.composerLight]}>
-        <View style={styles.composerTools}>
-          <Pressable
-            style={[styles.toolButton, isDarkMode ? styles.toolButtonDark : styles.toolButtonLight]}
-            onPress={() => {
-              setShowAttachmentPicker((prev) => !prev);
-              setShowEmojiPicker(false);
-              setShowVoicePanel(false);
-            }}>
-            <Text style={styles.toolIcon}>＋</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.toolButton, isDarkMode ? styles.toolButtonDark : styles.toolButtonLight]}
-            onPress={() => {
-              setShowEmojiPicker((prev) => !prev);
-              setShowAttachmentPicker(false);
-              setShowVoicePanel(false);
-            }}>
-            <Text style={styles.toolIcon}>😊</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.toolButton, isDarkMode ? styles.toolButtonDark : styles.toolButtonLight, isListening && styles.toolButtonActive]}
-            onPress={toggleVoiceListening}>
-            <Text style={styles.toolIcon}>🎤</Text>
-          </Pressable>
-        </View>
-
-        {pendingAttachments.length ? (
-          <View style={styles.pendingAttachmentRow}>
-            {pendingAttachments.map((attachment, index) => (
-              <View key={`${attachment.name}-${index}`} style={styles.pendingAttachmentChip}>
-                <Text style={styles.pendingAttachmentText}>{attachment.kind === 'image' ? '🖼️' : attachment.kind === 'audio' ? '🎤' : '📎'} {attachment.name}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-
-        <View style={styles.inputRow}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder={hasPendingImage ? 'Add a caption…' : isTeamBroadcast ? 'Message the whole team…' : 'Type a message…'}
-            placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-            style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
-            returnKeyType="send"
-            onSubmitEditing={sendMessage}
-          />
-          <Pressable style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend || sending}>
-            <Text style={styles.sendText}>{sending ? '…' : 'Send'}</Text>
-          </Pressable>
-        </View>
-
+      <View style={[styles.composer, isDarkMode ? styles.composerDark : styles.composerLight, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         {showAttachmentPicker ? (
-          <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
+          <View style={[styles.actionMenu, isDarkMode ? styles.actionMenuDark : styles.actionMenuLight]}>
             {attachmentOptions.map((option) => (
-              <Pressable key={option.key} style={styles.pickerChip} onPress={() => handleAttachmentSelect(option.key)}>
-                <Text style={[styles.pickerChipText, isDarkMode ? styles.pickerChipTextDark : styles.pickerChipTextLight]}>{option.label}</Text>
+              <Pressable key={option.key} style={styles.actionMenuItem} onPress={() => handleAttachmentSelect(option.key)}>
+                <MaterialIcons name={option.icon} size={18} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+                <Text style={[styles.actionMenuText, isDarkMode ? styles.actionMenuTextDark : styles.actionMenuTextLight]}>{option.label}</Text>
               </Pressable>
             ))}
           </View>
         ) : null}
 
         {showEmojiPicker ? (
-          <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
+          <View style={[styles.emojiMenu, isDarkMode ? styles.actionMenuDark : styles.actionMenuLight]}>
             {emojiOptions.map((emoji) => (
               <Pressable key={emoji} style={styles.emojiChip} onPress={() => appendToDraft(emoji)}>
                 <Text style={styles.emojiText}>{emoji}</Text>
@@ -320,20 +313,54 @@ export default function WorkerChatScreen() {
           </View>
         ) : null}
 
-        {showVoicePanel ? (
-          <View style={[styles.picker, isDarkMode ? styles.pickerDark : styles.pickerLight]}>
-            <Text style={[styles.voiceHint, isDarkMode ? styles.voiceHintDark : styles.voiceHintLight]}>
-              {isListening ? 'Quick voice phrases ready — tap one to insert it.' : 'Voice notes are temporarily disabled on iPhone builds; tap again to show quick phrases.'}
-            </Text>
-            <View style={styles.voicePhraseRow}>
-              {voiceQuickPhrases.map((phrase) => (
-                <Pressable key={phrase} style={styles.pickerChip} onPress={() => appendToDraft(phrase)}>
-                  <Text style={[styles.pickerChipText, isDarkMode ? styles.pickerChipTextDark : styles.pickerChipTextLight]}>{phrase}</Text>
-                </Pressable>
-              ))}
-            </View>
+        {pendingAttachments.length ? (
+          <View style={styles.pendingAttachmentRow}>
+            {pendingAttachments.map((attachment, index) => (
+              <View key={`${attachment.name}-${index}`} style={[styles.pendingAttachmentChip, isDarkMode ? styles.pendingAttachmentChipDark : styles.pendingAttachmentChipLight]}>
+                <MaterialIcons name={attachment.kind === 'image' ? 'image' : 'attach-file'} size={14} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+                <Text style={[styles.pendingAttachmentText, isDarkMode ? styles.pendingAttachmentTextDark : styles.pendingAttachmentTextLight]} numberOfLines={1}>
+                  {attachment.name}
+                </Text>
+              </View>
+            ))}
           </View>
         ) : null}
+
+        <View style={styles.inputRow}>
+          <Pressable
+            style={styles.plusButton}
+            hitSlop={8}
+            onPress={() => {
+              setShowAttachmentPicker((prev) => !prev);
+              setShowEmojiPicker(false);
+            }}>
+            <MaterialIcons name="add" size={30} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+          </Pressable>
+
+          <View style={[styles.inputShell, isDarkMode ? styles.inputShellDark : styles.inputShellLight]}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              placeholder={hasPendingImage ? 'Add a caption' : isTeamBroadcast ? 'Message the team' : 'Type a message'}
+              placeholderTextColor={isDarkMode ? 'rgba(244,248,255,0.5)' : 'rgba(18,18,18,0.4)'}
+              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+              returnKeyType="send"
+              onSubmitEditing={sendMessage}
+            />
+            <Pressable
+              hitSlop={8}
+              onPress={() => {
+                setShowEmojiPicker((prev) => !prev);
+                setShowAttachmentPicker(false);
+              }}>
+              <MaterialIcons name="emoji-emotions" size={24} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+            </Pressable>
+          </View>
+
+          <Pressable style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend || sending} hitSlop={8}>
+            <MaterialIcons name="send" size={32} color="#0EC3C9" />
+          </Pressable>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -341,70 +368,128 @@ export default function WorkerChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  containerLight: { backgroundColor: '#e2e8f0' },
-  containerDark: { backgroundColor: '#101A2F' },
-  header: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1 },
-  headerLight: { backgroundColor: '#fff', borderBottomColor: '#e2e8f0' },
-  headerDark: { backgroundColor: '#1A2540', borderBottomColor: '#001A4D' },
-  title: { fontSize: 16, fontWeight: '700' },
-  titleLight: { color: '#232832' },
-  titleDark: { color: '#F4F8FF' },
-  subtitle: { marginTop: 2, fontSize: 12 },
-  subtitleLight: { color: '#475569' },
-  subtitleDark: { color: '#F4F8FF' },
-  context: { marginTop: 2, fontSize: 11, fontWeight: '600' },
-  contextLight: { color: '#2563eb' },
-  contextDark: { color: '#0EC3C9' },
-  thread: { paddingHorizontal: 10, paddingVertical: 12, gap: 8, flexGrow: 1 },
-  row: { flexDirection: 'row' },
-  rowSelf: { justifyContent: 'flex-end' },
-  rowOther: { justifyContent: 'flex-start' },
-  bubble: { maxWidth: '84%', borderRadius: 14, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6 },
-  bubbleSelf: { backgroundColor: '#2563eb', borderBottomRightRadius: 4 },
-  bubbleOtherLight: { backgroundColor: '#fff', borderBottomLeftRadius: 4 },
-  bubbleOtherDark: { backgroundColor: '#001A4D', borderBottomLeftRadius: 4 },
-  messageText: { fontSize: 14 },
-  messageTextSelf: { color: '#fff' },
+  containerLight: { backgroundColor: '#EDF0FC' },
+  containerDark: { backgroundColor: '#EDF0FC' },
+  headerShell: { overflow: 'hidden' },
+  headerShellLight: { backgroundColor: '#F7F7F7' },
+  headerShellDark: { backgroundColor: '#12274D' },
+  headerRow: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  headerRowLight: { backgroundColor: '#F7F7F7' },
+  headerRowDark: { backgroundColor: '#12274D' },
+  backButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  headerCenter: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center', marginHorizontal: 8 },
+  headerAvatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  headerAvatarLight: { backgroundColor: '#F7F7F7', borderColor: '#F98D2F' },
+  headerAvatarDark: { backgroundColor: '#12274D', borderColor: '#F98D2F' },
+  headerAvatarText: { fontSize: 16, fontWeight: '700' },
+  headerAvatarTextLight: { color: 'rgba(249,141,47,0.25)' },
+  headerAvatarTextDark: { color: '#F98D2F' },
+  headerCopy: { minWidth: 0, justifyContent: 'center' },
+  headerTitle: { fontSize: 16, lineHeight: 19, fontWeight: '700' },
+  headerTitleLight: { color: '#121212' },
+  headerTitleDark: { color: '#F7F7F7' },
+  headerSubtitle: { marginTop: 2, fontSize: 10, lineHeight: 12 },
+  headerSubtitleLight: { color: '#121212', opacity: 0.75 },
+  headerSubtitleDark: { color: '#F7F7F7', opacity: 0.75 },
+  headerSpacer: { width: 36, height: 29 },
+  thread: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 8, gap: 8 },
+  messageRow: { width: '100%', paddingVertical: 4 },
+  messageRowSelf: { alignItems: 'flex-end' },
+  messageRowOther: { alignItems: 'flex-start' },
+  bubble: { maxWidth: '72%', paddingHorizontal: 8, paddingVertical: 8, borderTopLeftRadius: 8, borderTopRightRadius: 8 },
+  bubbleSelfLight: { backgroundColor: '#0EC3C9', borderBottomLeftRadius: 8, borderBottomRightRadius: 0 },
+  bubbleSelfDark: { backgroundColor: '#0EC3C9', borderBottomLeftRadius: 8, borderBottomRightRadius: 0 },
+  bubbleOtherLight: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
+  bubbleOtherDark: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
+  messageText: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  messageTextSelf: { color: '#F7F7F7' },
+  messageTextLight: { color: '#121212' },
+  messageTextDark: { color: '#121212' },
   attachmentWrap: { marginTop: 6 },
-  attachmentImage: { width: 220, height: 220, borderRadius: 10, backgroundColor: '#0f172a' },
-  attachmentLink: { marginTop: 4, fontSize: 13, textDecorationLine: 'underline' },
-  messageTextLight: { color: '#232832' },
-  messageTextDark: { color: '#F4F8FF' },
-  time: { marginTop: 4, fontSize: 10, alignSelf: 'flex-end' },
-  timeSelf: { color: '#dbeafe' },
-  timeLight: { color: '#64748b' },
-  timeDark: { color: '#F4F8FF' },
-  composer: { gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1 },
-  composerLight: { backgroundColor: '#fff', borderTopColor: '#e2e8f0' },
-  composerDark: { backgroundColor: '#1A2540', borderTopColor: '#001A4D' },
-  input: { flex: 1, minHeight: 42, borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
-  inputLight: { borderColor: '#cbd5e1', color: '#232832', backgroundColor: '#fff' },
-  inputDark: { borderColor: '#001A4D', color: '#F4F8FF', backgroundColor: '#1A2540' },
-  sendButton: { backgroundColor: '#2563eb', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
-  sendButtonDisabled: { opacity: 0.45 },
-  sendText: { color: '#fff', fontWeight: '700' },
-  composerTools: { flexDirection: 'row', gap: 8 },
-  toolButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  toolButtonLight: { borderColor: '#cbd5e1', backgroundColor: '#fff' },
-  toolButtonDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
-  toolButtonActive: { borderColor: '#0EC3C9' },
-  toolIcon: { fontSize: 16 },
-  pendingAttachmentRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pendingAttachmentChip: { borderRadius: 999, borderWidth: 1, borderColor: '#3b82f6', paddingHorizontal: 10, paddingVertical: 4 },
-  pendingAttachmentText: { color: '#1e3a8a', fontSize: 12, fontWeight: '600' },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  picker: { borderRadius: 12, padding: 8, borderWidth: 1, gap: 8 },
-  pickerLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  pickerDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
-  pickerChip: { borderRadius: 999, borderWidth: 1, borderColor: '#3b82f6', paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
-  pickerChipText: { fontSize: 12, fontWeight: '600' },
-  pickerChipTextLight: { color: '#1e3a8a' },
-  pickerChipTextDark: { color: '#BFDBFE' },
-  emojiChip: { paddingHorizontal: 8, paddingVertical: 6 },
+  attachmentImage: { width: 180, height: 180, borderRadius: 8, backgroundColor: '#12274D' },
+  attachmentFile: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: 180 },
+  attachmentLink: { fontSize: 12, lineHeight: 16, fontWeight: '600', flexShrink: 1 },
+  time: { marginTop: 6, fontSize: 10, lineHeight: 12, alignSelf: 'flex-end' },
+  timeSelf: { color: 'rgba(247,247,247,0.75)' },
+  timeLight: { color: 'rgba(18,18,18,0.5)' },
+  timeDark: { color: 'rgba(18,18,18,0.5)' },
+  composer: { paddingHorizontal: 10, paddingTop: 10 },
+  composerLight: { backgroundColor: '#F7F7F7' },
+  composerDark: { backgroundColor: '#12274D' },
+  actionMenu: {
+    marginBottom: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 8,
+    gap: 8,
+  },
+  actionMenuLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.12)' },
+  actionMenuDark: { backgroundColor: '#2E559D', borderColor: 'rgba(6,18,41,0.33)' },
+  actionMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  actionMenuText: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  actionMenuTextLight: { color: '#121212' },
+  actionMenuTextDark: { color: '#F7F7F7' },
+  emojiMenu: {
+    marginBottom: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  emojiChip: { paddingHorizontal: 8, paddingVertical: 4 },
   emojiText: { fontSize: 22 },
-  voiceHint: { fontSize: 12, fontWeight: '600' },
-  voiceHintLight: { color: '#1e3a8a' },
-  voiceHintDark: { color: '#93c5fd' },
-  voicePhraseRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-
+  pendingAttachmentRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  pendingAttachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '100%',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  pendingAttachmentChipLight: { backgroundColor: '#EDF0FC', borderColor: 'rgba(6,18,41,0.12)' },
+  pendingAttachmentChipDark: { backgroundColor: '#2E559D', borderColor: 'rgba(6,18,41,0.33)' },
+  pendingAttachmentText: { fontSize: 12, lineHeight: 16, fontWeight: '600', flexShrink: 1 },
+  pendingAttachmentTextLight: { color: '#121212' },
+  pendingAttachmentTextDark: { color: '#F7F7F7' },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  plusButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  inputShell: {
+    flex: 1,
+    minHeight: 32,
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingLeft: 12,
+    paddingRight: 8,
+    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inputShellLight: { borderColor: 'rgba(6,18,41,0.33)', backgroundColor: '#F7F7F7' },
+  inputShellDark: { borderColor: 'rgba(6,18,41,0.33)', backgroundColor: '#2E559D' },
+  input: { flex: 1, minHeight: 22, fontSize: 12, lineHeight: 16, fontWeight: '600', paddingVertical: 0 },
+  inputLight: { color: '#121212' },
+  inputDark: { color: '#F7F7F7' },
+  sendButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  sendButtonDisabled: { opacity: 0.35 },
 });

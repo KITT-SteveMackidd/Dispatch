@@ -58,6 +58,7 @@ export default function TabLayout() {
         name="today"
         options={{
           title: 'Today',
+          headerShown: false,
           tabBarIcon: ({ color }) => <Feather name="clock" size={18} color={color} />,
           headerRight: () => (
             <Pressable style={{ marginRight: 14 }}>
@@ -70,27 +71,15 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Events',
+          headerShown: false,
           tabBarIcon: ({ color }) => <FontAwesome5 name="clipboard-list" size={16} color={color} />,
-          headerRight: () => (
-            <Pressable
-              style={{
-                marginRight: 14,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#001A4D' : '#e2e8f0',
-                backgroundColor: isDarkMode ? '#1A2540' : '#ffffff',
-                borderRadius: 8,
-                paddingHorizontal: 10,
-                paddingVertical: 4,
-              }}>
-              <Text style={{ color: isDarkMode ? '#F4F8FF' : '#475569', fontSize: 12, fontWeight: '600' }}>Filter</Text>
-            </Pressable>
-          ),
         }}
       />
       <Tabs.Screen
         name="teams"
         options={{
           title: 'Teams',
+          headerShown: false,
           tabBarBadge: teamTabBadge,
           tabBarIcon: ({ color }) => <MaterialCommunityIcons name="account-group-outline" size={21} color={color} />,
         }}
@@ -99,6 +88,7 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: 'Profile',
+          headerShown: false,
           tabBarBadge: profileTabBadge,
           tabBarIcon: ({ color }) => <Feather name="user" size={18} color={color} />,
           headerRight: () => (
@@ -114,6 +104,12 @@ export default function TabLayout() {
               <Text style={{ color: isDarkMode ? '#F4F8FF' : '#334155', fontWeight: '700', fontSize: 12 }}>Sign out</Text>
             </Pressable>
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="two"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

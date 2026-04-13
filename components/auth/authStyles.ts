@@ -78,6 +78,8 @@ export const authStyles = StyleSheet.create<{
   screen: ViewStyle;
   flex: ViewStyle;
   scrollContent: ViewStyle;
+  lightScrollContent: ViewStyle;
+  darkScrollContent: ViewStyle;
   backgroundGlowTop: ViewStyle;
   backgroundGlowBottom: ViewStyle;
   shell: ViewStyle;
@@ -92,6 +94,37 @@ export const authStyles = StyleSheet.create<{
   heroListText: TextStyle;
   heroFootnote: TextStyle;
   formPanel: ViewStyle;
+  lightLogoWrap: ViewStyle;
+  lightHeroGraphic: ImageStyle;
+  lightCard: ViewStyle;
+  lightTitle: TextStyle;
+  lightSubtitle: TextStyle;
+  lightForm: ViewStyle;
+  lightInput: TextStyle;
+  lightActionGroup: ViewStyle;
+  lightActionLink: TextStyle;
+  lightButton: ViewStyle;
+  lightRoleRow: ViewStyle;
+  lightRolePill: ViewStyle;
+  lightRolePillText: TextStyle;
+  lightFooterRow: ViewStyle;
+  lightFooterLabel: TextStyle;
+  lightFooterLink: TextStyle;
+  darkLogoWrap: ViewStyle;
+  darkHeroGraphic: ImageStyle;
+  darkCard: ViewStyle;
+  darkTitle: TextStyle;
+  darkSubtitle: TextStyle;
+  darkForm: ViewStyle;
+  darkInput: TextStyle;
+  darkRoleRow: ViewStyle;
+  darkRolePill: ViewStyle;
+  darkRolePillText: TextStyle;
+  darkButton: ViewStyle;
+  darkFooterRow: ViewStyle;
+  darkFooterLabel: TextStyle;
+  darkFooterLink: TextStyle;
+  darkActionLink: TextStyle;
   logoWrap: ViewStyle;
   logo: ImageStyle;
   brand: TextStyle;
@@ -125,6 +158,22 @@ export const authStyles = StyleSheet.create<{
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 28,
+  },
+  lightScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 24,
+  },
+  darkScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 24,
   },
   backgroundGlowTop: {
     position: 'absolute',
@@ -218,6 +267,204 @@ export const authStyles = StyleSheet.create<{
     minWidth: 300,
     paddingHorizontal: 22,
     paddingVertical: 22,
+  },
+  lightLogoWrap: {
+    width: '100%',
+    maxWidth: 402,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  lightHeroGraphic: {
+    width: 465,
+    height: 310,
+  },
+  lightCard: {
+    width: '100%',
+    maxWidth: 354,
+    backgroundColor: '#EDF0FC',
+    borderRadius: 16,
+    padding: 16,
+    gap: 16,
+  },
+  lightTitle: {
+    fontSize: 24,
+    lineHeight: 29,
+    fontFamily: authFont.extrabold,
+    color: '#121212',
+  },
+  lightSubtitle: {
+    fontSize: 14,
+    lineHeight: 17,
+    fontFamily: authFont.regular,
+    color: 'rgba(18,18,18,0.7)',
+  },
+  lightForm: {
+    gap: 8,
+  },
+  lightInput: {
+    minHeight: 41,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    fontSize: 16,
+    lineHeight: 19,
+    fontFamily: authFont.regular,
+  },
+  lightActionGroup: {
+    gap: 8,
+    marginTop: 8,
+  },
+  lightActionLink: {
+    fontSize: 16,
+    lineHeight: 19,
+    fontFamily: authFont.bold,
+    color: '#F98D2F',
+  },
+  lightButton: {
+    minHeight: 43,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  lightRoleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  lightRolePill: {
+    flex: 1,
+    minHeight: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  lightRolePillText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: authFont.bold,
+  },
+  lightFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    columnGap: 8,
+    rowGap: 4,
+    width: '100%',
+  },
+  lightFooterLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: authFont.regular,
+    color: '#121212',
+  },
+  lightFooterLink: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: authFont.bold,
+    color: '#F98D2F',
+  },
+  darkLogoWrap: {
+    width: '100%',
+    maxWidth: 402,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  darkHeroGraphic: {
+    width: 465,
+    height: 310,
+  },
+  darkCard: {
+    width: '100%',
+    maxWidth: 354,
+    backgroundColor: '#12274D',
+    borderRadius: 16,
+    padding: 16,
+    gap: 16,
+  },
+  darkTitle: {
+    fontSize: 24,
+    lineHeight: 29,
+    fontFamily: authFont.extrabold,
+    color: '#F7F7F7',
+  },
+  darkSubtitle: {
+    fontSize: 14,
+    lineHeight: 17,
+    fontFamily: authFont.regular,
+    color: 'rgba(247,247,247,0.7)',
+  },
+  darkForm: {
+    gap: 8,
+  },
+  darkInput: {
+    minHeight: 41,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    fontSize: 16,
+    lineHeight: 19,
+    fontFamily: authFont.regular,
+    color: '#F7F7F7',
+    backgroundColor: '#203E75',
+  },
+  darkRoleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  darkRolePill: {
+    flex: 1,
+    minHeight: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  darkRolePillText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: authFont.bold,
+  },
+  darkButton: {
+    minHeight: 43,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  darkFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    columnGap: 8,
+    rowGap: 4,
+    width: '100%',
+  },
+  darkFooterLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: authFont.regular,
+    color: '#F7F7F7',
+  },
+  darkFooterLink: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: authFont.bold,
+    color: '#F98D2F',
+  },
+  darkActionLink: {
+    fontSize: 16,
+    lineHeight: 19,
+    fontFamily: authFont.bold,
+    color: '#F98D2F',
   },
   logoWrap: {
     alignItems: 'center',

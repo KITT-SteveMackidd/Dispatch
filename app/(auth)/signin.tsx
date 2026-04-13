@@ -22,9 +22,8 @@ import { authPalettes, authStyles } from '@/components/auth/authStyles';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const logoSource = require('../../assets/images/dispatch-splash-logo.jpg');
-
-const LIGHT_HIGHLIGHTS = ['Track every event in one place', 'Keep crew, vendors, and timelines aligned', 'Step into the day with a clean control center'];
+const lightSignInLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/06d318be-c56a-407f-b246-a44af4358b61' };
+const darkSignInLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/dc7443d8-94f1-481c-ae8b-d57ce362a259' };
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -136,179 +135,152 @@ export default function SignInScreen() {
     }
   };
 
-  const renderHeroPanel = () => {
-    if (isDarkMode) return null;
-
-    return (
-      <View
-        style={[
-          authStyles.heroPanel,
-          {
-            backgroundColor: '#E9F3F1',
-            borderRightWidth: 1,
-            borderRightColor: '#D6E4E0',
-          },
-        ]}>
-        <View style={{ gap: 18 }}>
-          <View style={[authStyles.heroBadge, { backgroundColor: '#F7FBFA', borderColor: '#D6E4E0' }]}>
-            <Text style={[authStyles.heroBadgeText, { color: palette.accent }]}>Light mode refresh</Text>
-          </View>
-
-          <View style={{ gap: 12 }}>
-            <Text style={[authStyles.heroTitle, { color: palette.text }]}>Run the day with calm, clear dispatching.</Text>
-            <Text style={[authStyles.heroBody, { color: palette.mutedText }]}>A softer workspace for sign-in, built to feel polished the moment managers and crew return to Dispatch.</Text>
-          </View>
-        </View>
-
-        <View style={authStyles.heroList}>
-          {LIGHT_HIGHLIGHTS.map((item) => (
-            <View key={item} style={authStyles.heroListItem}>
-              <View style={[authStyles.heroBullet, { backgroundColor: palette.primary }]} />
-              <Text style={[authStyles.heroListText, { color: palette.text }]}>{item}</Text>
-            </View>
-          ))}
-        </View>
-
-        <Text style={[authStyles.heroFootnote, { color: palette.mutedText }]}>Built on the existing auth flow — visual refresh only, no sign-in logic changes.</Text>
+  const renderLightScreen = () => (
+    <>
+      <View style={authStyles.lightLogoWrap}>
+        <Image source={lightSignInLogoSource} style={authStyles.lightHeroGraphic} resizeMode="cover" />
       </View>
-    );
-  };
+
+      <View style={authStyles.lightCard}>
+        <View style={{ gap: 8 }}>
+          <Text style={authStyles.lightTitle}>Welcome Back</Text>
+          <Text style={authStyles.lightSubtitle}>Sign in to keep your events moving</Text>
+        </View>
+
+        <View style={authStyles.lightForm}>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            placeholder="Email"
+            returnKeyType="next"
+            onSubmitEditing={() => passwordInputRef.current?.focus()}
+            blurOnSubmit={false}
+            placeholderTextColor="rgba(18,18,18,0.33)"
+            style={[
+              authStyles.lightInput,
+              {
+                backgroundColor: '#DBE2F9',
+                color: '#121212',
+              },
+            ]}
+          />
+          <TextInput
+            ref={passwordInputRef}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            placeholder="Password"
+            returnKeyType="go"
+            onSubmitEditing={onSignIn}
+            placeholderTextColor="rgba(18,18,18,0.33)"
+            style={[
+              authStyles.lightInput,
+              {
+                backgroundColor: '#DBE2F9',
+                color: '#121212',
+              },
+            ]}
+          />
+        </View>
+
+        <View style={authStyles.lightActionGroup}>
+          <Link href="/(auth)/signup" style={authStyles.lightActionLink}>
+            Create Account
+          </Link>
+
+          <Pressable
+            style={({ pressed }) => [
+              authStyles.lightButton,
+              { backgroundColor: '#0EC3C9', opacity: loading ? 0.65 : 1 },
+              pressed && !loading ? authStyles.buttonPressed : null,
+            ]}
+            onPress={onSignIn}
+            disabled={loading}>
+            <Text style={authStyles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
+          </Pressable>
+
+          <Pressable onPress={onForgotPassword} disabled={resetting}>
+            <Text style={authStyles.lightActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
+          </Pressable>
+        </View>
+      </View>
+    </>
+  );
+
+  const renderDarkScreen = () => (
+    <>
+      <View style={authStyles.darkLogoWrap}>
+        <Image source={darkSignInLogoSource} style={authStyles.darkHeroGraphic} resizeMode="cover" />
+      </View>
+
+      <View style={authStyles.darkCard}>
+        <View style={{ gap: 8 }}>
+          <Text style={authStyles.darkTitle}>Welcome Back</Text>
+          <Text style={authStyles.darkSubtitle}>Sign in to keep your events moving</Text>
+        </View>
+
+        <View style={authStyles.lightForm}>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            placeholder="Email"
+            returnKeyType="next"
+            onSubmitEditing={() => passwordInputRef.current?.focus()}
+            blurOnSubmit={false}
+            placeholderTextColor="rgba(247,247,247,0.33)"
+            style={authStyles.darkInput}
+          />
+          <TextInput
+            ref={passwordInputRef}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            placeholder="Password"
+            returnKeyType="go"
+            onSubmitEditing={onSignIn}
+            placeholderTextColor="rgba(247,247,247,0.33)"
+            style={authStyles.darkInput}
+          />
+        </View>
+
+        <View style={authStyles.lightActionGroup}>
+          <Link href="/(auth)/signup" style={authStyles.darkActionLink}>
+            Create Account
+          </Link>
+
+          <Pressable
+            style={({ pressed }) => [
+              authStyles.lightButton,
+              { backgroundColor: palette.primary, opacity: loading ? 0.65 : 1 },
+              pressed && !loading ? authStyles.buttonPressed : null,
+            ]}
+            onPress={onSignIn}
+            disabled={loading}>
+            <Text style={authStyles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
+          </Pressable>
+
+          <Pressable onPress={onForgotPassword} disabled={resetting}>
+            <Text style={authStyles.darkActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
+          </Pressable>
+        </View>
+      </View>
+    </>
+  );
 
   return (
     <KeyboardAvoidingView
-      style={[authStyles.screen, { backgroundColor: palette.background }]}
+      style={[authStyles.screen, { backgroundColor: isDarkMode ? '#061229' : '#DBE2F9' }]}
       behavior={Platform.select({ ios: 'padding', android: 'height' })}>
-      <View style={[authStyles.backgroundGlowTop, { backgroundColor: palette.glow }]} />
-      <View style={[authStyles.backgroundGlowBottom, { backgroundColor: palette.glow }]} />
       <Pressable style={authStyles.flex} onPress={Keyboard.dismiss}>
-        <ScrollView contentContainerStyle={authStyles.scrollContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-          <View
-            style={[
-              authStyles.shell,
-              {
-                backgroundColor: isDarkMode ? 'transparent' : '#FFFFFF',
-                borderWidth: 1,
-                borderColor: isDarkMode ? 'transparent' : '#E3EBE8',
-                shadowColor: palette.shadowColor,
-                shadowOpacity: isDarkMode && Platform.OS === 'ios' ? 0 : 0.12,
-                shadowRadius: 28,
-                shadowOffset: { width: 0, height: 18 },
-                elevation: isDarkMode ? 0 : 5,
-              },
-            ]}>
-            {renderHeroPanel()}
-
-            <View style={authStyles.formPanel}>
-              <View style={authStyles.logoWrap}>
-                <Image source={logoSource} style={authStyles.logo} resizeMode="cover" />
-                <Text style={[authStyles.brand, { color: palette.accent }]}>Dispatch</Text>
-              </View>
-
-              <View
-                style={[
-                  authStyles.card,
-                  {
-                    backgroundColor: isDarkMode ? palette.card : '#FFFFFF',
-                    borderColor: isDarkMode ? palette.cardBorder : '#E7EEEB',
-                    shadowColor: palette.shadowColor,
-                    shadowOpacity: Platform.OS === 'ios' ? (isDarkMode ? 0.18 : 0.08) : 0,
-                    elevation: Platform.OS === 'android' ? (isDarkMode ? 5 : 2) : 0,
-                  },
-                ]}>
-                <Text style={[authStyles.eyebrow, { color: palette.accent }]}>{isDarkMode ? 'Welcome back' : 'Sign in'}</Text>
-                <Text style={[authStyles.title, { color: palette.text }]}>{isDarkMode ? 'Sign in to Dispatch' : 'Welcome back to your workspace'}</Text>
-                <Text style={[authStyles.subtitle, { color: palette.mutedText }]}>Manage your events, crew, and timelines from one polished workspace.</Text>
-
-                <View style={authStyles.form}>
-                  <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    placeholder="Email address"
-                    returnKeyType="next"
-                    onSubmitEditing={() => passwordInputRef.current?.focus()}
-                    blurOnSubmit={false}
-                    placeholderTextColor={palette.placeholder}
-                    style={[
-                      authStyles.input,
-                      {
-                        backgroundColor: palette.inputBackground,
-                        color: palette.text,
-                        borderColor: palette.inputBorder,
-                      },
-                    ]}
-                  />
-                  <TextInput
-                    ref={passwordInputRef}
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                    placeholder="Password"
-                    returnKeyType="go"
-                    onSubmitEditing={onSignIn}
-                    placeholderTextColor={palette.placeholder}
-                    style={[
-                      authStyles.input,
-                      {
-                        backgroundColor: palette.inputBackground,
-                        color: palette.text,
-                        borderColor: palette.inputBorder,
-                      },
-                    ]}
-                  />
-
-                  <View style={authStyles.helperRow}>
-                    <Pressable onPress={onForgotPassword} disabled={resetting}>
-                      <Text style={[authStyles.linkText, { color: palette.accent }]}>{resetting ? 'Sending reset email…' : 'Forgot password?'}</Text>
-                    </Pressable>
-                  </View>
-
-                  <Pressable
-                    style={({ pressed }) => [
-                      authStyles.button,
-                      { backgroundColor: palette.primary, opacity: loading ? 0.65 : 1 },
-                      pressed && !loading ? authStyles.buttonPressed : null,
-                    ]}
-                    onPress={onSignIn}
-                    disabled={loading}>
-                    <Text style={authStyles.buttonText}>{loading ? 'Signing in…' : 'Sign in'}</Text>
-                  </Pressable>
-
-                  {oauthEnabled ? (
-                    <>
-                      <Pressable
-                        style={[
-                          authStyles.secondaryButton,
-                          { backgroundColor: palette.inputBackground, borderColor: palette.inputBorder, opacity: !googleRequest || loading ? 0.65 : 1 },
-                        ]}
-                        onPress={onGoogleSignIn}
-                        disabled={!googleRequest || loading}>
-                        <Text style={[authStyles.secondaryButtonText, { color: palette.text }]}>Continue with Google</Text>
-                      </Pressable>
-
-                      {Platform.OS === 'ios' ? (
-                        <Pressable
-                          style={[
-                            authStyles.secondaryButton,
-                            { backgroundColor: palette.inputBackground, borderColor: palette.inputBorder, opacity: loading ? 0.65 : 1 },
-                          ]}
-                          onPress={onAppleSignIn}
-                          disabled={loading}>
-                          <Text style={[authStyles.secondaryButtonText, { color: palette.text }]}>Continue with Apple</Text>
-                        </Pressable>
-                      ) : null}
-                    </>
-                  ) : null}
-                </View>
-
-                <View style={authStyles.linkRow}>
-                  <Text style={[authStyles.linkLabel, { color: palette.mutedText }]}>New here?</Text>
-                  <Link href="/(auth)/signup" style={[authStyles.linkText, { color: palette.accent }]}>Create an account</Link>
-                </View>
-              </View>
-            </View>
-          </View>
+        <ScrollView
+          contentContainerStyle={isDarkMode ? authStyles.darkScrollContent : authStyles.lightScrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag">
+          {isDarkMode ? renderDarkScreen() : renderLightScreen()}
         </ScrollView>
       </Pressable>
     </KeyboardAvoidingView>

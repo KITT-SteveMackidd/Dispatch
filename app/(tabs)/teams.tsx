@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
@@ -19,13 +19,18 @@ import {
 import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from '@/services/worker-invite-notifications';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type DrawerMode = 'add-team' | 'invite-worker';
+
+const lightEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/ea1f259a-1993-4a31-b5d3-e13b530af9e6' };
+const darkEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/416530cf-9e8d-49e3-9fe0-7ad6bee3db76' };
 
 export default function TeamsScreen() {
   const { profile } = useSession();
   const router = useRouter();
   const { resolvedThemeMode } = useThemeMode();
+  const insets = useSafeAreaInsets();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<DispatchEvent[]>([]);
@@ -300,13 +305,13 @@ export default function TeamsScreen() {
 
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
-      <View style={styles.headerRow}>
-        <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>Manage Your Team</Text>
+      <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
+        <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="cover" />
         {profile?.role === 'manager' ? (
-          <Pressable style={styles.createButton} onPress={openDrawer}>
-            <Text style={styles.createButtonText}>+</Text>
+          <Pressable style={isDarkMode ? styles.eventsDarkAddButton : styles.eventsLightAddButton} onPress={openDrawer}>
+            <Text style={isDarkMode ? styles.eventsDarkAddButtonIcon : styles.eventsLightAddButtonIcon}>+</Text>
           </Pressable>
-        ) : null}
+        ) : <View style={styles.headerSpacer} />}
       </View>
 
       {profile?.role === 'manager' && visibleInvites.length ? (
@@ -353,7 +358,7 @@ export default function TeamsScreen() {
           <Text style={[styles.soloSectionTitle, isDarkMode ? styles.titleDark : styles.titleLight]}>Solo Workers</Text>
           {soloWorkerIds.map((workerId) => (
             <Pressable key={`solo-${workerId}`} style={[styles.soloWorkerRow, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => openDirectChat(workerId)}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>{(memberInfoById[workerId]?.displayName || workerId).slice(0, 1).toUpperCase()}</Text></View>
+              <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}><Text style={styles.avatarText}>{(memberInfoById[workerId]?.displayName || workerId).slice(0, 1).toUpperCase()}</Text></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{memberInfoById[workerId]?.displayName || workerId}</Text>
                 <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Not assigned to a team</Text>
@@ -373,7 +378,7 @@ export default function TeamsScreen() {
           const unreadCount = unreadCountByTeamId[item.id] ?? 0;
           return (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => handleTeamPress(item)}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
+              <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
                 <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.workerIds.length} workers</Text>
@@ -403,11 +408,23 @@ export default function TeamsScreen() {
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
 
             <View style={styles.modeRow}>
-              <Pressable style={[styles.modeButton, drawerMode === 'add-team' && styles.modeButtonActive]} onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, drawerMode === 'add-team' && styles.modeTextActive]}>Add Team</Text>
+              <Pressable
+                style={[
+                  styles.modeButton,
+                  isDarkMode ? styles.modeButtonDark : styles.modeButtonLight,
+                  drawerMode === 'add-team' && styles.modeButtonSelected,
+                ]}
+                onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
+                <Text style={[styles.modeText, drawerMode === 'add-team' && styles.modeTextSelected]}>Add Team</Text>
               </Pressable>
-              <Pressable style={[styles.modeButton, drawerMode === 'invite-worker' && styles.modeButtonActive]} onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, drawerMode === 'invite-worker' && styles.modeTextActive]}>Invite Worker</Text>
+              <Pressable
+                style={[
+                  styles.modeButton,
+                  isDarkMode ? styles.modeButtonDark : styles.modeButtonLight,
+                  drawerMode === 'invite-worker' && styles.modeButtonSelected,
+                ]}
+                onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
+                <Text style={[styles.modeText, drawerMode === 'invite-worker' && styles.modeTextSelected]}>Invite Worker</Text>
               </Pressable>
             </View>
 
@@ -444,12 +461,33 @@ export default function TeamsScreen() {
               </Text>
             ) : null}
 
-            <Pressable style={[styles.drawerSave, saving && styles.drawerSaveDisabled]} onPress={handleSubmitDrawer} disabled={saving}>
-              <Text style={styles.drawerSaveText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : 'Invite Worker'}</Text>
+            <Pressable
+              style={[
+                styles.drawerSave,
+                drawerMode === 'invite-worker'
+                  ? styles.drawerSaveInviteWorker
+                  : isDarkMode
+                    ? styles.drawerSaveDark
+                    : styles.drawerSaveLight,
+                saving && styles.drawerSaveDisabled,
+              ]}
+              onPress={handleSubmitDrawer}
+              disabled={saving}>
+              <Text
+                style={[
+                  styles.drawerSaveText,
+                  drawerMode === 'invite-worker'
+                    ? styles.drawerSaveTextInviteWorker
+                    : isDarkMode
+                      ? styles.drawerSaveTextDark
+                      : styles.drawerSaveTextLight,
+                ]}>
+                {saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : 'Invite Worker'}
+              </Text>
             </Pressable>
 
-            <Pressable style={styles.drawerClose} onPress={() => setDrawerOpen(false)}>
-              <Text style={styles.drawerCloseText}>Close</Text>
+            <Pressable style={[styles.drawerClose, isDarkMode ? styles.drawerCloseDark : styles.drawerCloseLight]} onPress={() => setDrawerOpen(false)}>
+              <Text style={[styles.drawerCloseText, isDarkMode ? styles.drawerCloseTextDark : styles.drawerCloseTextLight]}>Close</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -459,23 +497,35 @@ export default function TeamsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  containerLight: { backgroundColor: '#eef2ff' },
-  containerDark: { backgroundColor: '#101A2F' },
+  container: { flex: 1, paddingHorizontal: 16, paddingBottom: 16 },
+  containerLight: { backgroundColor: '#DBE2F9' },
+  containerDark: { backgroundColor: '#061229' },
+  topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 },
+  topHeaderLight: { backgroundColor: '#DBE2F9' },
+  topHeaderDark: { backgroundColor: '#061229' },
+  headerSpacer: { width: 34, height: 34 },
+  lightLogo: { width: 64, height: 64 },
+  darkLogo: { width: 64, height: 64 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   subhead: { fontWeight: '600' },
   subheadLight: { color: '#334155' },
   subheadDark: { color: '#F4F8FF' },
   createButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1d4ed8', alignItems: 'center', justifyContent: 'center' },
   createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
+  eventsLightAddButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
+  eventsLightAddButtonIcon: { color: '#F7F7F7', fontSize: 26, lineHeight: 28, fontWeight: '400', marginTop: -2 },
+  eventsDarkAddButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
+  eventsDarkAddButtonIcon: { color: '#F7F7F7', fontSize: 26, lineHeight: 28, fontWeight: '400', marginTop: -2 },
   empty: { marginTop: 20 },
   emptyLight: { color: '#64748b' },
   emptyDark: { color: '#F4F8FF' },
-  card: { borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
-  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
-  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontWeight: '700', color: '#1d4ed8' },
+  card: { borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cardLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7' },
+  cardDark: { backgroundColor: '#12274D', borderColor: '#12274D' },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F98D2F' },
+  avatarLight: { backgroundColor: '#F7F7F7' },
+  avatarDark: { backgroundColor: '#12274D' },
+  avatarText: { fontWeight: '700', color: '#F98D2F' },
   title: { fontWeight: '700', fontSize: 16 },
   titleLight: { color: '#232832' },
   titleDark: { color: '#F4F8FF' },
@@ -487,65 +537,68 @@ const styles = StyleSheet.create({
   statusLight: { color: '#475569' },
   statusDark: { color: '#F4F8FF' },
   hint: { fontSize: 11, fontWeight: '600', marginTop: 4 },
-  hintLight: { color: '#2563eb' },
-  hintDark: { color: '#0EC3C9' },
+  hintLight: { color: '#F98D2F' },
+  hintDark: { color: '#F98D2F' },
   unreadBadge: { marginTop: 6, backgroundColor: '#dc2626', borderRadius: 999, minWidth: 20, paddingHorizontal: 6, height: 20, alignItems: 'center', justifyContent: 'center' },
   unreadBadgeText: { color: '#fff', fontWeight: '700', fontSize: 11 },
-  inviteStatusCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
-  inviteStatusCardLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
-  inviteStatusCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  inviteStatusCard: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
+  inviteStatusCardLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
+  inviteStatusCardDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
   inviteStatusHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   inviteStatusTitle: { fontWeight: '700', fontSize: 13 },
-  inviteStatusTitleLight: { color: '#1e3a8a' },
+  inviteStatusTitleLight: { color: '#232832' },
   inviteStatusTitleDark: { color: '#F4F8FF' },
-  clearAllButton: { borderRadius: 8, borderWidth: 1, borderColor: '#1d4ed8', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#fff' },
-  clearAllButtonText: { color: '#1d4ed8', fontSize: 12, fontWeight: '700' },
-  inviteStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: '#93c5fd', paddingTop: 8 },
+  clearAllButton: { borderRadius: 8, borderWidth: 1, borderColor: '#F98D2F', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#DBE2F9' },
+  clearAllButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
+  inviteStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: 'rgba(249,141,47,0.25)', paddingTop: 8 },
   inviteStatusActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  soloSection: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10, gap: 8 },
-  soloSectionLight: { borderColor: '#bfdbfe', backgroundColor: '#eff6ff' },
-  soloSectionDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
+  soloSection: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
+  soloSectionLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
+  soloSectionDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
   soloSectionTitle: { fontWeight: '700', fontSize: 13 },
-  soloWorkerRow: { borderRadius: 10, borderWidth: 1, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  soloWorkerRow: { borderRadius: 10, borderWidth: 1, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
   inviteEmail: { fontWeight: '600', fontSize: 13 },
   inviteMeta: { marginTop: 2, fontSize: 11 },
-  retryButton: { borderRadius: 8, backgroundColor: '#1d4ed8', paddingHorizontal: 10, paddingVertical: 6 },
-  clearInviteButton: { borderRadius: 8, borderWidth: 1, borderColor: '#94a3b8', backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 6 },
-  clearInviteButtonText: { color: '#334155', fontSize: 12, fontWeight: '700' },
+  retryButton: { borderRadius: 8, backgroundColor: '#0EC3C9', paddingHorizontal: 10, paddingVertical: 6 },
+  clearInviteButton: { borderRadius: 8, borderWidth: 1, borderColor: '#F98D2F', backgroundColor: '#DBE2F9', paddingHorizontal: 10, paddingVertical: 6 },
+  clearInviteButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
   retryButtonDisabled: { opacity: 0.6 },
-  retryButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  addBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
-  addText: { color: 'white', fontWeight: '700' },
+  retryButtonText: { color: '#061229', fontSize: 12, fontWeight: '700' },
+  addBtn: { backgroundColor: '#0EC3C9', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 16 },
+  addText: { color: '#061229', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '76%' },
-  drawerLight: { backgroundColor: '#fff' },
-  drawerDark: { backgroundColor: '#1A2540' },
-  drawerTitle: { fontWeight: '700', fontSize: 18 },
-  drawerTitleLight: { color: '#232832' },
-  drawerTitleDark: { color: '#F4F8FF' },
-  drawerSub: { fontSize: 12, marginTop: 4 },
-  drawerSubLight: { color: '#64748b' },
-  drawerSubDark: { color: '#F4F8FF' },
+  drawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
+  drawerLight: { backgroundColor: '#F7F7F7' },
+  drawerDark: { backgroundColor: '#12274D' },
+  drawerTitle: { fontWeight: '700', fontSize: 16 },
+  drawerTitleLight: { color: '#121212' },
+  drawerTitleDark: { color: '#F7F7F7' },
+  drawerSub: { fontSize: 12, marginTop: 8, fontWeight: '300' },
+  drawerSubLight: { color: '#121212', opacity: 0.8 },
+  drawerSubDark: { color: '#F7F7F7', opacity: 0.8 },
   modeRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
-  modeButton: { flex: 1, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 10, alignItems: 'center', backgroundColor: '#f8fafc' },
-  modeButtonActive: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
-  modeText: { color: '#334155', fontWeight: '600' },
-  modeTextActive: { color: '#1e40af' },
+  modeButton: { flex: 1, borderRadius: 8, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },
+  modeButtonLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
+  modeButtonDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
+  modeButtonSelected: { borderColor: '#F98D2F' },
+  modeButtonActive: { borderColor: '#0EC3C9', backgroundColor: '#DBE2F9' },
+  modeText: { color: '#121212', fontWeight: '600' },
+  modeTextSelected: { color: '#F98D2F' },
   fieldLabel: { marginTop: 14, fontSize: 12, fontWeight: '700' },
   fieldLabelLight: { color: '#334155' },
   fieldLabelDark: { color: '#F4F8FF' },
-  input: { marginTop: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
-  inputLight: { borderColor: '#cbd5e1', color: '#232832', backgroundColor: '#fff' },
-  inputDark: { borderColor: '#001A4D', color: '#F4F8FF', backgroundColor: '#1A2540' },
+  input: { marginTop: 6, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, minHeight: 44, fontSize: 12, fontWeight: '700' },
+  inputLight: { borderColor: 'rgba(6,18,41,0.1)', color: '#121212', backgroundColor: '#EDF0FC' },
+  inputDark: { borderColor: 'rgba(6,18,41,0.1)', color: '#F7F7F7', backgroundColor: '#203E75' },
   teamChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  teamChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  teamChipLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
-  teamChipDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
-  teamChipActive: { borderColor: '#1d4ed8', backgroundColor: '#dbeafe' },
+  teamChip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  teamChipLight: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#EDF0FC' },
+  teamChipDark: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#203E75' },
+  teamChipActive: { borderColor: '#F98D2F' },
   teamChipText: { fontSize: 12, fontWeight: '600' },
   teamChipTextLight: { color: '#475569' },
   teamChipTextDark: { color: '#F4F8FF' },
-  teamChipTextActive: { color: '#1e3a8a' },
+  teamChipTextActive: { color: '#F98D2F' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
   helperText: { marginTop: 6, fontSize: 11 },
   helperTextLight: { color: '#64748b' },
@@ -554,9 +607,19 @@ const styles = StyleSheet.create({
   messageInfo: { color: '#1e40af' },
   messageSuccess: { color: '#15803d' },
   messageError: { color: '#b91c1c' },
-  drawerSave: { marginTop: 14, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
+  drawerSave: { marginTop: 12, borderRadius: 8, alignItems: 'center', paddingVertical: 10, width: '100%', borderWidth: 1 },
+  drawerSaveLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
+  drawerSaveDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
+  drawerSaveInviteWorker: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
   drawerSaveDisabled: { opacity: 0.7 },
-  drawerSaveText: { color: '#fff', fontWeight: '700' },
-  drawerClose: { marginTop: 8, backgroundColor: '#e2e8f0', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
-  drawerCloseText: { color: '#334155', fontWeight: '700' },
+  drawerSaveText: { fontWeight: '700' },
+  drawerSaveTextLight: { color: '#121212' },
+  drawerSaveTextDark: { color: '#F7F7F7' },
+  drawerSaveTextInviteWorker: { color: '#F7F7F7' },
+  drawerClose: { marginTop: 8, borderRadius: 8, alignItems: 'center', paddingVertical: 10, width: '100%', borderWidth: 1 },
+  drawerCloseLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
+  drawerCloseDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
+  drawerCloseText: { fontWeight: '700' },
+  drawerCloseTextLight: { color: '#121212' },
+  drawerCloseTextDark: { color: '#F7F7F7' },
 });

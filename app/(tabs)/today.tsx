@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
 import {
   deleteDispatchEvent,
@@ -16,6 +17,10 @@ import {
 } from '@/services/dispatch';
 import { AppRole, DispatchEvent, EventTask, Team } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const lightTodayLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/ea1f259a-1993-4a31-b5d3-e13b530af9e6' };
+const darkTodayLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/416530cf-9e8d-49e3-9fe0-7ad6bee3db76' };
 
 type ManagerInfo = { displayName: string; phoneNumber?: string };
 type UserInfo = { displayName: string; phoneNumber?: string; role: AppRole };
@@ -61,10 +66,22 @@ function getWorkerSummaries(event: DispatchEvent): WorkerSummary[] {
   return [...map.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
 }
 
+function formatOrdinalDay(date: Date) {
+  const day = date.getDate();
+  const remainder = day % 10;
+  const teen = day % 100;
+  if (teen >= 11 && teen <= 13) return `${day}th`;
+  if (remainder === 1) return `${day}st`;
+  if (remainder === 2) return `${day}nd`;
+  if (remainder === 3) return `${day}rd`;
+  return `${day}th`;
+}
+
 export default function TodayScreen() {
   const { profile } = useSession();
   const router = useRouter();
   const { resolvedThemeMode } = useThemeMode();
+  const insets = useSafeAreaInsets();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
@@ -230,6 +247,12 @@ export default function TodayScreen() {
       .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
   }, [events, nowMs]);
 
+  const todayDateLabel = useMemo(() => {
+    const now = new Date(nowMs);
+    const month = now.toLocaleDateString([], { month: 'long' });
+    return `${month} ${formatOrdinalDay(now)}, ${now.getFullYear()}`;
+  }, [nowMs]);
+
   useEffect(() => {
     if (!profile || profile.role !== 'manager') return;
 
@@ -292,10 +315,10 @@ export default function TodayScreen() {
     const scheduleDelta = done - dueNow;
 
     if (scheduleDelta < 0) {
-      return { text: `${Math.abs(scheduleDelta)} Tasks behind`, bg: '#ffedd5', fg: '#c2410c' };
+      return { text: `${Math.abs(scheduleDelta)} Tasks behind`, fg: '#F98D2F' };
     }
 
-    return { text: `${scheduleDelta} Tasks ahead`, bg: '#dcfce7', fg: '#15803d' };
+    return { text: `${scheduleDelta} Tasks ahead`, fg: '#0EC3C9' };
   };
 
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
@@ -453,7 +476,7 @@ export default function TodayScreen() {
     if (profile?.role !== 'worker') return null;
 
     const tasks = getEventChecklist(event);
-    if (!tasks.length) return <Text style={styles.emptyChecklist}>No tasks have been added to this event yet.</Text>;
+    if (!tasks.length) return <Text style={[styles.emptyChecklist, isDarkMode ? styles.emptyChecklistDark : styles.emptyChecklistLight]}>No tasks have been added to this event yet.</Text>;
 
     return (
       <View style={styles.checklistContainer}>
@@ -469,6 +492,7 @@ export default function TodayScreen() {
                 disabled={!canToggle}
                 style={[
                   styles.checkbox,
+                  isDarkMode ? styles.checkboxDark : styles.checkboxLight,
                   isComplete && styles.checkboxComplete,
                   !item.assignedToMe && styles.checkboxDisabled,
                   isSaving && styles.checkboxSaving,
@@ -478,7 +502,7 @@ export default function TodayScreen() {
               </Pressable>
               <View style={styles.checklistContent}>
                 <View style={styles.checklistTaskRow}>
-                  <Text style={[styles.checklistTask, isComplete && styles.checklistTaskComplete]}>
+                  <Text style={[styles.checklistTask, isDarkMode ? styles.checklistTaskDark : styles.checklistTaskLight, isComplete && styles.checklistTaskComplete]}>
                     {item.task.name} · due {formatTaskDueTime(event, item.task)}
                     {item.task.optional ? ' (optional)' : ''}
                   </Text>
@@ -500,18 +524,18 @@ export default function TodayScreen() {
                     </View>
                   ) : null}
                 </View>
-                {!!item.task.description?.trim() ? <Text style={styles.checklistDescription}>{item.task.description.trim()}</Text> : null}
-                <Text style={styles.checklistMeta}>Role: {item.roleName}</Text>
-                <Text style={styles.checklistMeta}>
+                {!!item.task.description?.trim() ? <Text style={[styles.checklistDescription, isDarkMode ? styles.checklistDescriptionDark : styles.checklistDescriptionLight]}>{item.task.description.trim()}</Text> : null}
+                <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>Role: {item.roleName}</Text>
+                <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>
                   {item.completedByMe
                     ? 'Completed by you'
                     : item.completedCount > 0
                       ? `Completed by ${item.completedCount} worker${item.completedCount > 1 ? 's' : ''}`
                       : 'In progress'}
                 </Text>
-                {isSaving ? <Text style={styles.checklistMeta}>Saving…</Text> : null}
+                {isSaving ? <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>Saving…</Text> : null}
                 {Number.isFinite(getTaskDueAtMs(event, item.task)) ? (
-                  <Text style={styles.checklistMeta}>
+                  <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>
                     Due {new Date(getTaskDueAtMs(event, item.task)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                   </Text>
                 ) : null}
@@ -586,13 +610,256 @@ export default function TodayScreen() {
     ]);
   };
 
+  const renderLightManagerCard = (item: DispatchEvent, isExpanded: boolean) => {
+    const progress = getProgress(item, { excludeUnfilledRoles: true });
+    const startsAtDate = new Date(item.startsAt);
+    const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const managerNext = managerNextTask(item);
+    const managerNextDueAtMs = managerNext ? getTaskDueAtMs(item, managerNext) : Number.POSITIVE_INFINITY;
+    const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
+    const workers = getWorkerSummaries(item);
+
+    return (
+      <Pressable style={styles.figmaCardLight} onPress={() => toggleExpand(item.id)}>
+        <View style={styles.figmaCardTop}>
+          <View style={styles.figmaCardTitleWrap}>
+            <Text style={styles.figmaCardTitleLight} numberOfLines={1}>{item.name}</Text>
+          </View>
+          <Text style={styles.figmaExpandLight}>{isExpanded ? 'Hide' : 'Expand'}</Text>
+        </View>
+
+        <Text style={styles.figmaCardMetaLight}>{item.location} - {eventDate} - {eventTime}</Text>
+
+        <View style={styles.figmaProgressSection}>
+          <View style={styles.figmaProgressHeader}>
+            <Text style={styles.figmaProgressLabelLight}>Task progress</Text>
+            <Text style={styles.figmaProgressCountLight}>{progress.done}/{progress.total}</Text>
+          </View>
+          <View style={styles.figmaProgressTrackLight}>
+            <View style={[styles.figmaProgressFillLight, { width: `${progress.percent}%` }]} />
+          </View>
+          <View style={styles.figmaNextTaskRow}>
+            <Text style={styles.figmaNextTaskLabelLight}>
+              Next Task: {managerNext ? `${managerNext.name} - ` : 'All tasks complete'}
+            </Text>
+            {managerCountdownClock ? (
+              <Text style={[styles.figmaNextTaskTime, managerCountdownClock.isOverdue ? styles.figmaNextTaskTimeOverdueLight : styles.figmaNextTaskTimeAheadLight]}>
+                {managerCountdownClock.isOverdue
+                  ? `+ ${managerCountdownClock.label.replace('Overdue by ', '')}`
+                  : managerCountdownClock.label.replace(' remaining', '')}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {isExpanded ? (
+          <View style={styles.figmaWorkerSection}>
+            {workers.length ? workers.map((worker) => {
+              const workerInfo = userInfoById[worker.workerId];
+              const initial = (workerInfo?.displayName || worker.workerId).slice(0, 1).toUpperCase() || 'W';
+              const workerProgress = getWorkerProgress(item, worker.workerId);
+              const workerNext = workerNextTask(item, worker.workerId);
+              const workerNextDueAtMs = workerNext ? getTaskDueAtMs(item, workerNext) : Number.POSITIVE_INFINITY;
+              const workerCountdownClock = formatCountdownClock(workerNextDueAtMs);
+
+              return (
+                <View key={worker.workerId} style={styles.figmaWorkerCardLight}>
+                  <Pressable
+                    onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
+                    style={styles.figmaAvatarLight}
+                    hitSlop={8}>
+                    <Text style={styles.figmaAvatarTextLight}>{initial}</Text>
+                  </Pressable>
+
+                  <View style={styles.figmaWorkerDetails}>
+                    <View style={styles.figmaWorkerTopRow}>
+                      <View style={styles.figmaWorkerTextWrap}>
+                        <Text style={styles.figmaWorkerRoleLight}>{worker.roleNames[0] || 'Role Name'}</Text>
+                        <Text style={styles.figmaWorkerMetaLight}>Worker: {workerInfo?.displayName || worker.workerId}</Text>
+                        <Text style={styles.figmaWorkerMetaLight}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
+                      </View>
+                      <Pressable onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)} hitSlop={8}>
+                        <MaterialIcons name="phone-enabled" size={24} color="#121212" />
+                      </Pressable>
+                    </View>
+
+                    <View style={styles.figmaProgressSection}>
+                      <View style={styles.figmaProgressHeader}>
+                        <Text style={styles.figmaProgressLabelLight}>Task progress</Text>
+                        <Text style={styles.figmaProgressCountLight}>{workerProgress.done}/{workerProgress.total}</Text>
+                      </View>
+                      <View style={styles.figmaProgressTrackLight}>
+                        <View style={[styles.figmaProgressFillLight, { width: `${workerProgress.percent}%` }]} />
+                      </View>
+                      <View style={styles.figmaNextTaskRow}>
+                        <Text style={styles.figmaNextTaskLabelLight}>
+                          Next Task: {workerNext ? `${workerNext.name} - ` : 'All tasks complete'}
+                        </Text>
+                        {workerCountdownClock ? (
+                          <Text style={[styles.figmaNextTaskTime, workerCountdownClock.isOverdue ? styles.figmaNextTaskTimeOverdueLight : styles.figmaNextTaskTimeAheadLight]}>
+                            {workerCountdownClock.isOverdue
+                              ? `+ ${workerCountdownClock.label.replace('Overdue by ', '')}`
+                              : workerCountdownClock.label.replace(' remaining', '')}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              );
+            }) : (
+              <Text style={styles.emptyWorkers}>No assigned workers yet.</Text>
+            )}
+          </View>
+        ) : null}
+      </Pressable>
+    );
+  };
+
+  const renderDarkManagerCard = (item: DispatchEvent, isExpanded: boolean) => {
+    const progress = getProgress(item, { excludeUnfilledRoles: true });
+    const startsAtDate = new Date(item.startsAt);
+    const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const managerNext = managerNextTask(item);
+    const managerNextDueAtMs = managerNext ? getTaskDueAtMs(item, managerNext) : Number.POSITIVE_INFINITY;
+    const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
+    const workers = getWorkerSummaries(item);
+
+    return (
+      <Pressable style={styles.figmaCardDark} onPress={() => toggleExpand(item.id)}>
+        <View style={styles.figmaCardTop}>
+          <View style={styles.figmaCardTitleWrap}>
+            <Text style={styles.figmaCardTitleDark} numberOfLines={1}>{item.name}</Text>
+          </View>
+          <Text style={styles.figmaExpandDark}>{isExpanded ? 'Hide' : 'Expand'}</Text>
+        </View>
+
+        <Text style={styles.figmaCardMetaDark}>{item.location} - {eventDate} - {eventTime}</Text>
+
+        <View style={styles.figmaProgressSection}>
+          <View style={styles.figmaProgressHeader}>
+            <Text style={styles.figmaProgressLabelDark}>Task progress</Text>
+            <Text style={styles.figmaProgressCountDark}>{progress.done}/{progress.total}</Text>
+          </View>
+          <View style={styles.figmaProgressTrackDark}>
+            <View style={[styles.figmaProgressFillDark, { width: `${progress.percent}%` }]} />
+          </View>
+          <View style={styles.figmaNextTaskRow}>
+            <Text style={styles.figmaNextTaskLabelDark}>
+              Next Task: {managerNext ? `${managerNext.name} - ` : 'All tasks complete'}
+            </Text>
+            {managerCountdownClock ? (
+              <Text style={[styles.figmaNextTaskTime, managerCountdownClock.isOverdue ? styles.figmaNextTaskTimeOverdueDark : styles.figmaNextTaskTimeAheadDark]}>
+                {managerCountdownClock.isOverdue
+                  ? `+ ${managerCountdownClock.label.replace('Overdue by ', '')}`
+                  : managerCountdownClock.label.replace(' remaining', '')}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {isExpanded ? (
+          <View style={styles.figmaWorkerSection}>
+            {workers.length ? workers.map((worker) => {
+              const workerInfo = userInfoById[worker.workerId];
+              const initial = (workerInfo?.displayName || worker.workerId).slice(0, 1).toUpperCase() || 'W';
+              const workerProgress = getWorkerProgress(item, worker.workerId);
+              const workerNext = workerNextTask(item, worker.workerId);
+              const workerNextDueAtMs = workerNext ? getTaskDueAtMs(item, workerNext) : Number.POSITIVE_INFINITY;
+              const workerCountdownClock = formatCountdownClock(workerNextDueAtMs);
+
+              return (
+                <View key={worker.workerId} style={styles.figmaWorkerCardDark}>
+                  <Pressable
+                    onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
+                    style={styles.figmaAvatarDark}
+                    hitSlop={8}>
+                    <Text style={styles.figmaAvatarTextDark}>{initial}</Text>
+                  </Pressable>
+
+                  <View style={styles.figmaWorkerDetails}>
+                    <View style={styles.figmaWorkerTopRow}>
+                      <View style={styles.figmaWorkerTextWrap}>
+                        <Text style={styles.figmaWorkerRoleDark}>{worker.roleNames[0] || 'Role Name'}</Text>
+                        <Text style={styles.figmaWorkerMetaDark}>Worker: {workerInfo?.displayName || worker.workerId}</Text>
+                        <Text style={styles.figmaWorkerMetaDark}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
+                      </View>
+                      <Pressable onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)} hitSlop={8}>
+                        <MaterialIcons name="phone-enabled" size={24} color="#F7F7F7" />
+                      </Pressable>
+                    </View>
+
+                    <View style={styles.figmaProgressSection}>
+                      <View style={styles.figmaProgressHeader}>
+                        <Text style={styles.figmaProgressLabelDark}>Task progress</Text>
+                        <Text style={styles.figmaProgressCountDark}>{workerProgress.done}/{workerProgress.total}</Text>
+                      </View>
+                      <View style={styles.figmaProgressTrackDark}>
+                        <View style={[styles.figmaProgressFillDark, { width: `${workerProgress.percent}%` }]} />
+                      </View>
+                      <View style={styles.figmaNextTaskRow}>
+                        <Text style={styles.figmaNextTaskLabelDark}>
+                          Next Task: {workerNext ? `${workerNext.name} - ` : 'All tasks complete'}
+                        </Text>
+                        {workerCountdownClock ? (
+                          <Text style={[styles.figmaNextTaskTime, workerCountdownClock.isOverdue ? styles.figmaNextTaskTimeOverdueDark : styles.figmaNextTaskTimeAheadDark]}>
+                            {workerCountdownClock.isOverdue
+                              ? `+ ${workerCountdownClock.label.replace('Overdue by ', '')}`
+                              : workerCountdownClock.label.replace(' remaining', '')}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              );
+            }) : (
+              <Text style={styles.emptyWorkers}>No assigned workers yet.</Text>
+            )}
+          </View>
+        ) : null}
+      </Pressable>
+    );
+  };
+
+  const useFigmaHeader = profile?.role === 'manager' || profile?.role === 'worker';
+
   return (
-    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
-      <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} active dispatches.</Text>
+    <View style={[styles.container, !isDarkMode && useFigmaHeader ? styles.containerLightFigma : isDarkMode && useFigmaHeader ? styles.containerDarkFigma : isDarkMode ? styles.containerDark : styles.containerLight]}>
+      {!isDarkMode && useFigmaHeader ? (
+        <View style={[styles.figmaHeaderLight, { paddingTop: insets.top }]}>
+          <View style={styles.figmaHeaderRow}>
+            <Image source={lightTodayLogoSource} style={styles.figmaLogoLight} resizeMode="cover" />
+            <Pressable accessibilityRole="button" accessibilityLabel="Notifications" hitSlop={8}>
+              <MaterialIcons name="notifications-none" size={28} color="#8C8B92" />
+            </Pressable>
+          </View>
+          <View style={styles.figmaDateChipLight}>
+            <Text style={styles.figmaDateChipTextLight}>{todayDateLabel}</Text>
+          </View>
+        </View>
+      ) : isDarkMode && useFigmaHeader ? (
+        <View style={[styles.figmaHeaderDark, { paddingTop: insets.top }]}>
+          <View style={styles.figmaHeaderRow}>
+            <Image source={darkTodayLogoSource} style={styles.figmaLogoLight} resizeMode="cover" />
+            <Pressable accessibilityRole="button" accessibilityLabel="Notifications" hitSlop={8}>
+              <MaterialIcons name="notifications-none" size={28} color="#F7F7F7" />
+            </Pressable>
+          </View>
+          <View style={styles.figmaDateChipDark}>
+            <Text style={styles.figmaDateChipTextDark}>{todayDateLabel}</Text>
+          </View>
+        </View>
+      ) : (
+        <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} active dispatches.</Text>
+      )}
       <FlatList
         data={today}
         keyExtractor={(i) => i.id}
-        contentContainerStyle={{ paddingTop: 10 }}
+        style={useFigmaHeader ? styles.figmaTodayList : undefined}
+        contentContainerStyle={useFigmaHeader ? styles.figmaTodayListContent : { paddingTop: 10, paddingBottom: 24 }}
         ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No dispatches for today.</Text>}
         renderItem={({ item }) => {
           const isManager = profile?.role === 'manager';
@@ -612,7 +879,7 @@ export default function TodayScreen() {
           const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
           const overdueTaskCount = isManager ? getOverdueIncompleteTasks(item).length : 0;
 
-          const card = (
+          const card = !isDarkMode && isManager ? renderLightManagerCard(item, isExpanded) : isDarkMode && isManager ? renderDarkManagerCard(item, isExpanded) : (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
                 <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
@@ -644,21 +911,21 @@ export default function TodayScreen() {
                 </>
               ) : (
                 <>
-                  <View style={[styles.badge, { backgroundColor: b.bg }]}>
+                  <View style={[styles.badge, { backgroundColor: isDarkMode ? '#12274D' : '#F7F7F7', borderColor: b.fg }]}>
                     <Text style={[styles.badgeText, { color: b.fg }]}>{b.text}</Text>
                   </View>
                   <View style={styles.managerRow}>
-                    <Pressable onPress={() => openManagerChat(item)} style={styles.avatar} hitSlop={8}>
-                      <Text style={styles.avatarText}>{(managerInfo?.displayName || 'Manager').slice(0, 1).toUpperCase()}</Text>
+                    <Pressable onPress={() => openManagerChat(item)} style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]} hitSlop={8}>
+                      <Text style={[styles.avatarText, isDarkMode ? styles.avatarTextDarkTheme : styles.avatarTextLightTheme]}>{(managerInfo?.displayName || 'Manager').slice(0, 1).toUpperCase()}</Text>
                     </Pressable>
                     <View style={styles.managerDetails}>
-                      <Text style={styles.workerName}>{managerInfo?.displayName || 'Manager'}</Text>
-                      <Text style={styles.workerMeta}>Phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
+                      <Text style={[styles.workerName, isDarkMode ? styles.workerNameDark : styles.workerNameLight]}>{managerInfo?.displayName || 'Manager'}</Text>
+                      <Text style={[styles.workerMeta, isDarkMode ? styles.workerMetaDark : styles.workerMetaLight]}>Phone: {managerInfo?.phoneNumber || 'Not available'}</Text>
                     </View>
                   </View>
                   <View style={styles.nextTaskRow}>
-                    <Text style={styles.nextTaskLabel}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskDueTime(item, nextTask)}` : 'All assigned tasks complete'}</Text>
-                    {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue && styles.timeRemainingOverdue]}>{countdownClock.label}</Text> : null}
+                    <Text style={[styles.nextTaskLabel, isDarkMode ? styles.nextTaskLabelDark : styles.nextTaskLabelLight]}>Next task: {nextTask ? `${nextTask.name} · due ${formatTaskDueTime(item, nextTask)}` : 'All assigned tasks complete'}</Text>
+                    {countdownClock ? <Text style={[styles.timeRemaining, countdownClock.isOverdue ? styles.timeRemainingOverdue : isDarkMode ? styles.timeRemainingDark : styles.timeRemainingLight]}>{countdownClock.label}</Text> : null}
                   </View>
                 </>
               )}
@@ -675,39 +942,39 @@ export default function TodayScreen() {
                       const workerCountdownClock = formatCountdownClock(workerNextDueAtMs);
 
                       return (
-                        <View key={worker.workerId} style={styles.workerCard}>
+                        <View key={worker.workerId} style={[styles.workerCard, isDarkMode ? styles.workerCardDark : styles.workerCardLight]}>
                           <Pressable
                             onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
-                            style={styles.avatar}
+                            style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}
                             hitSlop={8}
                           >
-                            <Text style={styles.avatarText}>{initial}</Text>
+                            <Text style={[styles.avatarText, isDarkMode ? styles.avatarTextDarkTheme : styles.avatarTextLightTheme]}>{initial}</Text>
                           </Pressable>
 
                           <View style={styles.workerDetails}>
-                            <Text style={styles.workerName}>{workerInfo?.displayName || worker.workerId}</Text>
-                            <Text style={styles.workerMeta}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
-                            <Text style={styles.workerMeta}>Role: {worker.roleNames.join(', ') || 'Unassigned'}</Text>
+                            <Text style={[styles.workerName, isDarkMode ? styles.workerNameDark : styles.workerNameLight]}>{workerInfo?.displayName || worker.workerId}</Text>
+                            <Text style={[styles.workerMeta, isDarkMode ? styles.workerMetaDark : styles.workerMetaLight]}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
+                            <Text style={[styles.workerMeta, isDarkMode ? styles.workerMetaDark : styles.workerMetaLight]}>Role: {worker.roleNames.join(', ') || 'Unassigned'}</Text>
 
                             <View style={styles.workerProgressSection}>
                               <View style={styles.progressHeader}>
-                                <Text style={styles.progressLabel}>Task progress</Text>
-                                <Text style={styles.progressCount}>{workerProgress.done}/{workerProgress.total}</Text>
+                                <Text style={[styles.progressLabel, isDarkMode ? styles.progressLabelDark : styles.progressLabelLight]}>Task progress</Text>
+                                <Text style={[styles.progressCount, isDarkMode ? styles.progressCountDark : styles.progressCountLight]}>{workerProgress.done}/{workerProgress.total}</Text>
                               </View>
-                              <View style={styles.progressTrack}>
-                                <View style={[styles.progressFill, { width: `${workerProgress.percent}%` }]} />
+                              <View style={[styles.progressTrack, isDarkMode ? styles.progressTrackDark : styles.progressTrackLight]}>
+                                <View style={[styles.progressFill, isDarkMode ? styles.progressFillDark : styles.progressFillLight, { width: `${workerProgress.percent}%` }]} />
                               </View>
                             </View>
 
                             {workerNext ? (
                               <>
                                 <View style={styles.nextTaskRow}>
-                                  <Text style={styles.workerMeta}>Next task: {workerNext.name} · due {formatTaskDueTime(item, workerNext)}</Text>
-                                  {workerCountdownClock ? <Text style={[styles.timeRemaining, workerCountdownClock.isOverdue && styles.timeRemainingOverdue]}>{workerCountdownClock.label}</Text> : null}
+                                  <Text style={[styles.workerMeta, isDarkMode ? styles.workerMetaDark : styles.workerMetaLight]}>Next task: {workerNext.name} · due {formatTaskDueTime(item, workerNext)}</Text>
+                                  {workerCountdownClock ? <Text style={[styles.timeRemaining, workerCountdownClock.isOverdue ? styles.timeRemainingOverdue : isDarkMode ? styles.timeRemainingDark : styles.timeRemainingLight]}>{workerCountdownClock.label}</Text> : null}
                                 </View>
                               </>
                             ) : (
-                              <Text style={styles.workerMeta}>Next task: All assigned tasks complete</Text>
+                              <Text style={[styles.workerMeta, isDarkMode ? styles.workerMetaDark : styles.workerMetaLight]}>Next task: All assigned tasks complete</Text>
                             )}
                           </View>
                         </View>
@@ -746,16 +1013,86 @@ export default function TodayScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  containerLight: { backgroundColor: '#eef2ff' },
+  containerLightFigma: { flex: 1, padding: 16, backgroundColor: '#DBE2F9' },
+  containerDarkFigma: { flex: 1, padding: 16, backgroundColor: '#061229' },
+  containerLight: { backgroundColor: '#DBE2F9' },
   containerDark: { backgroundColor: '#101A2F' },
+  figmaHeaderLight: { gap: 14, paddingHorizontal: 0, paddingBottom: 8 },
+  figmaHeaderDark: { gap: 14, paddingHorizontal: 0, paddingBottom: 8 },
+  figmaHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  figmaLogoLight: { width: 64, height: 64 },
+  figmaDateChipLight: {
+    minHeight: 40,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#F98D2F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DBE2F9',
+  },
+  figmaDateChipTextLight: { color: '#F98D2F', fontSize: 20, lineHeight: 24, fontWeight: '700' },
+  figmaDateChipDark: {
+    minHeight: 40,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#F98D2F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#061229',
+  },
+  figmaDateChipTextDark: { color: '#F98D2F', fontSize: 20, lineHeight: 24, fontWeight: '700' },
+  figmaTodayList: { flex: 1 },
+  figmaTodayListContent: { paddingHorizontal: 0, paddingBottom: 8, gap: 8 },
   subhead: { fontWeight: '500' },
   subheadLight: { color: '#475569' },
   subheadDark: { color: '#F4F8FF' },
   empty: { marginTop: 20 },
   emptyLight: { color: '#64748b' },
   emptyDark: { color: '#F4F8FF' },
+  figmaCardLight: { backgroundColor: '#F7F7F7', borderRadius: 16, padding: 16, gap: 12, marginBottom: 8 },
+  figmaCardDark: { backgroundColor: '#12274D', borderRadius: 16, padding: 16, gap: 12, marginBottom: 8 },
+  figmaCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  figmaCardTitleWrap: { flex: 1 },
+  figmaCardTitleLight: { color: '#121212', fontSize: 16, fontWeight: '700' },
+  figmaCardTitleDark: { color: '#F7F7F7', fontSize: 16, fontWeight: '700' },
+  figmaExpandLight: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
+  figmaExpandDark: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
+  figmaCardMetaLight: { color: '#121212', fontSize: 12, fontWeight: '200' },
+  figmaCardMetaDark: { color: '#F7F7F7', fontSize: 12, fontWeight: '200' },
+  figmaProgressSection: { gap: 8 },
+  figmaProgressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  figmaProgressLabelLight: { color: '#121212', fontSize: 10, fontWeight: '700' },
+  figmaProgressCountLight: { color: '#121212', fontSize: 10, fontWeight: '700' },
+  figmaProgressLabelDark: { color: '#F7F7F7', fontSize: 10, fontWeight: '700' },
+  figmaProgressCountDark: { color: '#F7F7F7', fontSize: 10, fontWeight: '700' },
+  figmaProgressTrackLight: { height: 9, borderRadius: 16, backgroundColor: '#DBE2F9', overflow: 'hidden', flexDirection: 'row' },
+  figmaProgressFillLight: { height: '100%', backgroundColor: '#F98D2F', borderRadius: 12 },
+  figmaProgressTrackDark: { height: 9, borderRadius: 16, backgroundColor: '#DBE2F9', overflow: 'hidden', flexDirection: 'row' },
+  figmaProgressFillDark: { height: '100%', backgroundColor: '#F98D2F', borderRadius: 12 },
+  figmaNextTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
+  figmaNextTaskLabelLight: { color: '#121212', fontSize: 10, fontWeight: '700' },
+  figmaNextTaskLabelDark: { color: '#F7F7F7', fontSize: 10, fontWeight: '700' },
+  figmaNextTaskTime: { fontSize: 10, fontWeight: '700' },
+  figmaNextTaskTimeAheadLight: { color: '#0EC3C9' },
+  figmaNextTaskTimeOverdueLight: { color: '#F98D2F' },
+  figmaNextTaskTimeAheadDark: { color: '#0EC3C9' },
+  figmaNextTaskTimeOverdueDark: { color: '#F98D2F' },
+  figmaWorkerSection: { gap: 8 },
+  figmaWorkerCardLight: { backgroundColor: '#EDF0FC', borderRadius: 8, padding: 8, flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  figmaWorkerCardDark: { backgroundColor: '#203E75', borderRadius: 8, padding: 8, flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  figmaAvatarLight: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EDF0FC' },
+  figmaAvatarTextLight: { color: 'rgba(14,195,201,0.25)', fontSize: 16, fontWeight: '700' },
+  figmaAvatarDark: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#203E75' },
+  figmaAvatarTextDark: { color: 'rgba(14,195,201,0.25)', fontSize: 16, fontWeight: '700' },
+  figmaWorkerDetails: { flex: 1, gap: 8 },
+  figmaWorkerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  figmaWorkerTextWrap: { flex: 1, gap: 2 },
+  figmaWorkerRoleLight: { color: '#121212', fontSize: 12, fontWeight: '700' },
+  figmaWorkerMetaLight: { color: '#121212', fontSize: 10, fontWeight: '400' },
+  figmaWorkerRoleDark: { color: '#F7F7F7', fontSize: 12, fontWeight: '700' },
+  figmaWorkerMetaDark: { color: '#F7F7F7', fontSize: 10, fontWeight: '400' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
-  cardLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  cardLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7', borderRadius: 16, padding: 16, marginBottom: 8 },
   swipeDeleteAction: {
     marginBottom: 10,
     borderRadius: 12,
@@ -765,14 +1102,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   swipeDeleteActionText: { color: '#fee2e2', fontWeight: '700' },
-  cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
+  cardDark: { backgroundColor: '#12274D', borderColor: '#12274D', borderRadius: 16, padding: 16, marginBottom: 8 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontWeight: '700', fontSize: 20, marginBottom: 6, flex: 1 },
   titleLight: { color: '#232832' },
   titleDark: { color: '#F4F8FF' },
   expandHint: { fontSize: 12, fontWeight: '700', marginLeft: 8 },
-  expandHintLight: { color: '#2563eb' },
-  expandHintDark: { color: '#0EC3C9' },
+  expandHintLight: { color: '#F98D2F' },
+  expandHintDark: { color: '#F98D2F' },
   overdueChip: {
     minWidth: 22,
     height: 22,
@@ -785,45 +1122,77 @@ const styles = StyleSheet.create({
   },
   overdueChipText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   meta: { fontSize: 12, marginBottom: 2 },
-  metaLight: { color: '#64748b' },
-  metaDark: { color: '#F4F8FF' },
-  badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginTop: 10 },
+  metaLight: { color: '#121212' },
+  metaDark: { color: '#F7F7F7' },
+  badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginTop: 10, borderWidth: 1 },
   badgeText: { fontWeight: '700', fontSize: 12 },
   managerRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
   managerDetails: { flex: 1 },
   progressSection: { marginTop: 12 },
   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  progressLabel: { color: '#334155', fontWeight: '600', fontSize: 12 },
-  progressCount: { color: '#334155', fontWeight: '700', fontSize: 12 },
-  progressTrack: { height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: '#2563eb', borderRadius: 999 },
+  progressLabel: { fontWeight: '700', fontSize: 10 },
+  progressLabelLight: { color: '#121212' },
+  progressLabelDark: { color: '#F7F7F7' },
+  progressCount: { fontWeight: '700', fontSize: 10 },
+  progressCountLight: { color: '#121212' },
+  progressCountDark: { color: '#F7F7F7' },
+  progressTrack: { height: 9, borderRadius: 999, overflow: 'hidden' },
+  progressTrackLight: { backgroundColor: '#DBE2F9' },
+  progressTrackDark: { backgroundColor: '#DBE2F9' },
+  progressFill: { height: '100%', borderRadius: 999 },
+  progressFillLight: { backgroundColor: '#F98D2F' },
+  progressFillDark: { backgroundColor: '#F98D2F' },
   nextTaskRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 6 },
-  nextTaskLabel: { color: '#232832', fontSize: 13, fontWeight: '600', flex: 1 },
-  timeRemaining: { color: '#2563eb', fontSize: 12, fontWeight: '600' },
-  timeRemainingOverdue: { color: '#dc2626' },
+  nextTaskLabel: { fontSize: 10, fontWeight: '700', flex: 1 },
+  nextTaskLabelLight: { color: '#121212' },
+  nextTaskLabelDark: { color: '#F7F7F7' },
+  timeRemaining: { fontSize: 10, fontWeight: '700' },
+  timeRemainingLight: { color: '#0EC3C9' },
+  timeRemainingDark: { color: '#0EC3C9' },
+  timeRemainingOverdue: { color: '#F98D2F' },
   workerSection: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10, gap: 10 },
-  workerCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'flex-start' },
-  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  avatarText: { fontWeight: '700', color: '#1d4ed8' },
+  workerCard: { borderWidth: 1, borderRadius: 8, padding: 8, flexDirection: 'row', alignItems: 'flex-start' },
+  workerCardLight: { backgroundColor: '#EDF0FC', borderColor: '#EDF0FC' },
+  workerCardDark: { backgroundColor: '#203E75', borderColor: '#203E75' },
+  avatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  avatarLight: { backgroundColor: '#F7F7F7' },
+  avatarDark: { backgroundColor: '#12274D' },
+  avatarText: { fontWeight: '700', fontSize: 16 },
+  avatarTextLightTheme: { color: 'rgba(14,195,201,0.25)' },
+  avatarTextDarkTheme: { color: 'rgba(14,195,201,0.25)' },
   workerDetails: { flex: 1 },
-  workerName: { color: '#232832', fontWeight: '700', fontSize: 14 },
-  workerMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
+  workerName: { fontWeight: '700', fontSize: 12 },
+  workerNameLight: { color: '#121212' },
+  workerNameDark: { color: '#F7F7F7' },
+  workerMeta: { fontSize: 10, marginTop: 2 },
+  workerMetaLight: { color: '#121212' },
+  workerMetaDark: { color: '#F7F7F7' },
   workerProgressSection: { marginTop: 8 },
-  emptyWorkers: { color: '#64748b', fontSize: 12 },
+  emptyWorkers: { fontSize: 10 },
   checklistContainer: { marginTop: 12, gap: 10 },
   checklistItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', justifyContent: 'center', marginTop: 1, backgroundColor: '#f8fafc' },
-  checkboxComplete: { borderColor: '#15803d', backgroundColor: '#dcfce7' },
+  checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  checkboxLight: { borderColor: '#DBE2F9', backgroundColor: '#EDF0FC' },
+  checkboxDark: { borderColor: '#203E75', backgroundColor: '#203E75' },
+  checkboxComplete: { borderColor: '#0EC3C9', backgroundColor: '#DBE2F9' },
   checkboxDisabled: { opacity: 0.45 },
   checkboxSaving: { opacity: 0.65 },
-  checkboxMark: { color: '#15803d', fontWeight: '800', fontSize: 12 },
+  checkboxMark: { color: '#0EC3C9', fontWeight: '800', fontSize: 12 },
   checklistContent: { flex: 1 },
   checklistTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  checklistTask: { color: '#232832', fontWeight: '600', fontSize: 14, flex: 1 },
-  checklistTaskComplete: { color: '#166534', textDecorationLine: 'line-through' },
+  checklistTask: { fontWeight: '600', fontSize: 14, flex: 1 },
+  checklistTaskLight: { color: '#121212' },
+  checklistTaskDark: { color: '#F7F7F7' },
+  checklistTaskComplete: { color: '#0EC3C9', textDecorationLine: 'line-through' },
   taskAttachmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   taskAttachmentIcon: { fontSize: 16 },
-  checklistDescription: { color: '#475569', fontSize: 12, marginTop: 3 },
-  checklistMeta: { color: '#64748b', fontSize: 12, marginTop: 2 },
-  emptyChecklist: { color: '#64748b', marginTop: 10, fontSize: 13 },
+  checklistDescription: { fontSize: 12, marginTop: 3 },
+  checklistDescriptionLight: { color: '#121212' },
+  checklistDescriptionDark: { color: '#F7F7F7' },
+  checklistMeta: { fontSize: 12, marginTop: 2 },
+  checklistMetaLight: { color: '#121212' },
+  checklistMetaDark: { color: '#F7F7F7' },
+  emptyChecklist: { marginTop: 10, fontSize: 13 },
+  emptyChecklistLight: { color: '#121212' },
+  emptyChecklistDark: { color: '#F7F7F7' },
 });
