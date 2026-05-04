@@ -30,9 +30,10 @@ import {
 import { DispatchEvent, EventRole, EventTask, EventTemplate, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { headerLogoSource } from '@/constants/branding';
 
-const lightEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/ea1f259a-1993-4a31-b5d3-e13b530af9e6' };
-const darkEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/416530cf-9e8d-49e3-9fe0-7ad6bee3db76' };
+const lightEventsLogoSource = headerLogoSource;
+const darkEventsLogoSource = headerLogoSource;
 
 type ManagerNamesMap = Record<string, string>;
 type UserMap = Record<string, UserProfile>;
@@ -1698,7 +1699,7 @@ export default function EventsScreen() {
       {isDarkMode ? (
         <View style={[styles.eventsDarkHeader, { paddingTop: insets.top }]}>
           <View style={styles.eventsDarkTopRow}>
-            <Image source={darkEventsLogoSource} style={styles.eventsDarkLogo} resizeMode="cover" />
+                <Image source={darkEventsLogoSource} style={styles.eventsDarkLogo} resizeMode="contain" />
             {canCreateEvent ? (
               <Pressable
                 accessibilityRole="button"
@@ -1741,7 +1742,7 @@ export default function EventsScreen() {
       ) : (
         <View style={[styles.eventsLightHeader, { paddingTop: insets.top }]}>
           <View style={styles.eventsLightTopRow}>
-            <Image source={lightEventsLogoSource} style={styles.eventsLightLogo} resizeMode="cover" />
+                <Image source={lightEventsLogoSource} style={styles.eventsLightLogo} resizeMode="contain" />
             {canCreateEvent ? (
               <Pressable
                 accessibilityRole="button"

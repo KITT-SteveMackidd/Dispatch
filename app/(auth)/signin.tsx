@@ -19,11 +19,12 @@ import Constants from 'expo-constants';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
+import { authLogoSource } from '@/constants/branding';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const lightSignInLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/06d318be-c56a-407f-b246-a44af4358b61' };
-const darkSignInLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/dc7443d8-94f1-481c-ae8b-d57ce362a259' };
+const lightSignInLogoSource = authLogoSource;
+const darkSignInLogoSource = authLogoSource;
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -138,7 +139,7 @@ export default function SignInScreen() {
   const renderLightScreen = () => (
     <>
       <View style={authStyles.lightLogoWrap}>
-        <Image source={lightSignInLogoSource} style={authStyles.lightHeroGraphic} resizeMode="cover" />
+        <Image source={lightSignInLogoSource} style={authStyles.lightHeroGraphic} resizeMode="contain" />
       </View>
 
       <View style={authStyles.lightCard}>
@@ -212,7 +213,7 @@ export default function SignInScreen() {
   const renderDarkScreen = () => (
     <>
       <View style={authStyles.darkLogoWrap}>
-        <Image source={darkSignInLogoSource} style={authStyles.darkHeroGraphic} resizeMode="cover" />
+        <Image source={darkSignInLogoSource} style={authStyles.darkHeroGraphic} resizeMode="contain" />
       </View>
 
       <View style={authStyles.darkCard}>

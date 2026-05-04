@@ -18,9 +18,10 @@ import {
 import { AppRole, DispatchEvent, EventTask, Team } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { headerLogoSource } from '@/constants/branding';
 
-const lightTodayLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/ea1f259a-1993-4a31-b5d3-e13b530af9e6' };
-const darkTodayLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/416530cf-9e8d-49e3-9fe0-7ad6bee3db76' };
+const lightTodayLogoSource = headerLogoSource;
+const darkTodayLogoSource = headerLogoSource;
 
 type ManagerInfo = { displayName: string; phoneNumber?: string };
 type UserInfo = { displayName: string; phoneNumber?: string; role: AppRole };
@@ -831,7 +832,7 @@ export default function TodayScreen() {
       {!isDarkMode && useFigmaHeader ? (
         <View style={[styles.figmaHeaderLight, { paddingTop: insets.top }]}>
           <View style={styles.figmaHeaderRow}>
-            <Image source={lightTodayLogoSource} style={styles.figmaLogoLight} resizeMode="cover" />
+              <Image source={lightTodayLogoSource} style={styles.figmaLogoLight} resizeMode="contain" />
             <Pressable accessibilityRole="button" accessibilityLabel="Notifications" hitSlop={8}>
               <MaterialIcons name="notifications-none" size={28} color="#8C8B92" />
             </Pressable>
@@ -843,7 +844,7 @@ export default function TodayScreen() {
       ) : isDarkMode && useFigmaHeader ? (
         <View style={[styles.figmaHeaderDark, { paddingTop: insets.top }]}>
           <View style={styles.figmaHeaderRow}>
-            <Image source={darkTodayLogoSource} style={styles.figmaLogoLight} resizeMode="cover" />
+              <Image source={darkTodayLogoSource} style={styles.figmaLogoLight} resizeMode="contain" />
             <Pressable accessibilityRole="button" accessibilityLabel="Notifications" hitSlop={8}>
               <MaterialIcons name="notifications-none" size={28} color="#F7F7F7" />
             </Pressable>
@@ -1143,7 +1144,7 @@ const styles = StyleSheet.create({
   progressFillLight: { backgroundColor: '#F98D2F' },
   progressFillDark: { backgroundColor: '#F98D2F' },
   nextTaskRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 6 },
-  nextTaskLabel: { fontSize: 10, fontWeight: '700', flex: 1 },
+  nextTaskLabel: { fontSize: 12, fontWeight: '700', flex: 1 },
   nextTaskLabelLight: { color: '#121212' },
   nextTaskLabelDark: { color: '#F7F7F7' },
   timeRemaining: { fontSize: 10, fontWeight: '700' },
@@ -1161,10 +1162,10 @@ const styles = StyleSheet.create({
   avatarTextLightTheme: { color: 'rgba(14,195,201,0.25)' },
   avatarTextDarkTheme: { color: 'rgba(14,195,201,0.25)' },
   workerDetails: { flex: 1 },
-  workerName: { fontWeight: '700', fontSize: 12 },
+  workerName: { fontWeight: '700', fontSize: 14 },
   workerNameLight: { color: '#121212' },
   workerNameDark: { color: '#F7F7F7' },
-  workerMeta: { fontSize: 10, marginTop: 2 },
+  workerMeta: { fontSize: 12, marginTop: 2 },
   workerMetaLight: { color: '#121212' },
   workerMetaDark: { color: '#F7F7F7' },
   workerProgressSection: { marginTop: 8 },

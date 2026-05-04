@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
   bubbleSelfDark: { backgroundColor: '#0EC3C9', borderBottomLeftRadius: 8, borderBottomRightRadius: 0 },
   bubbleOtherLight: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
   bubbleOtherDark: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
-  messageText: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  messageText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
   messageTextSelf: { color: '#F7F7F7' },
   messageTextLight: { color: '#121212' },
   messageTextDark: { color: '#121212' },

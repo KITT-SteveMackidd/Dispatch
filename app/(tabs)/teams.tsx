@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
@@ -8,7 +8,6 @@ import {
   loadUserProfilesByIds,
   loadWorkerTeams,
   retryWorkerInviteDelivery,
-  seedDemoData,
   watchManagerEvents,
   watchManagerTeams,
   watchManagerWorkerInvites,
@@ -20,11 +19,12 @@ import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { headerLogoSource } from '@/constants/branding';
 
 type DrawerMode = 'add-team' | 'invite-worker';
 
-const lightEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/ea1f259a-1993-4a31-b5d3-e13b530af9e6' };
-const darkEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/416530cf-9e8d-49e3-9fe0-7ad6bee3db76' };
+const lightEventsLogoSource = headerLogoSource;
+const darkEventsLogoSource = headerLogoSource;
 
 export default function TeamsScreen() {
   const { profile } = useSession();
@@ -34,7 +34,6 @@ export default function TeamsScreen() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<DispatchEvent[]>([]);
-  const [seeding, setSeeding] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('add-team');
   const [teamName, setTeamName] = useState('');
@@ -199,16 +198,6 @@ export default function TeamsScreen() {
     });
   };
 
-  const handleSeedDemo = async () => {
-    if (!profile) return;
-    setSeeding(true);
-    try {
-      await seedDemoData(profile);
-    } finally {
-      setSeeding(false);
-    }
-  };
-
   const openDrawer = () => {
     setDrawerMode('add-team');
     setDrawerMessage(null);
@@ -306,7 +295,7 @@ export default function TeamsScreen() {
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
-        <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="cover" />
+        <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="contain" />
         {profile?.role === 'manager' ? (
           <Pressable style={isDarkMode ? styles.eventsDarkAddButton : styles.eventsLightAddButton} onPress={openDrawer}>
             <Text style={isDarkMode ? styles.eventsDarkAddButtonIcon : styles.eventsLightAddButtonIcon}>+</Text>
@@ -372,7 +361,7 @@ export default function TeamsScreen() {
       <FlatList
         data={teams}
         keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No teams found yet. Tap Add Demo Team Data.</Text>}
+        ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No teams found yet.</Text>}
         renderItem={({ item }) => {
           const otherCount = getOtherMemberIds(item).length;
           const unreadCount = unreadCountByTeamId[item.id] ?? 0;
@@ -397,10 +386,6 @@ export default function TeamsScreen() {
         }}
       />
 
-      <Pressable style={styles.addBtn} onPress={handleSeedDemo} disabled={seeding || !profile}>
-        {seeding ? <ActivityIndicator color="white" /> : <Text style={styles.addText}>+ Add Demo Team Data</Text>}
-      </Pressable>
-
       <Modal visible={drawerOpen} animationType="slide" transparent onRequestClose={() => setDrawerOpen(false)}>
         <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)}>
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
@@ -415,7 +400,7 @@ export default function TeamsScreen() {
                   drawerMode === 'add-team' && styles.modeButtonSelected,
                 ]}
                 onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, drawerMode === 'add-team' && styles.modeTextSelected]}>Add Team</Text>
+                <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'add-team' && styles.modeTextSelected]}>Add Team</Text>
               </Pressable>
               <Pressable
                 style={[
@@ -424,7 +409,7 @@ export default function TeamsScreen() {
                   drawerMode === 'invite-worker' && styles.modeButtonSelected,
                 ]}
                 onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, drawerMode === 'invite-worker' && styles.modeTextSelected]}>Invite Worker</Text>
+                <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'invite-worker' && styles.modeTextSelected]}>Invite Worker</Text>
               </Pressable>
             </View>
 
@@ -466,6 +451,8 @@ export default function TeamsScreen() {
                 styles.drawerSave,
                 drawerMode === 'invite-worker'
                   ? styles.drawerSaveInviteWorker
+                  : drawerMode === 'add-team'
+                    ? styles.drawerSaveCreateTeam
                   : isDarkMode
                     ? styles.drawerSaveDark
                     : styles.drawerSaveLight,
@@ -478,6 +465,8 @@ export default function TeamsScreen() {
                   styles.drawerSaveText,
                   drawerMode === 'invite-worker'
                     ? styles.drawerSaveTextInviteWorker
+                    : drawerMode === 'add-team'
+                      ? styles.drawerSaveTextCreateTeam
                     : isDarkMode
                       ? styles.drawerSaveTextDark
                       : styles.drawerSaveTextLight,
@@ -564,8 +553,6 @@ const styles = StyleSheet.create({
   clearInviteButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
   retryButtonDisabled: { opacity: 0.6 },
   retryButtonText: { color: '#061229', fontSize: 12, fontWeight: '700' },
-  addBtn: { backgroundColor: '#0EC3C9', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 16 },
-  addText: { color: '#061229', fontWeight: '700' },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
   drawerLight: { backgroundColor: '#F7F7F7' },
@@ -579,10 +566,11 @@ const styles = StyleSheet.create({
   modeRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
   modeButton: { flex: 1, borderRadius: 8, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },
   modeButtonLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
-  modeButtonDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
+  modeButtonDark: { backgroundColor: '#12274D', borderColor: 'rgba(247,247,247,0.15)' },
   modeButtonSelected: { borderColor: '#F98D2F' },
   modeButtonActive: { borderColor: '#0EC3C9', backgroundColor: '#DBE2F9' },
   modeText: { color: '#121212', fontWeight: '600' },
+  modeTextDark: { color: '#F7F7F7' },
   modeTextSelected: { color: '#F98D2F' },
   fieldLabel: { marginTop: 14, fontSize: 12, fontWeight: '700' },
   fieldLabelLight: { color: '#334155' },
@@ -611,11 +599,13 @@ const styles = StyleSheet.create({
   drawerSaveLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
   drawerSaveDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
   drawerSaveInviteWorker: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
+  drawerSaveCreateTeam: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
   drawerSaveDisabled: { opacity: 0.7 },
   drawerSaveText: { fontWeight: '700' },
   drawerSaveTextLight: { color: '#121212' },
   drawerSaveTextDark: { color: '#F7F7F7' },
   drawerSaveTextInviteWorker: { color: '#F7F7F7' },
+  drawerSaveTextCreateTeam: { color: '#F7F7F7' },
   drawerClose: { marginTop: 8, borderRadius: 8, alignItems: 'center', paddingVertical: 10, width: '100%', borderWidth: 1 },
   drawerCloseLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
   drawerCloseDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },

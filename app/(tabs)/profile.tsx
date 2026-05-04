@@ -5,9 +5,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { markUserNotificationsRead, UserNotification, watchUserNotifications } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { headerLogoSource } from '@/constants/branding';
 
-const lightEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/ea1f259a-1993-4a31-b5d3-e13b530af9e6' };
-const darkEventsLogoSource = { uri: 'https://www.figma.com/api/mcp/asset/416530cf-9e8d-49e3-9fe0-7ad6bee3db76' };
+const lightEventsLogoSource = headerLogoSource;
+const darkEventsLogoSource = headerLogoSource;
 
 export default function ProfileScreen() {
   const { profile, authUser, signOut } = useSession();
@@ -49,7 +50,7 @@ export default function ProfileScreen() {
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
-        <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="cover" />
+        <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="contain" />
         <Pressable
           onPress={() => {
             void signOut();

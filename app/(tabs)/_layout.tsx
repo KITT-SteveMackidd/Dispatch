@@ -46,7 +46,7 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#2563eb',
+        tabBarActiveTintColor: '#F98D2F',
         tabBarInactiveTintColor: isDarkMode ? '#F4F8FF' : '#94a3b8',
         headerStyle: { backgroundColor: isDarkMode ? '#1A2540' : '#f8fafc' },
         headerTintColor: isDarkMode ? '#F4F8FF' : '#1A2540',
