@@ -16,7 +16,7 @@ import {
 } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { AppRole, UserProfile } from '@/types/dispatch';
-import { acceptPendingInvitesForUser } from '@/services/dispatch';
+import { acceptPendingInvitesForUser, linkPendingEmailInvites } from '@/services/dispatch';
 
 type SessionContextType = {
   profile: UserProfile | null;
@@ -48,6 +48,13 @@ async function loadProfile(uid: string): Promise<UserProfile | null> {
     displayName: data.displayName || 'Dispatch User',
     role: data.role,
   };
+}
+
+async function syncInviteLinking(userId: string, email?: string | null) {
+  const normalizedEmail = email?.trim();
+  if (!normalizedEmail) return;
+  await acceptPendingInvitesForUser({ userId, email: normalizedEmail });
+  await linkPendingEmailInvites({ userId, email: normalizedEmail });
 }
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
@@ -92,7 +99,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Please verify your email address before signing in. Check your inbox for the verification link.');
     }
 
-    await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email || email });
+    await syncInviteLinking(cred.user.uid, cred.user.email || email);
   };
 
   const upsertProfile = async (params: { uid: string; displayName: string; role: AppRole; email?: string | null; merge?: boolean }) => {
@@ -112,9 +119,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setProfile({ uid: params.uid, displayName: params.displayName, role: params.role });
     setNeedsProfile(false);
 
-    if (params.email) {
-      await acceptPendingInvitesForUser({ userId: params.uid, email: params.email });
-    }
+    await syncInviteLinking(params.uid, params.email);
   };
 
   const signInWithGoogle = async (params: { idToken: string; accessToken?: string; role?: AppRole }) => {
@@ -134,9 +139,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (cred.user.email) {
-      await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email });
-    }
+    await syncInviteLinking(cred.user.uid, cred.user.email);
 
     if (existing) {
       setProfile(existing);
@@ -170,9 +173,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (cred.user.email) {
-      await acceptPendingInvitesForUser({ userId: cred.user.uid, email: cred.user.email });
-    }
+    await syncInviteLinking(cred.user.uid, cred.user.email);
 
     if (existing) {
       setProfile(existing);
@@ -216,9 +217,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       { merge: true }
     );
 
-    if (user.email) {
-      await acceptPendingInvitesForUser({ userId: user.uid, email: user.email });
-    }
+    await syncInviteLinking(user.uid, user.email);
 
     setProfile({ uid: user.uid, displayName: params.displayName.trim(), role: params.role });
     setNeedsProfile(false);
@@ -250,8 +249,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const revokeSession = async () => {
-    // Session revocation is handled by Firebase Admin in backend tooling.
-    // On client we provide an immediate local revoke by signing out.
     await firebaseSignOut(auth);
     setProfile(null);
     setNeedsProfile(false);

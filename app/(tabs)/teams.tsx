@@ -13,8 +13,8 @@ import {
   watchManagerWorkerInvites,
   watchUserTeamUnreadCounts,
   watchWorkerEvents,
-  WorkerInvite,
 } from '@/services/dispatch';
+import type { WorkerInvite } from '@/types/dispatch';
 import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from '@/services/worker-invite-notifications';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
@@ -226,8 +226,8 @@ export default function TeamsScreen() {
         setDrawerMessageTone('success');
         setDrawerMessage(
           result.linked
-            ? (teamId ? 'Worker account found and linked to the team.' : 'Worker account found and linked as a solo worker.')
-            : 'Invite sent. Worker will link automatically after they sign in with this email.'
+            ? (teamId ? 'Worker account found. In-app invite created and now awaiting worker acceptance.' : 'Worker account found. Direct invite created and awaiting worker acceptance.')
+            : 'Invite sent. The worker will need to sign in and explicitly accept it in the app.'
         );
       }
     } catch (error) {
@@ -312,7 +312,7 @@ export default function TeamsScreen() {
             </Pressable>
           </View>
           {visibleInvites.slice(0, 5).map((invite) => {
-            const canRetry = invite.status === 'send_failed';
+            const canRetry = invite.status === 'delivery_failed';
             const isClearingThisInvite = clearingInviteId === invite.id;
             return (
               <View key={invite.id} style={styles.inviteStatusRow}>

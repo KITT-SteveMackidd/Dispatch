@@ -22,7 +22,8 @@ import {
 import { sendSignInLinkToEmail } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
-import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, Team, UserProfile } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
+export type { WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 
 export type TeamUnreadCount = {
   teamId: string;
@@ -84,20 +85,6 @@ export type UserNotification = {
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
-export type WorkerInvite = {
-  id: string;
-  managerId: string;
-  teamId?: string;
-  teamName?: string;
-  email: string;
-  workerId?: string | null;
-  status: 'pending' | 'queued' | 'sent' | 'send_failed' | 'accepted' | 'linked';
-  statusReason?: string;
-  createdAt?: { toDate?: () => Date } | Date | null;
-  sentAt?: { toDate?: () => Date } | Date | null;
-  managerClearedAt?: { toDate?: () => Date } | Date | null;
-};
-
 export type CreateEventRoleInput = {
   id: string;
   name: string;
@@ -112,6 +99,9 @@ export type UpsertEventTemplateInput = {
   defaultTime?: string;
   defaultDescription?: string;
 };
+
+const ACTIVE_INVITE_STATUSES: WorkerInviteStatus[] = ['created', 'delivery_queued', 'delivered', 'delivery_failed', 'pending_acceptance'];
+const INVITE_AUTO_EXPIRY_MS = 1000 * 60 * 60 * 24 * 7;
 
 function toDateMs(value?: { toDate?: () => Date } | Date | null) {
   if (!value) return 0;
@@ -284,7 +274,7 @@ export async function sendChatMessage(params: {
           doc(db, 'chatUnread', `${userId}__${params.teamId}`),
           {
             userId,
-            teamId: params.teamId,
+            teamId: params.teamId || null,
             unreadCount: increment(1),
             updatedAt: serverTimestamp(),
           },
@@ -349,11 +339,60 @@ function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function getFutureDate(msFromNow: number) {
+  return new Date(Date.now() + msFromNow);
+}
+
+function generateInviteToken() {
+  return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+function getInviteTokenPreview(token: string) {
+  return token.slice(0, 8);
+}
+
+function isInviteExpired(invite: Pick<WorkerInvite, 'expiresAt' | 'status'>) {
+  if (invite.status === 'expired') return true;
+  const expiresAtMs = toDateMs(invite.expiresAt);
+  return !!expiresAtMs && expiresAtMs <= Date.now();
+}
+
+function shouldTreatInviteAsActive(invite: WorkerInvite) {
+  return ACTIVE_INVITE_STATUSES.includes(invite.status) && !isInviteExpired(invite);
+}
+
+async function expireInviteIfNeeded(inviteRef: ReturnType<typeof doc>, invite: WorkerInvite) {
+  if (!shouldTreatInviteAsActive(invite) && invite.status !== 'expired' && isInviteExpired(invite)) {
+    await updateDoc(inviteRef, {
+      status: 'expired',
+      statusReason: 'Invite expired before worker accepted it.',
+      expiredAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return true;
+  }
+  return false;
+}
+
+async function loadActiveInvite(params: { managerId: string; teamId?: string; email: string }) {
+  const invitesSnap = await getDocs(query(collection(db, 'workerInvites'), where('managerId', '==', params.managerId), where('email', '==', params.email)));
+  const matches = invitesSnap.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<WorkerInvite, 'id'>) }))
+    .filter((invite) => (invite.teamId || null) === (params.teamId || null));
+
+  for (const invite of matches) {
+    const inviteRef = doc(db, 'workerInvites', invite.id);
+    await expireInviteIfNeeded(inviteRef, invite);
+  }
+
+  return matches.find((invite) => shouldTreatInviteAsActive(invite)) || null;
+}
+
 function getInviteAppLink() {
   return process.env.EXPO_PUBLIC_APP_INVITE_URL?.trim() || 'https://dispatchapp.ca/download';
 }
 
-async function ensureManagerWorkerThread(params: { managerId: string; workerId: string; teamId: string }) {
+async function ensureManagerWorkerThread(params: { managerId: string; workerId: string; teamId?: string }) {
   const threadId = [params.managerId, params.workerId].sort().join('__');
   await setDoc(
     doc(db, 'chatThreads', threadId),
@@ -753,11 +792,65 @@ export async function createTeam(managerId: string, name: string) {
   });
 }
 
+async function createWorkerInviteRecord(params: {
+  managerId: string;
+  teamId?: string;
+  teamName: string;
+  email: string;
+  workerId?: string | null;
+  deliveryChannel: 'email' | 'in_app';
+  status: WorkerInviteStatus;
+  statusReason: string;
+  appLink: string;
+}) {
+  const token = generateInviteToken();
+  const expiresAt = getFutureDate(INVITE_AUTO_EXPIRY_MS);
+  const inviteRef = await addDoc(collection(db, 'workerInvites'), {
+    managerId: params.managerId,
+    teamId: params.teamId || null,
+    teamName: params.teamName,
+    appLink: params.appLink,
+    email: params.email,
+    normalizedEmail: params.email,
+    workerId: params.workerId || null,
+    token,
+    tokenPreview: getInviteTokenPreview(token),
+    deliveryChannel: params.deliveryChannel,
+    status: params.status,
+    statusReason: params.statusReason,
+    sendCount: params.deliveryChannel === 'email' ? 1 : 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    expiresAt,
+    lastSentAt: params.deliveryChannel === 'email' ? serverTimestamp() : null,
+  });
+
+  return { inviteRef, token, expiresAt };
+}
+
+async function updateInviteDeliveryState(params: {
+  inviteId: string;
+  status: WorkerInviteStatus;
+  statusReason: string;
+  via?: 'http-endpoint' | 'firebase-auth-email-link' | 'firebase-mail-collection';
+  incrementSendCount?: boolean;
+}) {
+  await updateDoc(doc(db, 'workerInvites', params.inviteId), {
+    status: params.status,
+    statusReason: params.statusReason,
+    sentAt: serverTimestamp(),
+    lastSentAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...(params.via ? { emailDelivery: params.via } : {}),
+    ...(params.incrementSendCount ? { sendCount: increment(1) } : {}),
+  });
+}
+
 export async function inviteWorkerToTeam(params: { managerId: string; teamId: string; email: string }) {
-  const { managerId, teamId, email } = params;
-  const normalizedEmail = email.trim().toLowerCase();
+  const { managerId, teamId } = params;
+  const normalizedEmail = normalizeEmail(params.email);
   if (!normalizedEmail) throw new Error('Worker email is required');
-  if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error('Enter a valid email address');
+  if (!isValidEmail(normalizedEmail)) throw new Error('Enter a valid email address');
 
   const teamRef = doc(db, 'teams', teamId);
   const teamSnap = await getDoc(teamRef);
@@ -766,17 +859,25 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
   const team = teamSnap.data() as Omit<Team, 'id'>;
   if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
 
+  const existingInvite = await loadActiveInvite({ managerId, teamId, email: normalizedEmail });
+  if (existingInvite) {
+    if (existingInvite.status === 'delivery_failed') {
+      await retryWorkerInviteDelivery({ managerId, inviteId: existingInvite.id });
+      return { inviteId: existingInvite.id, queued: false, via: existingInvite.emailDelivery || 'firebase-mail-collection', reused: true };
+    }
+    return { inviteId: existingInvite.id, queued: existingInvite.status !== 'delivered', via: existingInvite.emailDelivery || 'firebase-mail-collection', reused: true };
+  }
+
   const appLink = (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatch.app/download';
-  const inviteRef = await addDoc(collection(db, 'workerInvites'), {
+  const { inviteRef } = await createWorkerInviteRecord({
     managerId,
     teamId,
     teamName: team.name,
     email: normalizedEmail,
+    deliveryChannel: 'email',
+    status: 'created',
+    statusReason: 'Invite created and awaiting delivery.',
     appLink,
-    workerId: null,
-    status: 'pending',
-    statusReason: 'Pending account creation/login acceptance.',
-    createdAt: serverTimestamp(),
   });
 
   try {
@@ -789,20 +890,21 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
       teamId,
     });
 
-    await updateDoc(inviteRef, {
-      status: delivery.status,
+    await updateInviteDeliveryState({
+      inviteId: inviteRef.id,
+      status: delivery.status === 'sent' ? 'delivered' : 'delivery_queued',
       statusReason: delivery.reason,
-      sentAt: serverTimestamp(),
-      emailDelivery: delivery.via,
+      via: delivery.via,
     });
 
-    return { inviteId: inviteRef.id, queued: delivery.status !== 'sent', via: delivery.via };
+    return { inviteId: inviteRef.id, queued: delivery.status !== 'sent', via: delivery.via, reused: false };
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Invite email transport failed';
     await updateDoc(inviteRef, {
-      status: 'send_failed',
+      status: 'delivery_failed',
       statusReason: `Invite saved but delivery failed: ${reason}`,
       deliveryErrorAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     throw new Error(`Invite saved, but delivery failed: ${reason}`);
   }
@@ -876,8 +978,8 @@ async function sendInviteEmail(params: {
     to: [params.email],
     message: {
       subject: `You are invited to join ${params.teamName} on Dispatch`,
-      text: `You have been invited to join ${params.teamName} on Dispatch. Download the app and sign in with this email to connect with your manager automatically: ${params.appLink}`,
-      html: `<p>You have been invited to join <strong>${params.teamName}</strong> on Dispatch.</p><p><a href="${params.appLink}">Download the app</a> and sign in with <strong>${params.email}</strong> to connect with your manager automatically.</p>`,
+      text: `You have been invited to join ${params.teamName} on Dispatch. Download the app and sign in with this email to review and accept the invite: ${params.appLink}`,
+      html: `<p>You have been invited to join <strong>${params.teamName}</strong> on Dispatch.</p><p><a href="${params.appLink}">Download the app</a> and sign in with <strong>${params.email}</strong> to review and accept the invite.</p>`,
     },
     dispatchInvite: {
       inviteId: params.inviteId,
@@ -902,13 +1004,19 @@ export async function retryWorkerInviteDelivery(params: { managerId: string; inv
   const inviteSnap = await getDoc(inviteRef);
   if (!inviteSnap.exists()) throw new Error('Invite not found');
 
-  const invite = inviteSnap.data() as Partial<WorkerInvite> & { appLink?: string };
+  const invite = { id: inviteSnap.id, ...(inviteSnap.data() as Omit<WorkerInvite, 'id'>) };
   if (invite.managerId !== params.managerId) throw new Error('You can only retry your own invites');
-  if (!invite.email || !invite.teamId) throw new Error('Invite data is incomplete for retry');
+  if (!invite.email) throw new Error('Invite data is incomplete for retry');
+  if (invite.status === 'revoked' || invite.status === 'cancelled') throw new Error('Revoked or cancelled invites cannot be retried');
 
-  const teamSnap = await getDoc(doc(db, 'teams', invite.teamId));
-  const teamName = invite.teamName || (teamSnap.exists() ? (teamSnap.data() as Omit<Team, 'id'>).name : 'Dispatch Team');
+  const teamName = invite.teamName || 'Dispatch Team';
   const appLink = invite.appLink || (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatch.app/download';
+
+  const expired = await expireInviteIfNeeded(inviteRef, invite);
+  const refreshedInvite = expired ? { ...invite, status: 'expired' as WorkerInviteStatus } : invite;
+  if (refreshedInvite.status === 'expired') {
+    throw new Error('Invite expired. Create a new invite instead of retrying this one.');
+  }
 
   try {
     const delivery = await sendInviteEmail({
@@ -917,32 +1025,33 @@ export async function retryWorkerInviteDelivery(params: { managerId: string; inv
       appLink,
       inviteId: params.inviteId,
       managerId: params.managerId,
-      teamId: invite.teamId,
+      teamId: invite.teamId || undefined,
     });
 
-    await updateDoc(inviteRef, {
-      status: delivery.status,
+    await updateInviteDeliveryState({
+      inviteId: params.inviteId,
+      status: delivery.status === 'sent' ? 'delivered' : 'delivery_queued',
       statusReason: `Retry successful: ${delivery.reason}`,
-      sentAt: serverTimestamp(),
-      emailDelivery: delivery.via,
-      retryAt: serverTimestamp(),
+      via: delivery.via,
+      incrementSendCount: true,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Retry transport failed';
     await updateDoc(inviteRef, {
-      status: 'send_failed',
+      status: 'delivery_failed',
       statusReason: `Retry failed: ${reason}`,
       retryAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     throw new Error(reason);
   }
 }
 
-export async function acceptPendingInvitesForUser(params: { userId: string; email: string }) {
-  const normalizedEmail = params.email.trim().toLowerCase();
+async function setInvitePendingAcceptance(params: { userId: string; email: string }) {
+  const normalizedEmail = normalizeEmail(params.email);
   if (!normalizedEmail) return;
 
-  const inviteStatuses = ['pending', 'queued', 'sent', 'send_failed'] as const;
+  const inviteStatuses: WorkerInviteStatus[] = ['created', 'delivery_queued', 'delivered', 'delivery_failed'];
 
   for (const status of inviteStatuses) {
     const invitesSnap = await getDocs(
@@ -954,31 +1063,29 @@ export async function acceptPendingInvitesForUser(params: { userId: string; emai
     );
 
     for (const inviteDoc of invitesSnap.docs) {
-      const invite = inviteDoc.data() as {
-        teamId?: string;
-        managerId?: string;
-      };
-
-      if (!invite.teamId || !invite.managerId) continue;
-
-      await updateDoc(doc(db, 'teams', invite.teamId), {
-        workerIds: arrayUnion(params.userId),
-      });
+      const invite = { id: inviteDoc.id, ...(inviteDoc.data() as Omit<WorkerInvite, 'id'>) };
+      if (!invite.managerId) continue;
+      if (await expireInviteIfNeeded(inviteDoc.ref, invite)) continue;
 
       await updateDoc(inviteDoc.ref, {
         workerId: params.userId,
-        status: 'accepted',
-        statusReason: 'Accepted automatically after worker sign-in.',
-        acceptedAt: serverTimestamp(),
+        status: 'pending_acceptance',
+        statusReason: 'Worker account found. Awaiting explicit in-app acceptance.',
+        linkedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
       await ensureManagerWorkerThread({
         managerId: invite.managerId,
         workerId: params.userId,
-        teamId: invite.teamId,
+        teamId: invite.teamId || undefined,
       });
     }
   }
+}
+
+export async function acceptPendingInvitesForUser(params: { userId: string; email: string }) {
+  await setInvitePendingAcceptance(params);
 }
 
 export async function inviteWorkerByEmailToTeam(params: {
@@ -992,6 +1099,15 @@ export async function inviteWorkerByEmailToTeam(params: {
   if (!normalizedEmail) throw new Error('Worker email is required');
   if (!isValidEmail(normalizedEmail)) throw new Error('Enter a valid email address');
 
+  const existingInvite = await loadActiveInvite({ managerId, teamId, email: normalizedEmail });
+  if (existingInvite) {
+    if (existingInvite.status === 'delivery_failed') {
+      await retryWorkerInviteDelivery({ managerId, inviteId: existingInvite.id });
+      return { linked: !!existingInvite.workerId, reused: true };
+    }
+    return { linked: !!existingInvite.workerId, reused: true };
+  }
+
   const usersSnap = await getDocs(query(
     collection(db, 'users'),
     where('email', '==', normalizedEmail),
@@ -1002,64 +1118,38 @@ export async function inviteWorkerByEmailToTeam(params: {
   const foundWorkerId = foundWorker?.id;
 
   let teamName = 'Solo worker';
-
-  await runTransaction(db, async (tx) => {
-    if (teamId) {
-      const teamRef = doc(db, 'teams', teamId);
-      const teamSnap = await tx.get(teamRef);
-
-      if (!teamSnap.exists()) throw new Error('Team not found');
-
-      const team = teamSnap.data() as Omit<Team, 'id'>;
-      if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
-      teamName = team.name || 'Dispatch Team';
-
-      if (foundWorkerId) {
-        const nextWorkerIds = [...new Set([...(team.workerIds || []), foundWorkerId])];
-        tx.update(teamRef, { workerIds: nextWorkerIds });
-      }
-    }
-
-    if (foundWorkerId) {
-      const threadId = [managerId, foundWorkerId].sort().join('__');
-      tx.set(
-        doc(db, 'chatThreads', threadId),
-        {
-          id: threadId,
-          managerId,
-          workerId: foundWorkerId,
-          teamId,
-          participants: [managerId, foundWorkerId],
-          updatedAt: serverTimestamp(),
-          createdByInvite: true,
-        },
-        { merge: true }
-      );
-    }
-  });
-
   if (teamId) {
-    const teamSnap = await getDoc(doc(db, 'teams', teamId));
-    if (teamSnap.exists()) {
-      teamName = ((teamSnap.data() as Omit<Team, 'id'>).name || 'Dispatch Team');
-    }
+    const teamRef = doc(db, 'teams', teamId);
+    const teamSnap = await getDoc(teamRef);
+    if (!teamSnap.exists()) throw new Error('Team not found');
+    const team = teamSnap.data() as Omit<Team, 'id'>;
+    if (team.managerId !== managerId) throw new Error('Only the team manager can invite workers');
+    teamName = team.name || 'Dispatch Team';
   }
 
   const appLink = getInviteAppLink();
+  const initialStatus: WorkerInviteStatus = foundWorkerId ? 'pending_acceptance' : 'created';
+  const initialReason = foundWorkerId
+    ? (teamId ? 'Worker account already exists. Awaiting explicit in-app acceptance to join team.' : 'Worker account already exists. Awaiting explicit in-app acceptance for direct invite.')
+    : 'Invite created and awaiting delivery.';
+  const deliveryChannel: 'email' | 'in_app' = foundWorkerId ? 'in_app' : 'email';
 
-  const inviteRef = await addDoc(collection(db, 'workerInvites'), {
+  const { inviteRef } = await createWorkerInviteRecord({
     managerId,
     teamId,
     teamName,
-    appLink,
     email: normalizedEmail,
     workerId: foundWorkerId || null,
-    status: foundWorkerId ? 'linked' : 'pending',
-    statusReason: foundWorkerId
-      ? (teamId ? 'Worker account already exists and was linked to team immediately.' : 'Worker account already exists and was linked as a solo worker immediately.')
-      : 'Pending account creation/login acceptance.',
-    createdAt: serverTimestamp(),
+    deliveryChannel,
+    status: initialStatus,
+    statusReason: initialReason,
+    appLink,
   });
+
+  if (foundWorkerId) {
+    await ensureManagerWorkerThread({ managerId, workerId: foundWorkerId, teamId });
+    return { linked: true, reused: false };
+  }
 
   try {
     const delivery = await sendInviteEmail({
@@ -1071,75 +1161,95 @@ export async function inviteWorkerByEmailToTeam(params: {
       teamId,
     });
 
-    await updateDoc(inviteRef, {
-      status: foundWorkerId ? 'linked' : delivery.status,
-      statusReason: foundWorkerId
-        ? (teamId ? 'Worker linked to team immediately; invite email also delivered.' : 'Solo worker linked immediately; invite email also delivered.')
-        : delivery.reason,
-      sentAt: serverTimestamp(),
-      emailDelivery: delivery.via,
+    await updateInviteDeliveryState({
+      inviteId: inviteRef.id,
+      status: delivery.status === 'sent' ? 'delivered' : 'delivery_queued',
+      statusReason: delivery.reason,
+      via: delivery.via,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Invite email transport failed';
     await updateDoc(inviteRef, {
-      status: 'send_failed',
+      status: 'delivery_failed',
       statusReason: `Invite saved but delivery failed: ${reason}`,
       deliveryErrorAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     throw new Error(`Invite saved, but delivery failed: ${reason}`);
   }
 
-  return { linked: !!foundWorkerId };
+  return { linked: false, reused: false };
 }
 
-export async function linkPendingEmailInvites(params: { workerId: string; email: string }) {
-  const normalizedEmail = normalizeEmail(params.email);
-  if (!normalizedEmail) return;
+export async function linkPendingEmailInvites(params: { userId: string; email: string }) {
+  await setInvitePendingAcceptance(params);
+}
 
-  const invitesSnap = await getDocs(query(
-    collection(db, 'workerInvites'),
-    where('email', '==', normalizedEmail),
-    where('status', '==', 'pending')
-  ));
+export async function cancelWorkerInvite(params: { managerId: string; inviteId: string }) {
+  const inviteRef = doc(db, 'workerInvites', params.inviteId);
+  const inviteSnap = await getDoc(inviteRef);
+  if (!inviteSnap.exists()) throw new Error('Invite not found');
 
-  if (!invitesSnap.docs.length) return;
+  const invite = inviteSnap.data() as WorkerInvite;
+  if (invite.managerId !== params.managerId) throw new Error('You can only cancel your own invites');
+  if (invite.status === 'accepted') throw new Error('Accepted invites cannot be cancelled');
 
+  await updateDoc(inviteRef, {
+    status: 'cancelled',
+    statusReason: 'Invite cancelled by manager.',
+    cancelledAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function revokeWorkerInvite(params: { managerId: string; inviteId: string }) {
+  const inviteRef = doc(db, 'workerInvites', params.inviteId);
+  const inviteSnap = await getDoc(inviteRef);
+  if (!inviteSnap.exists()) throw new Error('Invite not found');
+
+  const invite = inviteSnap.data() as WorkerInvite;
+  if (invite.managerId !== params.managerId) throw new Error('You can only revoke your own invites');
+  if (invite.status === 'accepted') throw new Error('Accepted invites cannot be revoked');
+
+  await updateDoc(inviteRef, {
+    status: 'revoked',
+    statusReason: 'Invite revoked by manager.',
+    revokedAt: serverTimestamp(),
+    revokedBy: params.managerId,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function acceptWorkerInvite(params: { userId: string; inviteId: string }) {
+  const inviteRef = doc(db, 'workerInvites', params.inviteId);
   await runTransaction(db, async (tx) => {
-    for (const inviteDoc of invitesSnap.docs) {
-      const invite = inviteDoc.data() as { teamId?: string; managerId?: string };
-      if (!invite.managerId) continue;
+    const inviteSnap = await tx.get(inviteRef);
+    if (!inviteSnap.exists()) throw new Error('Invite not found');
 
-      if (invite.teamId) {
-        const teamRef = doc(db, 'teams', invite.teamId);
-        const teamSnap = await tx.get(teamRef);
-        if (teamSnap.exists()) {
-          const team = teamSnap.data() as Omit<Team, 'id'>;
-          const nextWorkerIds = [...new Set([...(team.workerIds || []), params.workerId])];
-          tx.update(teamRef, { workerIds: nextWorkerIds });
-        }
-      }
-
-      tx.update(inviteDoc.ref, {
-        workerId: params.workerId,
-        status: 'linked',
-        linkedAt: serverTimestamp(),
-      });
-
-      const threadId = [invite.managerId, params.workerId].sort().join('__');
-      tx.set(
-        doc(db, 'chatThreads', threadId),
-        {
-          id: threadId,
-          managerId: invite.managerId,
-          workerId: params.workerId,
-          teamId: invite.teamId,
-          participants: [invite.managerId, params.workerId],
-          updatedAt: serverTimestamp(),
-          createdByInvite: true,
-        },
-        { merge: true }
-      );
+    const invite = inviteSnap.data() as WorkerInvite;
+    if (invite.workerId && invite.workerId !== params.userId) throw new Error('This invite belongs to another user');
+    if (isInviteExpired(invite)) throw new Error('This invite has expired');
+    if (invite.status !== 'pending_acceptance' && invite.status !== 'delivered' && invite.status !== 'delivery_queued' && invite.status !== 'created') {
+      throw new Error('Invite is not available to accept');
     }
+
+    if (invite.teamId) {
+      const teamRef = doc(db, 'teams', invite.teamId);
+      const teamSnap = await tx.get(teamRef);
+      if (!teamSnap.exists()) throw new Error('Team not found');
+      const team = teamSnap.data() as Omit<Team, 'id'>;
+      const nextWorkerIds = [...new Set([...(team.workerIds || []), params.userId])];
+      tx.update(teamRef, { workerIds: nextWorkerIds });
+    }
+
+    tx.update(inviteRef, {
+      workerId: params.userId,
+      status: 'accepted',
+      statusReason: 'Worker accepted invite in app.',
+      acceptedAt: serverTimestamp(),
+      consumedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
   });
 }
 
