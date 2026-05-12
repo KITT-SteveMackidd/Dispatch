@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
+  acceptWorkerInvite,
   createTeam,
+  declineWorkerInvite,
   inviteWorkerByEmailToTeam,
   loadUserProfilesByIds,
   loadWorkerTeams,
+  markUserNotificationsRead,
   retryWorkerInviteDelivery,
   watchManagerEvents,
   watchManagerTeams,
   watchManagerWorkerInvites,
+  watchUserNotifications,
   watchUserTeamUnreadCounts,
   watchWorkerEvents,
 } from '@/services/dispatch';
 import type { WorkerInvite } from '@/types/dispatch';
+import type { UserNotification } from '@/services/dispatch';
 import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from '@/services/worker-invite-notifications';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
@@ -48,6 +53,9 @@ export default function TeamsScreen() {
   const [retryingInviteId, setRetryingInviteId] = useState<string | null>(null);
   const [clearingInviteId, setClearingInviteId] = useState<string | null>(null);
   const [clearingAllInvites, setClearingAllInvites] = useState(false);
+  const [workerInviteNotifications, setWorkerInviteNotifications] = useState<UserNotification[]>([]);
+  const [workerInviteBusyId, setWorkerInviteBusyId] = useState<string | null>(null);
+  const [expandedWorkerInviteIds, setExpandedWorkerInviteIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!profile) return;
@@ -93,6 +101,17 @@ export default function TeamsScreen() {
         return acc;
       }, {});
       setUnreadCountByTeamId(next);
+    });
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'worker') {
+      setWorkerInviteNotifications([]);
+      return;
+    }
+
+    return watchUserNotifications(profile.uid, (items) => {
+      setWorkerInviteNotifications(items.filter((item) => item.kind === 'worker_team_invite' && !item.read));
     });
   }, [profile]);
 
@@ -272,6 +291,37 @@ export default function TeamsScreen() {
     }
   };
 
+  const toggleWorkerInviteExpanded = (notificationId: string) => {
+    setExpandedWorkerInviteIds((current) => ({
+      ...current,
+      [notificationId]: !current[notificationId],
+    }));
+  };
+
+  const handleWorkerInviteResponse = async (notification: UserNotification, response: 'accept' | 'decline') => {
+    if (!profile?.uid || workerInviteBusyId === notification.id) return;
+
+    const inviteId = notification.relatedRoleId;
+    if (!inviteId) {
+      Alert.alert('Invite unavailable', 'This team invite is missing its invite reference.');
+      return;
+    }
+
+    try {
+      setWorkerInviteBusyId(notification.id);
+      if (response === 'accept') {
+        await acceptWorkerInvite({ userId: profile.uid, inviteId });
+      } else {
+        await declineWorkerInvite({ userId: profile.uid, inviteId });
+      }
+      await markUserNotificationsRead({ userId: profile.uid, notificationIds: [notification.id] });
+    } catch (error) {
+      Alert.alert('Unable to respond', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setWorkerInviteBusyId(null);
+    }
+  };
+
   const handleClearAllInvites = async () => {
     if (!profile || profile.role !== 'manager' || !visibleInvites.length) return;
     if (clearingAllInvites) return;
@@ -302,6 +352,69 @@ export default function TeamsScreen() {
           </Pressable>
         ) : <View style={styles.headerSpacer} />}
       </View>
+
+      {profile?.role === 'worker' && workerInviteNotifications.length ? (
+        <View style={[styles.pendingNotificationsCard, isDarkMode ? styles.pendingNotificationsCardDark : styles.pendingNotificationsCardLight]}>
+          <Text style={[styles.pendingNotificationsTitle, isDarkMode ? styles.pendingNotificationsTitleDark : styles.pendingNotificationsTitleLight]}>
+            Team invites need your response
+          </Text>
+          {workerInviteNotifications.map((notification) => {
+            const busy = workerInviteBusyId === notification.id;
+            const expanded = !!expandedWorkerInviteIds[notification.id];
+            return (
+              <View key={notification.id} style={styles.pendingNotificationRow}>
+                <View style={styles.pendingNotificationHeader}>
+                  <Text style={[styles.pendingNotificationText, styles.pendingNotificationTitleText, isDarkMode ? styles.titleDark : styles.titleLight]}>
+                    {notification.title}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${expanded ? 'Hide' : 'Show'} invite details`}
+                    hitSlop={6}
+                    onPress={() => toggleWorkerInviteExpanded(notification.id)}>
+                    <Text style={[styles.pendingNotificationExpandText, isDarkMode ? styles.pendingNotificationExpandTextDark : styles.pendingNotificationExpandTextLight]}>
+                      {expanded ? 'Hide details ▲' : 'Show details ▼'}
+                    </Text>
+                  </Pressable>
+                </View>
+                {expanded ? (
+                  <View style={styles.pendingNotificationDetails}>
+                    <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                      {notification.body}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={styles.pendingNotificationActions}>
+                  <Pressable
+                    disabled={busy}
+                    style={[
+                      styles.pendingActionButton,
+                      isDarkMode ? styles.pendingActionDeclineDark : styles.pendingActionDeclineLight,
+                      busy && styles.drawerCloseDisabled,
+                    ]}
+                    onPress={() => handleWorkerInviteResponse(notification, 'decline')}>
+                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionDeclineTextDark : styles.pendingActionDeclineTextLight]}>
+                      {busy ? '…' : 'Decline'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={busy}
+                    style={[
+                      styles.pendingActionButton,
+                      isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight,
+                      busy && styles.drawerCloseDisabled,
+                    ]}
+                    onPress={() => handleWorkerInviteResponse(notification, 'accept')}>
+                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight]}>
+                      {busy ? '…' : 'Accept'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
 
       {profile?.role === 'manager' && visibleInvites.length ? (
         <View style={[styles.inviteStatusCard, isDarkMode ? styles.inviteStatusCardDark : styles.inviteStatusCardLight]}>
@@ -553,6 +666,33 @@ const styles = StyleSheet.create({
   clearInviteButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
   retryButtonDisabled: { opacity: 0.6 },
   retryButtonText: { color: '#061229', fontSize: 12, fontWeight: '700' },
+  pendingNotificationsCard: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
+  pendingNotificationsCardLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
+  pendingNotificationsCardDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
+  pendingNotificationsTitle: { fontWeight: '700', fontSize: 13 },
+  pendingNotificationsTitleLight: { color: '#232832' },
+  pendingNotificationsTitleDark: { color: '#F4F8FF' },
+  pendingNotificationRow: { gap: 10, borderTopWidth: 1, borderTopColor: 'rgba(249,141,47,0.25)', paddingTop: 10 },
+  pendingNotificationHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  pendingNotificationText: { flex: 1 },
+  pendingNotificationTitleText: { fontWeight: '700', fontSize: 13 },
+  pendingNotificationExpandText: { fontSize: 11, fontWeight: '600' },
+  pendingNotificationExpandTextLight: { color: '#F98D2F' },
+  pendingNotificationExpandTextDark: { color: '#F98D2F' },
+  pendingNotificationDetails: { gap: 4 },
+  pendingNotificationDetail: { fontSize: 12, lineHeight: 18 },
+  pendingNotificationActions: { flexDirection: 'row', gap: 10 },
+  pendingActionButton: { flex: 1, minHeight: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  pendingActionButtonText: { fontWeight: '700', fontSize: 13 },
+  pendingActionDeclineLight: { backgroundColor: '#EDF0FC', borderWidth: 1, borderColor: '#F98D2F' },
+  pendingActionDeclineDark: { backgroundColor: '#203E75', borderWidth: 1, borderColor: '#F98D2F' },
+  pendingActionDeclineTextLight: { color: '#F98D2F' },
+  pendingActionDeclineTextDark: { color: '#F98D2F' },
+  pendingActionAcceptLight: { backgroundColor: '#0EC3C9' },
+  pendingActionAcceptDark: { backgroundColor: '#0EC3C9' },
+  pendingActionAcceptTextLight: { color: '#061229' },
+  pendingActionAcceptTextDark: { color: '#061229' },
+  drawerCloseDisabled: { opacity: 0.6 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
   drawerLight: { backgroundColor: '#F7F7F7' },

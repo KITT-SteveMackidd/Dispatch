@@ -1292,6 +1292,30 @@ export async function acceptWorkerInvite(params: { userId: string; inviteId: str
   });
 }
 
+export async function declineWorkerInvite(params: { userId: string; inviteId: string }) {
+  const inviteRef = doc(db, 'workerInvites', params.inviteId);
+  await runTransaction(db, async (tx) => {
+    const inviteSnap = await tx.get(inviteRef);
+    if (!inviteSnap.exists()) throw new Error('Invite not found');
+
+    const invite = inviteSnap.data() as WorkerInvite;
+    if (invite.workerId && invite.workerId !== params.userId) throw new Error('This invite belongs to another user');
+    if (isInviteExpired(invite)) throw new Error('This invite has expired');
+    if (invite.status !== 'pending_acceptance' && invite.status !== 'delivered' && invite.status !== 'delivery_queued' && invite.status !== 'created') {
+      throw new Error('Invite is not available to decline');
+    }
+
+    tx.update(inviteRef, {
+      workerId: params.userId,
+      status: 'declined',
+      statusReason: 'Worker declined invite in app.',
+      declinedAt: serverTimestamp(),
+      consumedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
 export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProfile[]> {
   const ids = [...new Set(userIds.filter(Boolean))];
   if (!ids.length) return [];
