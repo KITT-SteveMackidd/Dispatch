@@ -19,12 +19,12 @@ import Constants from 'expo-constants';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
-import { authLogoSource } from '@/constants/branding';
+import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const lightSignInLogoSource = authLogoSource;
-const darkSignInLogoSource = authLogoSource;
+const lightSignInLogoSource = authLightLogoSource;
+const darkSignInLogoSource = authDarkLogoSource;
 
 export default function SignInScreen() {
   const router = useRouter();
