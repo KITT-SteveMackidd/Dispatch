@@ -75,7 +75,7 @@ export type RoleAssignmentNotification = {
 export type UserNotification = {
   id: string;
   userId: string;
-  kind: 'role_invite_response' | 'task_behind_schedule';
+  kind: 'role_invite_response' | 'task_behind_schedule' | 'worker_team_invite';
   title: string;
   body: string;
   relatedEventId?: string;
@@ -965,11 +965,11 @@ async function sendInviteEmail(params: {
 
       return {
         status: 'sent',
-        reason: 'Invite email sent immediately via Firebase Auth email-link delivery.',
+        reason: 'Invite email sent immediately via Dispatch sign-in link delivery.',
         via: 'firebase-auth-email-link',
       };
     } catch (error) {
-      console.warn('Firebase Auth invite email-link delivery failed, falling back to mail queue.', error);
+      console.warn('Dispatch invite email-link delivery failed, falling back to mail queue.', error);
     }
   }
 
@@ -978,8 +978,8 @@ async function sendInviteEmail(params: {
     to: [params.email],
     message: {
       subject: `You are invited to join ${params.teamName} on Dispatch`,
-      text: `You have been invited to join ${params.teamName} on Dispatch. Download the app and sign in with this email to review and accept the invite: ${params.appLink}`,
-      html: `<p>You have been invited to join <strong>${params.teamName}</strong> on Dispatch.</p><p><a href="${params.appLink}">Download the app</a> and sign in with <strong>${params.email}</strong> to review and accept the invite.</p>`,
+      text: `You have been invited to join ${params.teamName} on Dispatch. If you do not have the app yet, download Dispatch from the Apple App Store or Google Play, then sign in with this email to review and accept the invite: ${params.appLink}`,
+      html: `<p>You have been invited to join <strong>${params.teamName}</strong> on Dispatch.</p><p>If you do not have the app yet, download Dispatch from the Apple App Store or Google Play.</p><p><a href="${params.appLink}">Open Dispatch download and sign-in link</a> to review and accept the invite with <strong>${params.email}</strong>.</p>`,
     },
     dispatchInvite: {
       inviteId: params.inviteId,
@@ -1047,6 +1047,32 @@ export async function retryWorkerInviteDelivery(params: { managerId: string; inv
   }
 }
 
+async function ensureWorkerInviteNotification(params: {
+  userId: string;
+  inviteId: string;
+  teamName?: string;
+  managerName?: string;
+}) {
+  const notificationId = `worker_team_invite__${params.inviteId}__${params.userId}`;
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'userNotifications', notificationId);
+    const snap = await tx.get(ref);
+    if (snap.exists()) return;
+
+    tx.set(ref, {
+      userId: params.userId,
+      kind: 'worker_team_invite',
+      title: 'You have a team invite waiting',
+      body: `${params.managerName || 'A manager'} invited you to join ${params.teamName || 'a Dispatch team'}. Open the app and review your pending invite.`,
+      relatedRoleId: params.inviteId,
+      read: false,
+      createdAt: serverTimestamp(),
+      statusReason: 'Pending team invite surfaced after account creation or sign-in.',
+    });
+  });
+}
+
 async function setInvitePendingAcceptance(params: { userId: string; email: string }) {
   const normalizedEmail = normalizeEmail(params.email);
   if (!normalizedEmail) return;
@@ -1067,6 +1093,12 @@ async function setInvitePendingAcceptance(params: { userId: string; email: strin
       if (!invite.managerId) continue;
       if (await expireInviteIfNeeded(inviteDoc.ref, invite)) continue;
 
+      let managerName = 'A manager';
+      const managerSnap = await getDoc(doc(db, 'users', invite.managerId));
+      if (managerSnap.exists()) {
+        managerName = ((managerSnap.data() as Partial<UserProfile>).displayName || managerName);
+      }
+
       await updateDoc(inviteDoc.ref, {
         workerId: params.userId,
         status: 'pending_acceptance',
@@ -1079,6 +1111,13 @@ async function setInvitePendingAcceptance(params: { userId: string; email: strin
         managerId: invite.managerId,
         workerId: params.userId,
         teamId: invite.teamId || undefined,
+      });
+
+      await ensureWorkerInviteNotification({
+        userId: params.userId,
+        inviteId: invite.id,
+        teamName: invite.teamName,
+        managerName,
       });
     }
   }
