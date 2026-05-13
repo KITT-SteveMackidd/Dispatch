@@ -22,8 +22,8 @@ import {
 import { sendSignInLinkToEmail } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
-import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
-export type { WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
+import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
+export type { InviteToken, InviteTokenStatus, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 
 export type TeamUnreadCount = {
   teamId: string;
@@ -75,7 +75,7 @@ export type RoleAssignmentNotification = {
 export type UserNotification = {
   id: string;
   userId: string;
-  kind: 'role_invite_response' | 'task_behind_schedule' | 'worker_team_invite';
+  kind: 'role_invite_response' | 'role_removed' | 'task_behind_schedule' | 'worker_team_invite';
   title: string;
   body: string;
   relatedEventId?: string;
@@ -369,6 +369,7 @@ async function expireInviteIfNeeded(inviteRef: ReturnType<typeof doc>, invite: W
       expiredAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+    await syncInviteTokenState({ inviteId: inviteRef.id, status: 'expired' });
     return true;
   }
   return false;
@@ -796,6 +797,47 @@ export async function createTeam(managerId: string, name: string) {
   });
 }
 
+async function createInviteTokenRecord(params: {
+  inviteId: string;
+  managerId: string;
+  teamId?: string;
+  email: string;
+  token: string;
+  expiresAt: Date;
+}) {
+  const inviteTokenRef = doc(db, 'inviteTokens', params.inviteId);
+  await setDoc(inviteTokenRef, {
+    inviteId: params.inviteId,
+    managerId: params.managerId,
+    teamId: params.teamId || null,
+    email: params.email,
+    token: params.token,
+    tokenPreview: getInviteTokenPreview(params.token),
+    status: 'active',
+    expiresAt: params.expiresAt,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return inviteTokenRef;
+}
+
+async function syncInviteTokenState(params: {
+  inviteId: string;
+  status: InviteTokenStatus;
+  timestampField?: 'consumedAt' | 'revokedAt' | 'cancelledAt';
+}) {
+  const inviteTokenRef = doc(db, 'inviteTokens', params.inviteId);
+  const inviteTokenSnap = await getDoc(inviteTokenRef);
+  if (!inviteTokenSnap.exists()) return;
+
+  await updateDoc(inviteTokenRef, {
+    status: params.status,
+    ...(params.timestampField ? { [params.timestampField]: serverTimestamp() } : {}),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 async function createWorkerInviteRecord(params: {
   managerId: string;
   teamId?: string;
@@ -817,7 +859,7 @@ async function createWorkerInviteRecord(params: {
     email: params.email,
     normalizedEmail: params.email,
     workerId: params.workerId || null,
-    token,
+    inviteTokenId: null,
     tokenPreview: getInviteTokenPreview(token),
     deliveryChannel: params.deliveryChannel,
     status: params.status,
@@ -827,6 +869,20 @@ async function createWorkerInviteRecord(params: {
     updatedAt: serverTimestamp(),
     expiresAt,
     lastSentAt: params.deliveryChannel === 'email' ? serverTimestamp() : null,
+  });
+
+  await createInviteTokenRecord({
+    inviteId: inviteRef.id,
+    managerId: params.managerId,
+    teamId: params.teamId,
+    email: params.email,
+    token,
+    expiresAt,
+  });
+
+  await updateDoc(inviteRef, {
+    inviteTokenId: inviteRef.id,
+    updatedAt: serverTimestamp(),
   });
 
   return { inviteRef, token, expiresAt };
@@ -1276,6 +1332,7 @@ export async function cancelWorkerInvite(params: { managerId: string; inviteId: 
     cancelledAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  await syncInviteTokenState({ inviteId: params.inviteId, status: 'cancelled', timestampField: 'cancelledAt' });
 }
 
 export async function revokeWorkerInvite(params: { managerId: string; inviteId: string }) {
@@ -1294,6 +1351,7 @@ export async function revokeWorkerInvite(params: { managerId: string; inviteId: 
     revokedBy: params.managerId,
     updatedAt: serverTimestamp(),
   });
+  await syncInviteTokenState({ inviteId: params.inviteId, status: 'revoked', timestampField: 'revokedAt' });
 }
 
 export async function acceptWorkerInvite(params: { userId: string; inviteId: string }) {
@@ -1327,6 +1385,8 @@ export async function acceptWorkerInvite(params: { userId: string; inviteId: str
       updatedAt: serverTimestamp(),
     });
   });
+
+  await syncInviteTokenState({ inviteId: params.inviteId, status: 'consumed', timestampField: 'consumedAt' });
 }
 
 export async function declineWorkerInvite(params: { userId: string; inviteId: string }) {
@@ -1351,6 +1411,8 @@ export async function declineWorkerInvite(params: { userId: string; inviteId: st
       updatedAt: serverTimestamp(),
     });
   });
+
+  await syncInviteTokenState({ inviteId: params.inviteId, status: 'consumed', timestampField: 'consumedAt' });
 }
 
 export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProfile[]> {
@@ -1426,6 +1488,19 @@ export async function updateEventRoleAssignment(params: {
         workerIds,
         updatedAt: serverTimestamp(),
       });
+
+      const removalNotificationRef = doc(collection(db, 'userNotifications'));
+      tx.set(removalNotificationRef, {
+        userId: workerId,
+        kind: 'role_removed',
+        title: 'Removed from role',
+        body: `${event.name}: you were removed from ${role.name}.`,
+        relatedEventId: eventId,
+        relatedRoleId: roleId,
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+      return;
     }
 
     const notificationRef = doc(collection(db, 'roleAssignmentNotifications'));
@@ -1441,10 +1516,7 @@ export async function updateEventRoleAssignment(params: {
       roleTaskNames: (role.tasks || []).map((task) => task.name).filter(Boolean),
       action,
       status: 'pending',
-      statusReason:
-        action === 'assign'
-          ? 'Worker must accept or decline this role assignment before it is finalized.'
-          : 'Worker must accept or decline this role removal update.',
+      statusReason: 'Worker must accept or decline this role assignment before it is finalized.',
       responseOptions: ['accept', 'decline'],
       createdAt: serverTimestamp(),
     });

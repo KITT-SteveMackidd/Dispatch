@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userRole() {
+      return signedIn() && userDoc().exists() ? userDoc().data.role : null;
+    }
+
+    function isManager() {
+      return signedIn() && userRole() == 'manager';
+    }
+
+    function isWorker() {
+      return signedIn() && userRole() == 'worker';
+    }
+
+    function teamDoc(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId));
+    }
+
+    function isTeamManager(teamId) {
+      return signedIn() && teamDoc(teamId).exists() && teamDoc(teamId).data.managerId == request.auth.uid;
+    }
+
+    function isTeamWorker(teamId) {
+      return signedIn() && teamDoc(teamId).exists() && request.auth.uid in teamDoc(teamId).data.workerIds;
+    }
+
+    function isInviteManager() {
+      return signedIn() && resource.data.managerId == request.auth.uid;
+    }
+
+    function workerOwnsInvite() {
+      return signedIn()
+        && (
+          (resource.data.workerId != null && resource.data.workerId == request.auth.uid)
+          || (request.auth.token.email != null && resource.data.email == request.auth.token.email)
+        );
+    }
+
+    function validInviteStatus(status) {
+      return status in ['created', 'delivery_queued', 'delivered', 'delivery_failed', 'pending_acceptance', 'accepted', 'declined', 'expired', 'revoked', 'cancelled'];
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /teams/{teamId} {
+      allow read: if signedIn() && (resource.data.managerId == request.auth.uid || request.auth.uid in resource.data.workerIds);
+
+      allow create: if isManager()
+        && request.resource.data.managerId == request.auth.uid
+        && request.resource.data.workerIds is list
+        && request.resource.data.workerIds.size() == 0;
+
+      allow update: if isTeamManager(teamId)
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.workerIds is list;
+
+      allow delete: if isTeamManager(teamId);
+    }
+
+    match /workerInvites/{inviteId} {
+      allow read: if isInviteManager() || workerOwnsInvite();
+
+      allow create: if isManager()
+        && request.resource.data.managerId == request.auth.uid
+        && validInviteStatus(request.resource.data.status)
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.consumedAt == null
+        && request.resource.data.inviteTokenId == null;
+
+      allow update: if (
+        isInviteManager()
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.workerId == resource.data.workerId
+        && validInviteStatus(request.resource.data.status)
+      ) || (
+        workerOwnsInvite()
+        && validInviteStatus(request.resource.data.status)
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.workerId == request.auth.uid
+        && request.resource.data.status in ['pending_acceptance', 'accepted', 'declined']
+      );
+    }
+
+    match /inviteTokens/{inviteId} {
+      allow read: if signedIn() && (
+        resource.data.managerId == request.auth.uid
+        || (resource.data.email == request.auth.token.email)
+      );
+
+      allow create: if isManager()
+        && request.resource.id == inviteId
+        && request.resource.data.inviteId == inviteId
+        && request.resource.data.managerId == request.auth.uid
+        && request.resource.data.status == 'active'
+        && request.resource.data.expiresAt is timestamp;
+
+      allow update: if (
+        signedIn()
+        && resource.data.managerId == request.auth.uid
+        && request.resource.data.inviteId == resource.data.inviteId
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.status in ['active', 'expired', 'revoked', 'cancelled']
+      ) || (
+        signedIn()
+        && request.resource.data.inviteId == resource.data.inviteId
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.status == 'consumed'
+        && resource.data.email == request.auth.token.email
+      );
+    }
+
+    match /roleAssignmentNotifications/{notificationId} {
+      allow read: if signedIn() && (resource.data.workerId == request.auth.uid || resource.data.managerId == request.auth.uid);
+      allow create: if isManager() && request.resource.data.managerId == request.auth.uid && request.resource.data.action == 'assign';
+      allow update: if signedIn() && resource.data.workerId == request.auth.uid;
+    }
+
+    match /userNotifications/{notificationId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn();
+      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /chatThreads/{threadId} {
+      allow read, write: if signedIn();
+      match /messages/{messageId} {
+        allow read, write: if signedIn();
+      }
+    }
+
+    match /chatUnread/{docId} {
+      allow read, write: if signedIn();
+    }
+
+    match /eventTemplates/{templateId} {
+      allow read, write: if signedIn();
+    }
+
+    match /events/{eventId} {
+      allow read, write: if signedIn();
+    }
+
+    match /mail/{mailId} {
+      allow create: if signedIn();
+    }
+  }
+}
