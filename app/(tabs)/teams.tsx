@@ -11,6 +11,7 @@ import {
   loadWorkerTeams,
   markUserNotificationsRead,
   retryWorkerInviteDelivery,
+  searchWorkersByEmail,
   watchManagerEvents,
   watchManagerTeams,
   watchManagerWorkerInvites,
@@ -56,6 +57,8 @@ export default function TeamsScreen() {
   const [workerInviteNotifications, setWorkerInviteNotifications] = useState<UserNotification[]>([]);
   const [workerInviteBusyId, setWorkerInviteBusyId] = useState<string | null>(null);
   const [expandedWorkerInviteIds, setExpandedWorkerInviteIds] = useState<Record<string, boolean>>({});
+  const [matchedWorker, setMatchedWorker] = useState<UserProfile | null>(null);
+  const [searchingWorker, setSearchingWorker] = useState(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -79,6 +82,45 @@ export default function TeamsScreen() {
       setInviteTeamId(teams[0]?.id || 'solo');
     }
   }, [teams, inviteTeamId]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager') {
+      setMatchedWorker(null);
+      setSearchingWorker(false);
+      return;
+    }
+
+    const normalizedEmail = inviteEmail.trim().toLowerCase();
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setMatchedWorker(null);
+      setSearchingWorker(false);
+      return;
+    }
+
+    let active = true;
+    setSearchingWorker(true);
+
+    const timer = setTimeout(() => {
+      searchWorkersByEmail(normalizedEmail)
+        .then((matches) => {
+          if (!active) return;
+          setMatchedWorker(matches[0] || null);
+        })
+        .catch(() => {
+          if (!active) return;
+          setMatchedWorker(null);
+        })
+        .finally(() => {
+          if (!active) return;
+          setSearchingWorker(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [inviteEmail, profile]);
 
   useEffect(() => {
     if (!profile || profile.role !== 'manager') {
@@ -242,6 +284,7 @@ export default function TeamsScreen() {
         const teamId = inviteTeamId === 'solo' ? undefined : inviteTeamId;
         const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId, email: inviteEmail });
         setInviteEmail('');
+        setMatchedWorker(null);
         setDrawerMessageTone('success');
         setDrawerMessage(
           result.linked
@@ -547,8 +590,23 @@ export default function TeamsScreen() {
 
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
                 <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
+                {searchingWorker ? (
+                  <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>Looking for an existing worker account…</Text>
+                ) : matchedWorker ? (
+                  <View style={[styles.matchedWorkerCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
+                    <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}>
+                      <Text style={styles.avatarText}>{(matchedWorker.displayName || 'D').slice(0, 1).toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{matchedWorker.displayName || 'Dispatch User'}</Text>
+                      <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Existing worker account found. This invite will be delivered in-app.</Text>
+                    </View>
+                  </View>
+                ) : null}
                 <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
-                  Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.
+                  {matchedWorker
+                    ? 'This worker already has Dispatch. Sending the invite now will place it directly in their app for accept or decline.'
+                    : 'Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.'}
                 </Text>
               </>
             )}
@@ -729,6 +787,7 @@ const styles = StyleSheet.create({
   teamChipTextActive: { color: '#F98D2F' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
   helperText: { marginTop: 6, fontSize: 11 },
+  matchedWorkerCard: { marginTop: 10, borderRadius: 10, borderWidth: 1, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
   helperTextLight: { color: '#64748b' },
   helperTextDark: { color: '#F4F8FF' },
   message: { marginTop: 12, fontSize: 12, fontWeight: '600' },

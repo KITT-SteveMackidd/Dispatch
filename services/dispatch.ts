@@ -1127,6 +1127,28 @@ export async function acceptPendingInvitesForUser(params: { userId: string; emai
   await setInvitePendingAcceptance(params);
 }
 
+export async function searchWorkersByEmail(email: string): Promise<UserProfile[]> {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !isValidEmail(normalizedEmail)) return [];
+
+  const usersSnap = await getDocs(query(
+    collection(db, 'users'),
+    where('email', '==', normalizedEmail),
+    where('role', '==', 'worker')
+  ));
+
+  return usersSnap.docs.map((docSnap) => {
+    const data = docSnap.data() as Partial<UserProfile>;
+    return {
+      uid: docSnap.id,
+      displayName: data.displayName || 'Dispatch User',
+      role: (data.role as UserProfile['role']) || 'worker',
+      phoneNumber: data.phoneNumber,
+      avatarUrl: data.avatarUrl,
+    };
+  });
+}
+
 export async function inviteWorkerByEmailToTeam(params: {
   managerId: string;
   teamId?: string;
@@ -1187,7 +1209,18 @@ export async function inviteWorkerByEmailToTeam(params: {
 
   if (foundWorkerId) {
     await ensureManagerWorkerThread({ managerId, workerId: foundWorkerId, teamId });
-    return { linked: true, reused: false };
+
+    const managerProfile = await getDoc(doc(db, 'users', managerId));
+    const managerName = (managerProfile.exists() ? ((managerProfile.data() as Partial<UserProfile>).displayName || null) : null) || params.managerName || 'A manager';
+
+    await ensureWorkerInviteNotification({
+      userId: foundWorkerId,
+      inviteId: inviteRef.id,
+      teamName,
+      managerName,
+    });
+
+    return { linked: true, reused: false, workerId: foundWorkerId };
   }
 
   try {
