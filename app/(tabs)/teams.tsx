@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
@@ -548,11 +548,13 @@ export default function TeamsScreen() {
 
       <Modal visible={drawerOpen} animationType="slide" transparent onRequestClose={() => setDrawerOpen(false)}>
         <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Team Actions</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
+          <KeyboardAvoidingView style={styles.drawerKeyboardWrap} behavior={Platform.select({ ios: 'padding', android: 'height' })}>
+            <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+              <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.drawerContent}>
+                <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Team Actions</Text>
+                <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
 
-            <View style={styles.modeRow}>
+                <View style={styles.modeRow}>
               <Pressable
                 style={[
                   styles.modeButton,
@@ -650,10 +652,12 @@ export default function TeamsScreen() {
               </Text>
             </Pressable>
 
-            <Pressable style={[styles.drawerClose, isDarkMode ? styles.drawerCloseDark : styles.drawerCloseLight]} onPress={() => setDrawerOpen(false)}>
-              <Text style={[styles.drawerCloseText, isDarkMode ? styles.drawerCloseTextDark : styles.drawerCloseTextLight]}>Close</Text>
+                <Pressable style={[styles.drawerClose, isDarkMode ? styles.drawerCloseDark : styles.drawerCloseLight]} onPress={() => setDrawerOpen(false)}>
+                  <Text style={[styles.drawerCloseText, isDarkMode ? styles.drawerCloseTextDark : styles.drawerCloseTextLight]}>Close</Text>
+                </Pressable>
+              </ScrollView>
             </Pressable>
-          </Pressable>
+          </KeyboardAvoidingView>
         </Pressable>
       </Modal>
     </View>
@@ -756,7 +760,9 @@ const styles = StyleSheet.create({
   pendingActionAcceptTextDark: { color: '#061229' },
   drawerCloseDisabled: { opacity: 0.6 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
+  drawerKeyboardWrap: { width: '100%' },
   drawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
+  drawerContent: { gap: 12, paddingBottom: 8 },
   drawerLight: { backgroundColor: '#F7F7F7' },
   drawerDark: { backgroundColor: '#12274D' },
   drawerTitle: { fontWeight: '700', fontSize: 16 },

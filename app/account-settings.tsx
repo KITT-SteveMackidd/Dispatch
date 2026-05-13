@@ -1,14 +1,37 @@
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useThemeMode } from '@/context/theme';
 import { useSession } from '@/context/session';
+import { AppRole } from '@/types/dispatch';
 
 export default function AccountSettingsScreen() {
   const router = useRouter();
   const { themeMode, resolvedThemeMode, setThemeMode } = useThemeMode();
-  const { revokeSession } = useSession();
+  const { profile, revokeSession, saveProfile } = useSession();
 
   const isDarkMode = resolvedThemeMode === 'dark';
+  const [displayName, setDisplayName] = useState(profile?.displayName || '');
+  const [phoneNumber, setPhoneNumber] = useState(profile?.phoneNumber || '');
+  const [role, setRole] = useState<AppRole>(profile?.role || 'manager');
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const onSaveProfile = async () => {
+    if (!displayName.trim()) {
+      Alert.alert('Missing name', 'Please enter your name.');
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      await saveProfile({ displayName: displayName.trim(), phoneNumber: phoneNumber.trim(), role });
+      Alert.alert('Profile updated', 'Your profile details were saved.');
+    } catch (error) {
+      Alert.alert('Unable to update profile', error instanceof Error ? error.message : 'Try again in a moment.');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const onRevokeSession = async () => {
     try {
@@ -21,54 +44,111 @@ export default function AccountSettingsScreen() {
   };
 
   return (
-    <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
-      <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
-        <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Preferences</Text>
-        <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Appearance</Text>
-        <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
-          Choose how Events looks for you.
-        </Text>
+    <KeyboardAvoidingView
+      style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}
+      behavior={Platform.select({ ios: 'padding', android: 'height' })}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+          <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Profile</Text>
+          <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Update details</Text>
+          <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
+            Keep your name, phone number, and role up to date.
+          </Text>
 
-        <View style={styles.options}>
-          {(['light', 'dark', 'system'] as const).map((mode) => (
-            <Pressable
-              key={mode}
-              onPress={() => setThemeMode(mode)}
-              style={[
-                styles.option,
-                isDarkMode ? styles.optionDark : styles.optionLight,
-                themeMode === mode ? styles.optionSelected : null,
-              ]}>
-              <Text style={[styles.optionLabel, isDarkMode ? styles.optionLabelDark : styles.optionLabelLight]}>
-                {mode[0].toUpperCase() + mode.slice(1)}
-              </Text>
-            </Pressable>
-          ))}
+          <TextInput
+            value={displayName}
+            onChangeText={setDisplayName}
+            placeholder="Your name"
+            placeholderTextColor={isDarkMode ? '#94A3B8' : '#94a3b8'}
+            style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+          />
+          <TextInput
+            value={phoneNumber}
+            onChangeText={setPhoneNumber}
+            placeholder="Phone number"
+            placeholderTextColor={isDarkMode ? '#94A3B8' : '#94a3b8'}
+            keyboardType="phone-pad"
+            style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+          />
+
+          <View style={styles.roleRow}>
+            {(['manager', 'worker'] as AppRole[]).map((mode) => {
+              const selected = role === mode;
+              return (
+                <Pressable
+                  key={mode}
+                  onPress={() => setRole(mode)}
+                  style={[
+                    styles.rolePill,
+                    isDarkMode ? styles.rolePillDark : styles.rolePillLight,
+                    selected && (isDarkMode ? styles.rolePillSelectedDark : styles.rolePillSelectedLight),
+                  ]}>
+                  <Text
+                    style={[
+                      styles.rolePillText,
+                      selected ? styles.rolePillTextSelected : isDarkMode ? styles.rolePillTextDark : styles.rolePillTextLight,
+                    ]}>
+                    {mode[0].toUpperCase() + mode.slice(1)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable onPress={onSaveProfile} style={[styles.primaryBtn, savingProfile && styles.disabled]} disabled={savingProfile}>
+            <Text style={styles.primaryBtnText}>{savingProfile ? 'Saving...' : 'Save profile changes'}</Text>
+          </Pressable>
         </View>
-        <Text style={[styles.helper, isDarkMode ? styles.helperDark : styles.helperLight]}>
-          Current mode: {themeMode === 'system' ? `System (${resolvedThemeMode})` : themeMode}
-        </Text>
-      </View>
 
-      <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
-        <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Security</Text>
-        <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Session control</Text>
-        <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
-          Immediately revoke this device session. For emergency all-device revocation, use docs/security/firebase-session-revocation.md.
-        </Text>
+        <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+          <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Preferences</Text>
+          <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Appearance</Text>
+          <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
+            Choose how Events looks for you.
+          </Text>
 
-        <Pressable onPress={onRevokeSession} style={styles.dangerBtn}>
-          <Text style={styles.dangerBtnText}>Revoke this session now</Text>
-        </Pressable>
-      </View>
-    </View>
+          <View style={styles.options}>
+            {(['light', 'dark', 'system'] as const).map((mode) => (
+              <Pressable
+                key={mode}
+                onPress={() => setThemeMode(mode)}
+                style={[
+                  styles.option,
+                  isDarkMode ? styles.optionDark : styles.optionLight,
+                  themeMode === mode ? styles.optionSelected : null,
+                ]}>
+                <Text style={[styles.optionLabel, isDarkMode ? styles.optionLabelDark : styles.optionLabelLight]}>
+                  {mode[0].toUpperCase() + mode.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={[styles.helper, isDarkMode ? styles.helperDark : styles.helperLight]}>
+            Current mode: {themeMode === 'system' ? `System (${resolvedThemeMode})` : themeMode}
+          </Text>
+        </View>
+
+        <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+          <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Security</Text>
+          <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Session control</Text>
+          <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
+            Immediately revoke this device session. For emergency all-device revocation, use docs/security/firebase-session-revocation.md.
+          </Text>
+
+          <Pressable onPress={onRevokeSession} style={styles.dangerBtn}>
+            <Text style={styles.dangerBtnText}>Revoke this session now</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, gap: 14 },
+  container: { flex: 1 },
   containerLight: { backgroundColor: '#eef2ff' },
   containerDark: { backgroundColor: '#101A2F' },
+  content: { padding: 16, gap: 14 },
   card: { borderRadius: 16, borderWidth: 1, padding: 18 },
   cardLight: { backgroundColor: '#ffffff', borderColor: '#e2e8f0' },
   cardDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
@@ -81,6 +161,21 @@ const styles = StyleSheet.create({
   subtitle: { marginTop: 6, marginBottom: 16 },
   subtitleLight: { color: '#64748b' },
   subtitleDark: { color: '#F4F8FF' },
+  input: { padding: 13, borderRadius: 12, marginBottom: 12, borderWidth: 1 },
+  inputLight: { backgroundColor: '#f8fafc', color: '#232832', borderColor: '#e2e8f0' },
+  inputDark: { backgroundColor: '#1A2540', color: '#F4F8FF', borderColor: '#001A4D' },
+  roleRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  rolePill: { flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, alignItems: 'center' },
+  rolePillLight: { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0' },
+  rolePillDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
+  rolePillSelectedLight: { backgroundColor: '#dbeafe', borderColor: '#93c5fd' },
+  rolePillSelectedDark: { backgroundColor: '#00133D', borderColor: '#0EC3C9' },
+  rolePillText: { fontWeight: '700' },
+  rolePillTextLight: { color: '#334155' },
+  rolePillTextDark: { color: '#F4F8FF' },
+  rolePillTextSelected: { color: '#bfdbfe' },
+  primaryBtn: { backgroundColor: '#2563eb', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center' },
+  primaryBtnText: { color: '#fff', fontWeight: '700' },
   options: { gap: 10 },
   option: { borderWidth: 1, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14 },
   optionLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
@@ -94,4 +189,5 @@ const styles = StyleSheet.create({
   helperDark: { color: '#F4F8FF' },
   dangerBtn: { backgroundColor: '#b91c1c', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center' },
   dangerBtnText: { color: '#fff', fontWeight: '700' },
+  disabled: { opacity: 0.65 },
 });

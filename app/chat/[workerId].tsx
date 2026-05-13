@@ -12,6 +12,7 @@ import { buildChatThreadId, ChatAttachment, markTeamChatRead, sendChatMessage, u
 type ChatMessage = {
   id: string;
   senderId: string;
+  senderName?: string;
   text: string;
   at: string;
   attachments?: ChatAttachment[];
@@ -97,6 +98,7 @@ export default function WorkerChatScreen() {
         return {
           id: item.id,
           senderId: item.senderId,
+          senderName: item.senderName,
           text: item.text,
           attachments: item.attachments || [],
           at: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase(),
@@ -201,6 +203,7 @@ export default function WorkerChatScreen() {
         threadId,
         teamId,
         senderId: profile.uid,
+        senderName: profile.displayName,
         recipientIds,
         text,
         attachments: uploadedAttachments,
@@ -263,6 +266,11 @@ export default function WorkerChatScreen() {
           return (
             <View style={[styles.messageRow, mine ? styles.messageRowSelf : styles.messageRowOther]}>
               <View style={[styles.bubble, mine ? (isDarkMode ? styles.bubbleSelfDark : styles.bubbleSelfLight) : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
+                {isTeamBroadcast && !mine ? (
+                  <Text style={[styles.senderName, isDarkMode ? styles.senderNameDark : styles.senderNameLight]}>
+                    {message.senderName?.trim() || 'Team member'}
+                  </Text>
+                ) : null}
                 {message.text ? (
                   <Text style={[styles.messageText, mine ? styles.messageTextSelf : styles.messageTextLight]}>
                     {message.text}
@@ -408,6 +416,9 @@ const styles = StyleSheet.create({
   bubbleSelfDark: { backgroundColor: '#0EC3C9', borderBottomLeftRadius: 8, borderBottomRightRadius: 0 },
   bubbleOtherLight: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
   bubbleOtherDark: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
+  senderName: { marginBottom: 4, fontSize: 11, lineHeight: 14, fontWeight: '700' },
+  senderNameLight: { color: '#475569' },
+  senderNameDark: { color: 'rgba(247,247,247,0.8)' },
   messageText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
   messageTextSelf: { color: '#F7F7F7' },
   messageTextLight: { color: '#121212' },

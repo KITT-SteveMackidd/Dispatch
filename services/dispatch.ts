@@ -42,6 +42,7 @@ export type ChatAttachment = {
 export type PersistedChatMessage = {
   id: string;
   senderId: string;
+  senderName?: string;
   text: string;
   attachments?: ChatAttachment[];
   createdAt?: { toDate?: () => Date } | Date | null;
@@ -238,6 +239,7 @@ export async function sendChatMessage(params: {
   threadId: string;
   teamId?: string;
   senderId: string;
+  senderName?: string;
   recipientIds: string[];
   text: string;
   attachments?: ChatAttachment[];
@@ -248,6 +250,7 @@ export async function sendChatMessage(params: {
 
   await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
     senderId: params.senderId,
+    senderName: params.senderName?.trim() || null,
     text,
     attachments,
     createdAt: serverTimestamp(),
