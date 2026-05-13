@@ -18,6 +18,7 @@ import {
   watchUserNotifications,
   watchUserTeamUnreadCounts,
   watchWorkerEvents,
+  watchWorkerTeams,
 } from '@/services/dispatch';
 import type { WorkerInvite } from '@/types/dispatch';
 import type { UserNotification } from '@/services/dispatch';
@@ -72,8 +73,11 @@ export default function TeamsScreen() {
     }
 
     const unsubEvents = watchWorkerEvents(profile.uid, setEvents);
-    loadWorkerTeams(profile.uid).then(setTeams).catch(() => setTeams([]));
-    return unsubEvents;
+    const unsubTeams = watchWorkerTeams(profile.uid, setTeams);
+    return () => {
+      unsubEvents();
+      unsubTeams();
+    };
   }, [profile]);
 
   useEffect(() => {

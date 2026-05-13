@@ -634,6 +634,10 @@ export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
   return mapTeams(snap);
 }
 
+export function watchWorkerTeams(workerId: string, cb: (items: Team[]) => void) {
+  const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
+  return onSnapshot(q, (snap) => cb(mapTeams(snap)));
+}
 
 export function watchUserTeamUnreadCounts(userId: string, cb: (items: TeamUnreadCount[]) => void) {
   const q = query(collection(db, 'chatUnread'), where('userId', '==', userId));
