@@ -20,12 +20,12 @@ import { useSession } from '@/context/session';
 import { AppRole } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
-import { authLogoSource } from '@/constants/branding';
+import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const lightSignUpLogoSource = authLogoSource;
-const darkSignUpLogoSource = authLogoSource;
+const lightSignUpLogoSource = authLightLogoSource;
+const darkSignUpLogoSource = authDarkLogoSource;
 
 export default function SignUpScreen() {
   const router = useRouter();
