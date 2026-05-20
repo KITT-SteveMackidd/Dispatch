@@ -28,7 +28,7 @@ type SessionContextType = {
   signInWithGoogle: (params: { idToken: string; accessToken?: string; role?: AppRole }) => Promise<void>;
   signInWithApple: (params: { idToken: string; displayName?: string; role?: AppRole }) => Promise<void>;
   signUp: (params: { email: string; password: string; displayName: string; role: AppRole }) => Promise<void>;
-  saveProfile: (params: { displayName: string; role: AppRole }) => Promise<void>;
+  saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string }) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
@@ -47,6 +47,7 @@ async function loadProfile(uid: string): Promise<UserProfile | null> {
     uid,
     displayName: data.displayName || 'Dispatch User',
     role: data.role,
+    phoneNumber: data.phoneNumber,
   };
 }
 
@@ -102,7 +103,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await syncInviteLinking(cred.user.uid, cred.user.email || email);
   };
 
-  const upsertProfile = async (params: { uid: string; displayName: string; role: AppRole; email?: string | null; merge?: boolean }) => {
+  const upsertProfile = async (params: { uid: string; displayName: string; role: AppRole; email?: string | null; phoneNumber?: string | null; merge?: boolean }) => {
     await setDoc(
       doc(db, 'users', params.uid),
       {
@@ -110,13 +111,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         displayName: params.displayName,
         role: params.role,
         email: params.email || null,
+        phoneNumber: params.phoneNumber?.trim() || null,
         updatedAt: serverTimestamp(),
         ...(params.merge ? {} : { createdAt: serverTimestamp() }),
       },
       { merge: params.merge ?? true }
     );
 
-    setProfile({ uid: params.uid, displayName: params.displayName, role: params.role });
+    setProfile({ uid: params.uid, displayName: params.displayName, role: params.role, phoneNumber: params.phoneNumber?.trim() || undefined });
     setNeedsProfile(false);
 
     await syncInviteLinking(params.uid, params.email);
@@ -201,7 +203,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const saveProfile = async (params: { displayName: string; role: AppRole }) => {
+  const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string }) => {
     if (!auth.currentUser) throw new Error('Not authenticated');
     const user = auth.currentUser;
     await updateProfile(user, { displayName: params.displayName.trim() });
@@ -212,6 +214,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         displayName: params.displayName.trim(),
         role: params.role,
         email: user.email || null,
+        phoneNumber: params.phoneNumber?.trim() || null,
         updatedAt: serverTimestamp(),
       },
       { merge: true }
@@ -219,7 +222,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     await syncInviteLinking(user.uid, user.email);
 
-    setProfile({ uid: user.uid, displayName: params.displayName.trim(), role: params.role });
+    setProfile({ uid: user.uid, displayName: params.displayName.trim(), role: params.role, phoneNumber: params.phoneNumber?.trim() || undefined });
     setNeedsProfile(false);
   };
 

@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import {
+  acceptWorkerInvite,
   createTeam,
+  declineWorkerInvite,
   inviteWorkerByEmailToTeam,
   loadUserProfilesByIds,
   loadWorkerTeams,
+  markUserNotificationsRead,
   retryWorkerInviteDelivery,
+  searchWorkersByEmail,
   watchManagerEvents,
   watchManagerTeams,
   watchManagerWorkerInvites,
+  watchUserNotifications,
   watchUserTeamUnreadCounts,
   watchWorkerEvents,
+  watchWorkerTeams,
 } from '@/services/dispatch';
 import type { WorkerInvite } from '@/types/dispatch';
+import type { UserNotification } from '@/services/dispatch';
 import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from '@/services/worker-invite-notifications';
 import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
@@ -48,6 +55,11 @@ export default function TeamsScreen() {
   const [retryingInviteId, setRetryingInviteId] = useState<string | null>(null);
   const [clearingInviteId, setClearingInviteId] = useState<string | null>(null);
   const [clearingAllInvites, setClearingAllInvites] = useState(false);
+  const [workerInviteNotifications, setWorkerInviteNotifications] = useState<UserNotification[]>([]);
+  const [workerInviteBusyId, setWorkerInviteBusyId] = useState<string | null>(null);
+  const [expandedWorkerInviteIds, setExpandedWorkerInviteIds] = useState<Record<string, boolean>>({});
+  const [matchedWorker, setMatchedWorker] = useState<UserProfile | null>(null);
+  const [searchingWorker, setSearchingWorker] = useState(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -61,8 +73,11 @@ export default function TeamsScreen() {
     }
 
     const unsubEvents = watchWorkerEvents(profile.uid, setEvents);
-    loadWorkerTeams(profile.uid).then(setTeams).catch(() => setTeams([]));
-    return unsubEvents;
+    const unsubTeams = watchWorkerTeams(profile.uid, setTeams);
+    return () => {
+      unsubEvents();
+      unsubTeams();
+    };
   }, [profile]);
 
   useEffect(() => {
@@ -71,6 +86,45 @@ export default function TeamsScreen() {
       setInviteTeamId(teams[0]?.id || 'solo');
     }
   }, [teams, inviteTeamId]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager') {
+      setMatchedWorker(null);
+      setSearchingWorker(false);
+      return;
+    }
+
+    const normalizedEmail = inviteEmail.trim().toLowerCase();
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setMatchedWorker(null);
+      setSearchingWorker(false);
+      return;
+    }
+
+    let active = true;
+    setSearchingWorker(true);
+
+    const timer = setTimeout(() => {
+      searchWorkersByEmail(normalizedEmail)
+        .then((matches) => {
+          if (!active) return;
+          setMatchedWorker(matches[0] || null);
+        })
+        .catch(() => {
+          if (!active) return;
+          setMatchedWorker(null);
+        })
+        .finally(() => {
+          if (!active) return;
+          setSearchingWorker(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [inviteEmail, profile]);
 
   useEffect(() => {
     if (!profile || profile.role !== 'manager') {
@@ -93,6 +147,17 @@ export default function TeamsScreen() {
         return acc;
       }, {});
       setUnreadCountByTeamId(next);
+    });
+  }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'worker') {
+      setWorkerInviteNotifications([]);
+      return;
+    }
+
+    return watchUserNotifications(profile.uid, (items) => {
+      setWorkerInviteNotifications(items.filter((item) => item.kind === 'worker_team_invite' && !item.read));
     });
   }, [profile]);
 
@@ -223,6 +288,7 @@ export default function TeamsScreen() {
         const teamId = inviteTeamId === 'solo' ? undefined : inviteTeamId;
         const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId, email: inviteEmail });
         setInviteEmail('');
+        setMatchedWorker(null);
         setDrawerMessageTone('success');
         setDrawerMessage(
           result.linked
@@ -272,6 +338,37 @@ export default function TeamsScreen() {
     }
   };
 
+  const toggleWorkerInviteExpanded = (notificationId: string) => {
+    setExpandedWorkerInviteIds((current) => ({
+      ...current,
+      [notificationId]: !current[notificationId],
+    }));
+  };
+
+  const handleWorkerInviteResponse = async (notification: UserNotification, response: 'accept' | 'decline') => {
+    if (!profile?.uid || workerInviteBusyId === notification.id) return;
+
+    const inviteId = notification.relatedRoleId;
+    if (!inviteId) {
+      Alert.alert('Invite unavailable', 'This team invite is missing its invite reference.');
+      return;
+    }
+
+    try {
+      setWorkerInviteBusyId(notification.id);
+      if (response === 'accept') {
+        await acceptWorkerInvite({ userId: profile.uid, inviteId });
+      } else {
+        await declineWorkerInvite({ userId: profile.uid, inviteId });
+      }
+      await markUserNotificationsRead({ userId: profile.uid, notificationIds: [notification.id] });
+    } catch (error) {
+      Alert.alert('Unable to respond', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setWorkerInviteBusyId(null);
+    }
+  };
+
   const handleClearAllInvites = async () => {
     if (!profile || profile.role !== 'manager' || !visibleInvites.length) return;
     if (clearingAllInvites) return;
@@ -302,6 +399,69 @@ export default function TeamsScreen() {
           </Pressable>
         ) : <View style={styles.headerSpacer} />}
       </View>
+
+      {profile?.role === 'worker' && workerInviteNotifications.length ? (
+        <View style={[styles.pendingNotificationsCard, isDarkMode ? styles.pendingNotificationsCardDark : styles.pendingNotificationsCardLight]}>
+          <Text style={[styles.pendingNotificationsTitle, isDarkMode ? styles.pendingNotificationsTitleDark : styles.pendingNotificationsTitleLight]}>
+            Team invites need your response
+          </Text>
+          {workerInviteNotifications.map((notification) => {
+            const busy = workerInviteBusyId === notification.id;
+            const expanded = !!expandedWorkerInviteIds[notification.id];
+            return (
+              <View key={notification.id} style={styles.pendingNotificationRow}>
+                <View style={styles.pendingNotificationHeader}>
+                  <Text style={[styles.pendingNotificationText, styles.pendingNotificationTitleText, isDarkMode ? styles.titleDark : styles.titleLight]}>
+                    {notification.title}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${expanded ? 'Hide' : 'Show'} invite details`}
+                    hitSlop={6}
+                    onPress={() => toggleWorkerInviteExpanded(notification.id)}>
+                    <Text style={[styles.pendingNotificationExpandText, isDarkMode ? styles.pendingNotificationExpandTextDark : styles.pendingNotificationExpandTextLight]}>
+                      {expanded ? 'Hide details ▲' : 'Show details ▼'}
+                    </Text>
+                  </Pressable>
+                </View>
+                {expanded ? (
+                  <View style={styles.pendingNotificationDetails}>
+                    <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                      {notification.body}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={styles.pendingNotificationActions}>
+                  <Pressable
+                    disabled={busy}
+                    style={[
+                      styles.pendingActionButton,
+                      isDarkMode ? styles.pendingActionDeclineDark : styles.pendingActionDeclineLight,
+                      busy && styles.drawerCloseDisabled,
+                    ]}
+                    onPress={() => handleWorkerInviteResponse(notification, 'decline')}>
+                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionDeclineTextDark : styles.pendingActionDeclineTextLight]}>
+                      {busy ? '…' : 'Decline'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={busy}
+                    style={[
+                      styles.pendingActionButton,
+                      isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight,
+                      busy && styles.drawerCloseDisabled,
+                    ]}
+                    onPress={() => handleWorkerInviteResponse(notification, 'accept')}>
+                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight]}>
+                      {busy ? '…' : 'Accept'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
 
       {profile?.role === 'manager' && visibleInvites.length ? (
         <View style={[styles.inviteStatusCard, isDarkMode ? styles.inviteStatusCardDark : styles.inviteStatusCardLight]}>
@@ -388,11 +548,13 @@ export default function TeamsScreen() {
 
       <Modal visible={drawerOpen} animationType="slide" transparent onRequestClose={() => setDrawerOpen(false)}>
         <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Team Actions</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
+          <KeyboardAvoidingView style={styles.drawerKeyboardWrap} behavior={Platform.select({ ios: 'padding', android: 'height' })}>
+            <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+              <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.drawerContent}>
+                <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Team Actions</Text>
+                <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
 
-            <View style={styles.modeRow}>
+                <View style={styles.modeRow}>
               <Pressable
                 style={[
                   styles.modeButton,
@@ -434,8 +596,23 @@ export default function TeamsScreen() {
 
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
                 <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
+                {searchingWorker ? (
+                  <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>Looking for an existing worker account…</Text>
+                ) : matchedWorker ? (
+                  <View style={[styles.matchedWorkerCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
+                    <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}>
+                      <Text style={styles.avatarText}>{(matchedWorker.displayName || 'D').slice(0, 1).toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{matchedWorker.displayName || 'Dispatch User'}</Text>
+                      <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Existing worker account found. This invite will be delivered in-app.</Text>
+                    </View>
+                  </View>
+                ) : null}
                 <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
-                  Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.
+                  {matchedWorker
+                    ? 'This worker already has Dispatch. Sending the invite now will place it directly in their app for accept or decline.'
+                    : 'Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.'}
                 </Text>
               </>
             )}
@@ -475,10 +652,12 @@ export default function TeamsScreen() {
               </Text>
             </Pressable>
 
-            <Pressable style={[styles.drawerClose, isDarkMode ? styles.drawerCloseDark : styles.drawerCloseLight]} onPress={() => setDrawerOpen(false)}>
-              <Text style={[styles.drawerCloseText, isDarkMode ? styles.drawerCloseTextDark : styles.drawerCloseTextLight]}>Close</Text>
+                <Pressable style={[styles.drawerClose, isDarkMode ? styles.drawerCloseDark : styles.drawerCloseLight]} onPress={() => setDrawerOpen(false)}>
+                  <Text style={[styles.drawerCloseText, isDarkMode ? styles.drawerCloseTextDark : styles.drawerCloseTextLight]}>Close</Text>
+                </Pressable>
+              </ScrollView>
             </Pressable>
-          </Pressable>
+          </KeyboardAvoidingView>
         </Pressable>
       </Modal>
     </View>
@@ -553,8 +732,37 @@ const styles = StyleSheet.create({
   clearInviteButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
   retryButtonDisabled: { opacity: 0.6 },
   retryButtonText: { color: '#061229', fontSize: 12, fontWeight: '700' },
+  pendingNotificationsCard: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
+  pendingNotificationsCardLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
+  pendingNotificationsCardDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
+  pendingNotificationsTitle: { fontWeight: '700', fontSize: 13 },
+  pendingNotificationsTitleLight: { color: '#232832' },
+  pendingNotificationsTitleDark: { color: '#F4F8FF' },
+  pendingNotificationRow: { gap: 10, borderTopWidth: 1, borderTopColor: 'rgba(249,141,47,0.25)', paddingTop: 10 },
+  pendingNotificationHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  pendingNotificationText: { flex: 1 },
+  pendingNotificationTitleText: { fontWeight: '700', fontSize: 13 },
+  pendingNotificationExpandText: { fontSize: 11, fontWeight: '600' },
+  pendingNotificationExpandTextLight: { color: '#F98D2F' },
+  pendingNotificationExpandTextDark: { color: '#F98D2F' },
+  pendingNotificationDetails: { gap: 4 },
+  pendingNotificationDetail: { fontSize: 12, lineHeight: 18 },
+  pendingNotificationActions: { flexDirection: 'row', gap: 10 },
+  pendingActionButton: { flex: 1, minHeight: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  pendingActionButtonText: { fontWeight: '700', fontSize: 13 },
+  pendingActionDeclineLight: { backgroundColor: '#EDF0FC', borderWidth: 1, borderColor: '#F98D2F' },
+  pendingActionDeclineDark: { backgroundColor: '#203E75', borderWidth: 1, borderColor: '#F98D2F' },
+  pendingActionDeclineTextLight: { color: '#F98D2F' },
+  pendingActionDeclineTextDark: { color: '#F98D2F' },
+  pendingActionAcceptLight: { backgroundColor: '#0EC3C9' },
+  pendingActionAcceptDark: { backgroundColor: '#0EC3C9' },
+  pendingActionAcceptTextLight: { color: '#061229' },
+  pendingActionAcceptTextDark: { color: '#061229' },
+  drawerCloseDisabled: { opacity: 0.6 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
+  drawerKeyboardWrap: { width: '100%' },
   drawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
+  drawerContent: { gap: 12, paddingBottom: 8 },
   drawerLight: { backgroundColor: '#F7F7F7' },
   drawerDark: { backgroundColor: '#12274D' },
   drawerTitle: { fontWeight: '700', fontSize: 16 },
@@ -589,6 +797,7 @@ const styles = StyleSheet.create({
   teamChipTextActive: { color: '#F98D2F' },
   emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
   helperText: { marginTop: 6, fontSize: 11 },
+  matchedWorkerCard: { marginTop: 10, borderRadius: 10, borderWidth: 1, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
   helperTextLight: { color: '#64748b' },
   helperTextDark: { color: '#F4F8FF' },
   message: { marginTop: 12, fontSize: 12, fontWeight: '600' },

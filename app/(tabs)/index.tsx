@@ -336,6 +336,32 @@ export default function EventsScreen() {
     setTemplateDefaultTimeDraft(`${hours}:${minutes}`);
   };
 
+  const pickerSharedProps = {
+    accentColor: '#0EC3C9',
+    textColor: isDarkMode ? '#F7F7F7' : '#121212',
+    themeVariant: isDarkMode ? 'dark' as const : 'light' as const,
+  };
+
+  const applyDateDraft = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    setEventDateDraft(`${year}-${month}-${day}`);
+  };
+
+  const applyTimeDraft = (date: Date) => {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    setEventTimeDraft(`${hours}:${minutes}`);
+  };
+
+  const applyWeekFromDate = (date: Date) => {
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0, 0, 0, 0);
+    setSelectedWeekStart(start);
+  };
+
   const parseTemplateTaskOffsetParts = (raw: string) => {
     const [hourText = '0', minuteText = '0', secondText = '0'] = raw.split(':');
     const safeHours = Math.max(0, Math.min(23, Number(hourText) || 0));
@@ -1713,11 +1739,11 @@ export default function EventsScreen() {
           <View style={styles.eventsDarkDateRow}>
             <View style={styles.eventsDarkDateChip}>
               <Pressable style={styles.eventsDarkArrowButton} onPress={() => shiftSelectedWeek(-1)}>
-                <MaterialIcons name="chevron-left" size={22} color="#C46E23" />
+                <MaterialIcons name="chevron-left" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
               </Pressable>
               <Text style={styles.eventsDarkDateChipText}>{eventsRangeLabel}</Text>
               <Pressable style={styles.eventsDarkArrowButton} onPress={() => shiftSelectedWeek(1)}>
-                <MaterialIcons name="chevron-right" size={22} color="#C46E23" />
+                <MaterialIcons name="chevron-right" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
               </Pressable>
             </View>
             <Pressable
@@ -1725,7 +1751,7 @@ export default function EventsScreen() {
               accessibilityLabel="Choose week"
               style={styles.eventsDarkCalendarButton}
               onPress={() => setShowEventsWeekPicker(true)}>
-              <MaterialIcons name="calendar-month" size={30} color="#F98D2F" />
+              <MaterialIcons name="calendar-month" size={30} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
             </Pressable>
           </View>
         <Text style={[styles.filter, isDarkMode ? styles.filterDark : styles.filterLight]}>All Assignments ▾</Text>
@@ -1756,11 +1782,11 @@ export default function EventsScreen() {
           <View style={styles.eventsLightDateRow}>
             <View style={styles.eventsLightDateChip}>
               <Pressable style={styles.eventsLightArrowButton} onPress={() => shiftSelectedWeek(-1)}>
-                <MaterialIcons name="chevron-left" size={22} color="#C46E23" />
+                <MaterialIcons name="chevron-left" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
               </Pressable>
               <Text style={styles.eventsLightDateChipText}>{eventsRangeLabel}</Text>
               <Pressable style={styles.eventsLightArrowButton} onPress={() => shiftSelectedWeek(1)}>
-                <MaterialIcons name="chevron-right" size={22} color="#C46E23" />
+                <MaterialIcons name="chevron-right" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
               </Pressable>
             </View>
             <Pressable
@@ -1831,6 +1857,7 @@ export default function EventsScreen() {
                     style={[
                       styles.pendingActionButton,
                       isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight,
+                      styles.pendingActionPreferred,
                       busy && styles.drawerCloseDisabled,
                     ]}
                     onPress={() => handleRoleNotificationResponse(notification.id, 'accept')}>
@@ -1942,12 +1969,23 @@ export default function EventsScreen() {
       />
 
       {showEventsWeekPicker ? (
-        <DateTimePicker
-          value={selectedWeekStart}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'inline' : 'default'}
-          onChange={handleEventsWeekChange}
-        />
+        <View style={[styles.pickerCard, isDarkMode ? styles.pickerCardDark : styles.pickerCardLight]}>
+          <DateTimePicker
+            value={selectedWeekStart}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            onChange={handleEventsWeekChange}
+            {...pickerSharedProps}
+          />
+          <View style={styles.pickerActionRow}>
+            <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowEventsWeekPicker(false)}>
+              <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
+            </Pressable>
+            <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => applyWeekFromDate(new Date())}>
+              <Text style={styles.pickerActionTextToday}>Today</Text>
+            </Pressable>
+          </View>
+        </View>
       ) : null}
 
       <Modal visible={replaceDrawer.open} animationType="slide" transparent onRequestClose={() => setReplaceDrawer(INITIAL_DRAWER)}>
@@ -2227,12 +2265,23 @@ export default function EventsScreen() {
                 </View>
               </Pressable>
               {showDatePicker ? (
-                <DateTimePicker
-                  value={parseEventDate()}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                  onChange={handleDateChange}
-                />
+                <View style={[styles.inlinePickerWrap, isDarkMode ? styles.inlinePickerWrapDark : styles.inlinePickerWrapLight]}>
+                  <DateTimePicker
+                    value={parseEventDate()}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                    onChange={handleDateChange}
+                    {...pickerSharedProps}
+                  />
+                  <View style={styles.pickerActionRow}>
+                    <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowDatePicker(false)}>
+                      <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
+                    </Pressable>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => { applyDateDraft(new Date()); setShowDatePicker(false); }}>
+                      <Text style={styles.pickerActionTextToday}>Select current</Text>
+                    </Pressable>
+                  </View>
+                </View>
               ) : null}
             </View>
 
@@ -2254,12 +2303,23 @@ export default function EventsScreen() {
                 </View>
               </Pressable>
               {showTimePicker ? (
-                <DateTimePicker
-                  value={parseEventTime()}
-                  mode="time"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={handleTimeChange}
-                />
+                <View style={[styles.inlinePickerWrap, isDarkMode ? styles.inlinePickerWrapDark : styles.inlinePickerWrapLight]}>
+                  <DateTimePicker
+                    value={parseEventTime()}
+                    mode="time"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleTimeChange}
+                    {...pickerSharedProps}
+                  />
+                  <View style={styles.pickerActionRow}>
+                    <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowTimePicker(false)}>
+                      <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
+                    </Pressable>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => { applyTimeDraft(new Date()); setShowTimePicker(false); }}>
+                      <Text style={styles.pickerActionTextToday}>Select current</Text>
+                    </Pressable>
+                  </View>
+                </View>
               ) : null}
             </View>
 
@@ -2584,12 +2644,23 @@ export default function EventsScreen() {
                 </Text>
               </Pressable>
               {showTemplateDefaultTimePicker ? (
-                <DateTimePicker
-                  value={parseTemplateDefaultTime()}
-                  mode="time"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={handleTemplateDefaultTimeChange}
-                />
+                <View style={[styles.inlinePickerWrap, isDarkMode ? styles.inlinePickerWrapDark : styles.inlinePickerWrapLight]}>
+                  <DateTimePicker
+                    value={parseTemplateDefaultTime()}
+                    mode="time"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleTemplateDefaultTimeChange}
+                    {...pickerSharedProps}
+                  />
+                  <View style={styles.pickerActionRow}>
+                    <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowTemplateDefaultTimePicker(false)}>
+                      <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
+                    </Pressable>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => { const now = new Date(); setTemplateDefaultTimeDraft(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`); setShowTemplateDefaultTimePicker(false); }}>
+                      <Text style={styles.pickerActionTextToday}>Select current</Text>
+                    </Pressable>
+                  </View>
+                </View>
               ) : null}
             </View>
 
@@ -2832,8 +2903,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#061229',
     flexDirection: 'row',
   },
-  eventsDarkDateChipText: { color: '#F98D2F', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
-  eventsDarkCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  eventsDarkDateChipText: { color: '#F7F7F7', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
+  eventsDarkCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#061229', borderWidth: 2, borderColor: '#0EC3C9' },
   eventsDarkArrowButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   eventsLightAddButton: {
     width: 34,
@@ -2858,8 +2929,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#DBE2F9',
     flexDirection: 'row',
   },
-  eventsLightDateChipText: { color: '#F98D2F', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
-  eventsLightCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  eventsLightDateChipText: { color: '#121212', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
+  eventsLightCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', position: 'relative', borderRadius: 20, backgroundColor: '#DBE2F9', borderWidth: 2, borderColor: '#0EC3C9' },
   eventsLightCalendarButtonPassive: { opacity: 0.7 },
   eventsLightArrowButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   eventsLightCalendarBadge: {
@@ -2917,14 +2988,30 @@ const styles = StyleSheet.create({
   pendingNotificationActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
   pendingActionButton: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   pendingActionButtonText: { fontSize: 13, fontWeight: '700' },
-  pendingActionDeclineLight: { borderColor: '#F98D2F', backgroundColor: '#DBE2F9' },
-  pendingActionDeclineDark: { borderColor: '#F98D2F', backgroundColor: '#061229' },
+  pendingActionDeclineLight: { borderColor: '#F98D2F', borderWidth: 1, backgroundColor: '#F7F7F7' },
+  pendingActionDeclineDark: { borderColor: '#F98D2F', borderWidth: 1, backgroundColor: '#12274D' },
   pendingActionDeclineTextLight: { color: '#F98D2F' },
   pendingActionDeclineTextDark: { color: '#F98D2F' },
-  pendingActionAcceptLight: { borderColor: '#DBE2F9', backgroundColor: '#DBE2F9' },
-  pendingActionAcceptDark: { borderColor: '#061229', backgroundColor: '#061229' },
-  pendingActionAcceptTextLight: { color: '#F98D2F' },
-  pendingActionAcceptTextDark: { color: '#F98D2F' },
+  pendingActionAcceptLight: { borderColor: '#0EC3C9', borderWidth: 2, backgroundColor: '#F7F7F7' },
+  pendingActionAcceptDark: { borderColor: '#0EC3C9', borderWidth: 2, backgroundColor: '#12274D' },
+  pendingActionAcceptTextLight: { color: '#0B7285' },
+  pendingActionAcceptTextDark: { color: '#0EC3C9' },
+  pendingActionPreferred: { shadowColor: '#0EC3C9', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  pickerCard: { marginTop: 8, marginBottom: 12, borderRadius: 16, borderWidth: 1, padding: 8 },
+  pickerCardLight: { backgroundColor: '#F7F7F7', borderColor: '#0EC3C9' },
+  pickerCardDark: { backgroundColor: '#12274D', borderColor: '#0EC3C9' },
+  inlinePickerWrap: { marginTop: 10, borderRadius: 14, borderWidth: 1, padding: 8 },
+  inlinePickerWrapLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(14,195,201,0.35)' },
+  inlinePickerWrapDark: { backgroundColor: '#12274D', borderColor: 'rgba(14,195,201,0.45)' },
+  pickerActionRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 8 },
+  pickerActionButton: { minHeight: 36, borderRadius: 18, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  pickerActionButtonLight: { backgroundColor: '#F7F7F7', borderColor: '#CBD5E1' },
+  pickerActionButtonDark: { backgroundColor: '#12274D', borderColor: '#2E559D' },
+  pickerActionButtonToday: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
+  pickerActionText: { fontSize: 12, fontWeight: '700' },
+  pickerActionTextLight: { color: '#121212' },
+  pickerActionTextDark: { color: '#F7F7F7' },
+  pickerActionTextToday: { color: '#061229', fontSize: 12, fontWeight: '700' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7', borderRadius: 16, padding: 16, marginBottom: 12 },
   swipeDeleteAction: {
@@ -2985,11 +3072,11 @@ const styles = StyleSheet.create({
   avatarChipLightFigma: { alignItems: 'center', width: 38 },
   avatarCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   avatarCircleLight: { backgroundColor: '#F7F7F7' },
-  avatarCircleLightFigma: { backgroundColor: '#EDF0FC', borderWidth: 2, borderColor: '#F98D2F' },
-  avatarCircleAssignedLightFigma: { backgroundColor: '#EDF0FC', borderWidth: 2, borderColor: '#0EC3C9' },
+  avatarCircleLightFigma: { backgroundColor: '#F7F7F7', borderWidth: 2, borderColor: '#F98D2F' },
+  avatarCircleAssignedLightFigma: { backgroundColor: '#F7F7F7', borderWidth: 2, borderColor: '#0EC3C9' },
   avatarCircleDark: { backgroundColor: '#12274D' },
-  avatarCircleDarkFigma: { backgroundColor: '#203E75', borderWidth: 2, borderColor: '#F98D2F' },
-  avatarCircleAssignedDarkFigma: { backgroundColor: '#203E75', borderWidth: 2, borderColor: '#0EC3C9' },
+  avatarCircleDarkFigma: { backgroundColor: '#12274D', borderWidth: 2, borderColor: '#F98D2F' },
+  avatarCircleAssignedDarkFigma: { backgroundColor: '#12274D', borderWidth: 2, borderColor: '#0EC3C9' },
   avatarCircleRingAcceptedLight: { borderWidth: 2, borderColor: '#0EC3C9' },
   avatarCircleRingAcceptedDark: { borderWidth: 2, borderColor: '#0EC3C9' },
   avatarCircleRingDeclinedLight: { borderWidth: 2, borderColor: '#dc2626' },

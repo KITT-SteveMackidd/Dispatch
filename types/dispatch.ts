@@ -72,7 +72,7 @@ export type WorkerInvite = {
   email: string;
   normalizedEmail?: string;
   workerId?: string | null;
-  token?: string;
+  inviteTokenId?: string | null;
   tokenPreview?: string;
   appLink?: string;
   status: WorkerInviteStatus;
@@ -92,6 +92,25 @@ export type WorkerInvite = {
   managerClearedAt?: { toDate?: () => Date } | Date | null;
   createdAt?: { toDate?: () => Date } | Date | null;
   sentAt?: { toDate?: () => Date } | Date | null;
+};
+
+export type InviteTokenStatus = 'active' | 'consumed' | 'expired' | 'revoked' | 'cancelled';
+
+export type InviteToken = {
+  id: string;
+  inviteId: string;
+  managerId: string;
+  teamId?: string | null;
+  email: string;
+  token: string;
+  tokenPreview: string;
+  status: InviteTokenStatus;
+  expiresAt?: { toDate?: () => Date } | Date | null;
+  consumedAt?: { toDate?: () => Date } | Date | null;
+  revokedAt?: { toDate?: () => Date } | Date | null;
+  cancelledAt?: { toDate?: () => Date } | Date | null;
+  createdAt?: { toDate?: () => Date } | Date | null;
+  updatedAt?: { toDate?: () => Date } | Date | null;
 };
 
 export type EventTemplateTask = {
