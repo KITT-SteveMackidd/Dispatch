@@ -1,14 +1,12 @@
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useThemeMode } from '@/context/theme';
 import { useSession } from '@/context/session';
 import { AppRole } from '@/types/dispatch';
 
 export default function AccountSettingsScreen() {
-  const router = useRouter();
   const { themeMode, resolvedThemeMode, setThemeMode } = useThemeMode();
-  const { profile, revokeSession, saveProfile } = useSession();
+  const { profile, saveProfile } = useSession();
 
   const isDarkMode = resolvedThemeMode === 'dark';
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
@@ -30,16 +28,6 @@ export default function AccountSettingsScreen() {
       Alert.alert('Unable to update profile', error instanceof Error ? error.message : 'Try again in a moment.');
     } finally {
       setSavingProfile(false);
-    }
-  };
-
-  const onRevokeSession = async () => {
-    try {
-      await revokeSession();
-      Alert.alert('Session revoked', 'You have been signed out of this device.');
-      router.replace('/(auth)/signin');
-    } catch (error) {
-      Alert.alert('Unable to revoke', error instanceof Error ? error.message : 'Try again in a moment.');
     }
   };
 
@@ -86,7 +74,11 @@ export default function AccountSettingsScreen() {
                   <Text
                     style={[
                       styles.rolePillText,
-                      selected ? styles.rolePillTextSelected : isDarkMode ? styles.rolePillTextDark : styles.rolePillTextLight,
+                      selected
+                        ? (isDarkMode ? styles.rolePillTextSelectedDark : styles.rolePillTextSelectedLight)
+                        : isDarkMode
+                          ? styles.rolePillTextDark
+                          : styles.rolePillTextLight,
                     ]}>
                     {mode[0].toUpperCase() + mode.slice(1)}
                   </Text>
@@ -96,7 +88,9 @@ export default function AccountSettingsScreen() {
           </View>
 
           <Pressable onPress={onSaveProfile} style={[styles.primaryBtn, savingProfile && styles.disabled]} disabled={savingProfile}>
-            <Text style={styles.primaryBtnText}>{savingProfile ? 'Saving...' : 'Save profile changes'}</Text>
+            <Text style={[styles.primaryBtnText, isDarkMode ? styles.primaryBtnTextDark : styles.primaryBtnTextLight]}>
+              {savingProfile ? 'Saving...' : 'Save profile changes'}
+            </Text>
           </Pressable>
         </View>
 
@@ -127,18 +121,6 @@ export default function AccountSettingsScreen() {
             Current mode: {themeMode === 'system' ? `System (${resolvedThemeMode})` : themeMode}
           </Text>
         </View>
-
-        <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
-          <Text style={[styles.eyebrow, isDarkMode ? styles.eyebrowDark : styles.eyebrowLight]}>Security</Text>
-          <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>Session control</Text>
-          <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
-            Immediately revoke this device session. For emergency all-device revocation, use docs/security/firebase-session-revocation.md.
-          </Text>
-
-          <Pressable onPress={onRevokeSession} style={styles.dangerBtn}>
-            <Text style={styles.dangerBtnText}>Revoke this session now</Text>
-          </Pressable>
-        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -167,27 +149,28 @@ const styles = StyleSheet.create({
   roleRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   rolePill: { flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, alignItems: 'center' },
   rolePillLight: { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0' },
-  rolePillDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
-  rolePillSelectedLight: { backgroundColor: '#dbeafe', borderColor: '#93c5fd' },
-  rolePillSelectedDark: { backgroundColor: '#00133D', borderColor: '#0EC3C9' },
+  rolePillDark: { backgroundColor: '#1A2540', borderColor: '#0EC3C9' },
+  rolePillSelectedLight: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
+  rolePillSelectedDark: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
   rolePillText: { fontWeight: '700' },
   rolePillTextLight: { color: '#334155' },
-  rolePillTextDark: { color: '#F4F8FF' },
-  rolePillTextSelected: { color: '#bfdbfe' },
-  primaryBtn: { backgroundColor: '#2563eb', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center' },
-  primaryBtnText: { color: '#fff', fontWeight: '700' },
+  rolePillTextDark: { color: '#0EC3C9' },
+  rolePillTextSelectedLight: { color: '#FFFFFF' },
+  rolePillTextSelectedDark: { color: '#1A2540' },
+  primaryBtn: { backgroundColor: '#0EC3C9', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center' },
+  primaryBtnText: { fontWeight: '700' },
+  primaryBtnTextLight: { color: '#FFFFFF' },
+  primaryBtnTextDark: { color: '#1A2540' },
   options: { gap: 10 },
   option: { borderWidth: 1, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 14 },
   optionLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
   optionDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
-  optionSelected: { borderColor: '#2563eb', borderWidth: 2 },
+  optionSelected: { borderColor: '#0EC3C9', borderWidth: 2 },
   optionLabel: { fontWeight: '700' },
   optionLabelLight: { color: '#232832' },
   optionLabelDark: { color: '#F4F8FF' },
   helper: { marginTop: 12, fontSize: 12 },
   helperLight: { color: '#475569' },
   helperDark: { color: '#F4F8FF' },
-  dangerBtn: { backgroundColor: '#b91c1c', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center' },
-  dangerBtnText: { color: '#fff', fontWeight: '700' },
   disabled: { opacity: 0.65 },
 });

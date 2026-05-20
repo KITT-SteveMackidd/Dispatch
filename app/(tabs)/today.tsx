@@ -473,6 +473,28 @@ export default function TodayScreen() {
     }
   };
 
+  const openPhoneDialer = async (phoneNumber?: string) => {
+    const sanitizedPhone = phoneNumber?.trim();
+    if (!sanitizedPhone) {
+      Alert.alert('Phone unavailable', 'This user does not have a phone number saved yet.');
+      return;
+    }
+
+    const url = `tel:${sanitizedPhone.replace(/\s+/g, '')}`;
+
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        Alert.alert('Unable to place call', 'This device cannot open the phone dialer.');
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Unable to place call', 'Please try again in a moment.');
+    }
+  };
+
   const renderWorkerChecklist = (event: DispatchEvent) => {
     if (profile?.role !== 'worker') return null;
 
@@ -680,7 +702,7 @@ export default function TodayScreen() {
                         <Text style={styles.figmaWorkerMetaLight}>Worker: {workerInfo?.displayName || worker.workerId}</Text>
                         <Text style={styles.figmaWorkerMetaLight}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
                       </View>
-                      <Pressable onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)} hitSlop={8}>
+                      <Pressable onPress={() => openPhoneDialer(workerInfo?.phoneNumber)} hitSlop={8}>
                         <MaterialIcons name="phone-enabled" size={24} color="#121212" />
                       </Pressable>
                     </View>
@@ -787,7 +809,7 @@ export default function TodayScreen() {
                         <Text style={styles.figmaWorkerMetaDark}>Worker: {workerInfo?.displayName || worker.workerId}</Text>
                         <Text style={styles.figmaWorkerMetaDark}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
                       </View>
-                      <Pressable onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)} hitSlop={8}>
+                      <Pressable onPress={() => openPhoneDialer(workerInfo?.phoneNumber)} hitSlop={8}>
                         <MaterialIcons name="phone-enabled" size={24} color="#F7F7F7" />
                       </Pressable>
                     </View>

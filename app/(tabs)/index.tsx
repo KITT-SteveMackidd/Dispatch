@@ -215,9 +215,12 @@ export default function EventsScreen() {
   };
 
   const formatRoleDurationLabel = (tasks: TemplateTaskPreview[]) => {
-    const totalMinutes = tasks.reduce((sum, task) => sum + Math.max(0, Math.round(task.expectedOffsetMinutes || 0)), 0);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
+    if (!tasks.length) return '0 min total';
+
+    const offsets = tasks.map((task) => Math.max(0, Math.round(task.expectedOffsetMinutes || 0)));
+    const durationMinutes = Math.max(0, Math.max(...offsets) - Math.min(...offsets));
+    const hours = Math.floor(durationMinutes / 60);
+    const minutes = durationMinutes % 60;
 
     if (hours && minutes) return `${hours}h ${minutes} min total`;
     if (hours) return `${hours}h total`;
@@ -1739,11 +1742,11 @@ export default function EventsScreen() {
           <View style={styles.eventsDarkDateRow}>
             <View style={styles.eventsDarkDateChip}>
               <Pressable style={styles.eventsDarkArrowButton} onPress={() => shiftSelectedWeek(-1)}>
-                <MaterialIcons name="chevron-left" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
+                <MaterialIcons name="chevron-left" size={22} color="#F98D2F" />
               </Pressable>
               <Text style={styles.eventsDarkDateChipText}>{eventsRangeLabel}</Text>
               <Pressable style={styles.eventsDarkArrowButton} onPress={() => shiftSelectedWeek(1)}>
-                <MaterialIcons name="chevron-right" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
+                <MaterialIcons name="chevron-right" size={22} color="#F98D2F" />
               </Pressable>
             </View>
             <Pressable
@@ -1751,7 +1754,7 @@ export default function EventsScreen() {
               accessibilityLabel="Choose week"
               style={styles.eventsDarkCalendarButton}
               onPress={() => setShowEventsWeekPicker(true)}>
-              <MaterialIcons name="calendar-month" size={30} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
+              <MaterialIcons name="calendar-month" size={30} color="#F98D2F" />
             </Pressable>
           </View>
         <Text style={[styles.filter, isDarkMode ? styles.filterDark : styles.filterLight]}>All Assignments ▾</Text>
@@ -1782,11 +1785,11 @@ export default function EventsScreen() {
           <View style={styles.eventsLightDateRow}>
             <View style={styles.eventsLightDateChip}>
               <Pressable style={styles.eventsLightArrowButton} onPress={() => shiftSelectedWeek(-1)}>
-                <MaterialIcons name="chevron-left" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
+                <MaterialIcons name="chevron-left" size={22} color="#F98D2F" />
               </Pressable>
               <Text style={styles.eventsLightDateChipText}>{eventsRangeLabel}</Text>
               <Pressable style={styles.eventsLightArrowButton} onPress={() => shiftSelectedWeek(1)}>
-                <MaterialIcons name="chevron-right" size={22} color={isDarkMode ? '#0EC3C9' : '#F98D2F'} />
+                <MaterialIcons name="chevron-right" size={22} color="#F98D2F" />
               </Pressable>
             </View>
             <Pressable
@@ -2903,8 +2906,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#061229',
     flexDirection: 'row',
   },
-  eventsDarkDateChipText: { color: '#F7F7F7', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
-  eventsDarkCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#061229', borderWidth: 2, borderColor: '#0EC3C9' },
+  eventsDarkDateChipText: { color: '#F98D2F', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
+  eventsDarkCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   eventsDarkArrowButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   eventsLightAddButton: {
     width: 34,
@@ -2929,8 +2932,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#DBE2F9',
     flexDirection: 'row',
   },
-  eventsLightDateChipText: { color: '#121212', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
-  eventsLightCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', position: 'relative', borderRadius: 20, backgroundColor: '#DBE2F9', borderWidth: 2, borderColor: '#0EC3C9' },
+  eventsLightDateChipText: { color: '#F98D2F', fontSize: 20, lineHeight: 24, fontFamily: 'Inter', fontWeight: '700' },
+  eventsLightCalendarButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   eventsLightCalendarButtonPassive: { opacity: 0.7 },
   eventsLightArrowButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   eventsLightCalendarBadge: {
@@ -2966,7 +2969,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     display: 'none',
   },
-  createButtonText: { color: '#fff', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
+  createButtonText: { color: '#F7F7F7', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
   empty: { marginTop: 20 },
   emptyLight: { color: '#64748b' },
   emptyDark: { color: '#F4F8FF' },
@@ -2992,11 +2995,11 @@ const styles = StyleSheet.create({
   pendingActionDeclineDark: { borderColor: '#F98D2F', borderWidth: 1, backgroundColor: '#12274D' },
   pendingActionDeclineTextLight: { color: '#F98D2F' },
   pendingActionDeclineTextDark: { color: '#F98D2F' },
-  pendingActionAcceptLight: { borderColor: '#0EC3C9', borderWidth: 2, backgroundColor: '#F7F7F7' },
-  pendingActionAcceptDark: { borderColor: '#0EC3C9', borderWidth: 2, backgroundColor: '#12274D' },
-  pendingActionAcceptTextLight: { color: '#0B7285' },
-  pendingActionAcceptTextDark: { color: '#0EC3C9' },
-  pendingActionPreferred: { shadowColor: '#0EC3C9', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  pendingActionAcceptLight: { borderColor: '#F98D2F', borderWidth: 1, backgroundColor: '#F98D2F' },
+  pendingActionAcceptDark: { borderColor: '#F98D2F', borderWidth: 1, backgroundColor: '#F98D2F' },
+  pendingActionAcceptTextLight: { color: '#F7F7F7' },
+  pendingActionAcceptTextDark: { color: '#12274D' },
+  pendingActionPreferred: { shadowColor: '#F98D2F', shadowOpacity: 0.16, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   pickerCard: { marginTop: 8, marginBottom: 12, borderRadius: 16, borderWidth: 1, padding: 8 },
   pickerCardLight: { backgroundColor: '#F7F7F7', borderColor: '#0EC3C9' },
   pickerCardDark: { backgroundColor: '#12274D', borderColor: '#0EC3C9' },
@@ -3081,8 +3084,8 @@ const styles = StyleSheet.create({
   avatarCircleRingAcceptedDark: { borderWidth: 2, borderColor: '#0EC3C9' },
   avatarCircleRingDeclinedLight: { borderWidth: 2, borderColor: '#dc2626' },
   avatarCircleRingDeclinedDark: { borderWidth: 2, borderColor: '#fb7185' },
-  avatarCircleRingPendingLight: { borderWidth: 2, borderColor: '#f59e0b' },
-  avatarCircleRingPendingDark: { borderWidth: 2, borderColor: '#fbbf24' },
+  avatarCircleRingPendingLight: { borderWidth: 2, borderColor: '#F98D2F' },
+  avatarCircleRingPendingDark: { borderWidth: 2, borderColor: '#F98D2F' },
   avatarText: { fontWeight: '700', color: '#bfdbfe' },
   avatarTextLightFigma: { fontWeight: '700', color: 'rgba(249,141,47,0.25)', fontSize: 16 },
   avatarTextAssignedLightFigma: { fontWeight: '700', color: 'rgba(14,195,201,0.35)', fontSize: 16 },
@@ -3097,14 +3100,14 @@ const styles = StyleSheet.create({
   roleActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   drawerButton: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8 },
   drawerButtonLight: { backgroundColor: '#e2e8f0' },
-  drawerButtonLightFigma: { backgroundColor: '#DBE2F9', alignSelf: 'flex-start' },
+  drawerButtonLightFigma: { backgroundColor: '#F7F7F7', borderWidth: 1, borderColor: '#F98D2F', alignSelf: 'flex-start' },
   drawerButtonDark: { backgroundColor: '#001A4D' },
-  drawerButtonDarkFigma: { backgroundColor: '#DBE2F9', alignSelf: 'flex-start' },
+  drawerButtonDarkFigma: { backgroundColor: '#12274D', borderWidth: 1, borderColor: '#F98D2F', alignSelf: 'flex-start' },
   drawerButtonText: { fontSize: 12, fontWeight: '700' },
   drawerButtonTextLight: { color: '#334155' },
-  drawerButtonTextLightFigma: { color: '#121212' },
+  drawerButtonTextLightFigma: { color: '#F98D2F' },
   drawerButtonTextDark: { color: '#F4F8FF' },
-  drawerButtonTextDarkFigma: { color: '#121212' },
+  drawerButtonTextDarkFigma: { color: '#F98D2F' },
   drawerDestructiveButton: { marginBottom: 10, backgroundColor: '#7f1d1d' },
   drawerDestructiveButtonText: { color: '#fecaca', textAlign: 'center', fontWeight: '700' },
   taskList: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 8, gap: 8 },
@@ -3281,14 +3284,14 @@ const styles = StyleSheet.create({
   templateActionButtonText: { fontSize: 12, fontWeight: '700' },
   templateActionButtonTextLight: { color: '#1d4ed8' },
   templateActionButtonTextDark: { color: '#F4F8FF' },
-  createEventEditButtonLight: { borderColor: '#3E70CA', backgroundColor: '#DBE2F9', paddingHorizontal: 12, paddingVertical: 8 },
-  createEventEditButtonTextLight: { color: '#3E70CA' },
-  createEventDeleteButtonLight: { borderColor: '#F98D2F', backgroundColor: '#FBBB9C', paddingHorizontal: 12, paddingVertical: 8 },
-  createEventDeleteButtonTextLight: { color: '#C46E23' },
-  createEventEditButtonDark: { borderColor: '#3E70CA', backgroundColor: '#DBE2F9', paddingHorizontal: 12, paddingVertical: 8 },
-  createEventEditButtonTextDark: { color: '#3E70CA' },
-  createEventDeleteButtonDark: { borderColor: '#F98D2F', backgroundColor: '#FBBB9C', paddingHorizontal: 12, paddingVertical: 8 },
-  createEventDeleteButtonTextDark: { color: '#C46E23' },
+  createEventEditButtonLight: { borderColor: '#F98D2F', backgroundColor: '#DBE2F9', paddingHorizontal: 12, paddingVertical: 8 },
+  createEventEditButtonTextLight: { color: '#F98D2F' },
+  createEventDeleteButtonLight: { borderColor: '#F98D2F', backgroundColor: '#F98D2F', paddingHorizontal: 12, paddingVertical: 8 },
+  createEventDeleteButtonTextLight: { color: '#F7F7F7' },
+  createEventEditButtonDark: { borderColor: '#F98D2F', backgroundColor: '#12274D', paddingHorizontal: 12, paddingVertical: 8 },
+  createEventEditButtonTextDark: { color: '#F98D2F' },
+  createEventDeleteButtonDark: { borderColor: '#F98D2F', backgroundColor: '#F98D2F', paddingHorizontal: 12, paddingVertical: 8 },
+  createEventDeleteButtonTextDark: { color: '#12274D' },
   templateDeleteButtonLight: { borderColor: '#fecaca', backgroundColor: '#fef2f2' },
   templateDeleteButtonDark: { borderColor: '#F98D2F', backgroundColor: '#00133D' },
   templateDeleteButtonTextLight: { color: '#b91c1c' },
