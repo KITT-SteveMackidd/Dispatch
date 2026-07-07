@@ -8,15 +8,21 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
 import {
+  cancelWorkerEventRole,
+  acceptEventRoleWaitlistInvite,
   createDispatchEvent,
   createEventTemplate,
   deleteDispatchEvent,
+  deleteEventRole,
   deleteEventTemplate,
   ensureDefaultEventTemplates,
+  joinEventRoleWaitlist,
+  joinRoleWaitlist,
   loadUserProfilesByIds,
   respondToRoleAssignmentNotification,
   sortDispatchEvents,
   updateEventRoleAssignment,
+  updateEventRoleDetails,
   updateEventTemplate,
   uploadTemplateTaskAttachment,
   watchManagerEvents,
@@ -31,6 +37,9 @@ import { DispatchEvent, EventRole, EventTask, EventTemplate, Team, UserProfile }
 import { useThemeMode } from '@/context/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { headerLogoSource } from '@/constants/branding';
+import { addDispatchEventToCalendar } from '@/lib/calendar-events';
+import { fetchPlaceAutocomplete, PlaceAutocompleteSuggestion } from '@/lib/google-places';
+import { openMapAppPicker } from '@/lib/map-apps';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
@@ -49,6 +58,17 @@ const INITIAL_DRAWER: DrawerState = {
   open: false,
   eventId: null,
   roleId: null,
+};
+
+type EventRoleEditorState = DrawerState & {
+  name: string;
+};
+
+const INITIAL_EVENT_ROLE_EDITOR: EventRoleEditorState = {
+  open: false,
+  eventId: null,
+  roleId: null,
+  name: '',
 };
 
 type TemplateTaskPreview = {
@@ -120,6 +140,108 @@ type EventsWeekRow =
   | { type: 'day'; key: string; date: Date }
   | { type: 'event'; key: string; event: DispatchEvent };
 
+function LocationAutocompleteField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  isDarkMode,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  isDarkMode: boolean;
+}) {
+  const [suggestions, setSuggestions] = useState<PlaceAutocompleteSuggestion[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const query = value.trim();
+    if (query.length < 3) {
+      setSuggestions([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      setLoading(true);
+      fetchPlaceAutocomplete(query, controller.signal)
+        .then((items) => {
+          setSuggestions(items);
+          setError(null);
+        })
+        .catch((autocompleteError) => {
+          if (controller.signal.aborted) return;
+          setSuggestions([]);
+          setError(autocompleteError instanceof Error ? autocompleteError.message : 'Unable to load location suggestions.');
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [value]);
+
+  const selectSuggestion = (suggestion: PlaceAutocompleteSuggestion) => {
+    onChangeText(suggestion.label);
+    setSuggestions([]);
+    setError(null);
+  };
+
+  return (
+    <View style={styles.locationAutocompleteWrap}>
+      <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : '#94a3b8'}
+        returnKeyType="next"
+        blurOnSubmit={false}
+        style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+      />
+      {loading ? (
+        <Text style={[styles.locationAutocompleteHint, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>Searching...</Text>
+      ) : null}
+      {error ? (
+        <Text style={[styles.locationAutocompleteHint, styles.locationAutocompleteError]}>{error}</Text>
+      ) : null}
+      {suggestions.length ? (
+        <View style={[styles.locationSuggestions, isDarkMode ? styles.locationSuggestionsDark : styles.locationSuggestionsLight]}>
+          {suggestions.map((suggestion) => (
+            <Pressable
+              key={suggestion.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Use ${suggestion.label}`}
+              style={styles.locationSuggestionRow}
+              onPress={() => selectSuggestion(suggestion)}>
+              <MaterialIcons name="place" size={18} color="#F98D2F" />
+              <View style={styles.locationSuggestionTextWrap}>
+                <Text style={[styles.locationSuggestionTitle, isDarkMode ? styles.titleDark : styles.titleLight]} numberOfLines={1}>
+                  {suggestion.label}
+                </Text>
+                {suggestion.secondaryLabel ? (
+                  <Text style={[styles.locationSuggestionMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]} numberOfLines={1}>
+                    {suggestion.secondaryLabel}
+                  </Text>
+                ) : null}
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function EventsScreen() {
   const { profile } = useSession();
   const router = useRouter();
@@ -137,6 +259,9 @@ export default function EventsScreen() {
   const [expandedInviteTeamIds, setExpandedInviteTeamIds] = useState<Record<string, boolean>>({});
   const [replaceDrawer, setReplaceDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
+  const [eventRoleEditor, setEventRoleEditor] = useState<EventRoleEditorState>(INITIAL_EVENT_ROLE_EDITOR);
+  const [roleMutationBusyKey, setRoleMutationBusyKey] = useState<string | null>(null);
+  const [roleCancellationBusyKey, setRoleCancellationBusyKey] = useState<string | null>(null);
   const [inviteSelectedWorkerIds, setInviteSelectedWorkerIds] = useState<string[]>([]);
   const [inviteSubmitBusy, setInviteSubmitBusy] = useState(false);
   const [createEventDrawerOpen, setCreateEventDrawerOpen] = useState(false);
@@ -159,12 +284,18 @@ export default function EventsScreen() {
   const [pendingRoleNotifications, setPendingRoleNotifications] = useState<Array<{
     id: string;
     action: 'assign' | 'remove';
+    status: 'pending' | 'accepted' | 'declined' | 'waitlisted';
+    managerId: string;
+    eventId: string;
     eventName?: string;
     eventLocation?: string;
     eventStartsAt?: string;
     roleName?: string;
     roleTaskNames?: string[];
     roleId: string;
+    roleOpenSlots?: number;
+    roleAssignedWorkerIds?: string[];
+    roleWaitlistWorkerIds?: string[];
   }>>([]);
   const [pendingInviteWorkerIdsByRoleKey, setPendingInviteWorkerIdsByRoleKey] = useState<Record<string, string[]>>({});
   const [inviteStatusByRoleWorkerKey, setInviteStatusByRoleWorkerKey] = useState<Record<string, InviteStatus>>({});
@@ -172,6 +303,10 @@ export default function EventsScreen() {
   const [expandedPendingNotificationIds, setExpandedPendingNotificationIds] = useState<Record<string, boolean>>({});
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
+  const [eventDatePickerDraft, setEventDatePickerDraft] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showEventsWeekPicker, setShowEventsWeekPicker] = useState(false);
@@ -191,6 +326,12 @@ export default function EventsScreen() {
     return base;
   });
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
+  const createTemplateScrollRef = useRef<ScrollView | null>(null);
+  const templateTaskDescriptionYRef = useRef(0);
+  const templateDefaultDescriptionYRef = useRef(0);
+  const knownEventIdsRef = useRef<Set<string>>(new Set());
+  const eventListInitializedRef = useRef(false);
+  const calendarPromptedEventIdsRef = useRef<Set<string>>(new Set());
   const canCreateEvent = profile?.role === 'manager';
 
   const buildCreateEventRolesDraft = (template?: EventTemplateOption): CreateEventRoleDraft[] => {
@@ -242,6 +383,16 @@ export default function EventsScreen() {
     return Math.max(0, Math.round((hours * 3600 + minutes * 60 + seconds) / 60));
   };
 
+  const scrollCreateTemplateFieldAboveKeyboard = (fieldY: number) => {
+    const delay = Platform.OS === 'ios' ? 220 : 320;
+    setTimeout(() => {
+      createTemplateScrollRef.current?.scrollTo({
+        y: Math.max(0, fieldY - 24),
+        animated: true,
+      });
+    }, delay);
+  };
+
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
     const startsAtMs = +new Date(event.startsAt);
     const offsetMinutes = Number(task.expectedOffsetMinutes);
@@ -286,10 +437,20 @@ export default function EventsScreen() {
     return new Date(startsAtMs + safeOffset * 60 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   };
 
+  const normalizeEventDate = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const formatEventDateDraft = (date: Date) => {
+    const normalized = normalizeEventDate(date);
+    const year = normalized.getFullYear();
+    const month = String(normalized.getMonth() + 1).padStart(2, '0');
+    const day = String(normalized.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const parseEventDate = () => {
-    if (!eventDateDraft) return new Date();
+    if (!eventDateDraft) return normalizeEventDate(new Date());
     const parsed = new Date(`${eventDateDraft}T00:00:00`);
-    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    return Number.isNaN(parsed.getTime()) ? normalizeEventDate(new Date()) : normalizeEventDate(parsed);
   };
 
   const parseEventTime = () => {
@@ -304,16 +465,16 @@ export default function EventsScreen() {
   };
 
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    setShowDatePicker(false);
     if (event.type === 'dismissed' || !selectedDate) return;
-    const year = selectedDate.getFullYear();
-    const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
-    const day = String(selectedDate.getDate()).padStart(2, '0');
-    setEventDateDraft(`${year}-${month}-${day}`);
+    setEventDatePickerDraft(normalizeEventDate(selectedDate));
+  };
+
+  const handleSelectEventDate = () => {
+    setEventDateDraft(formatEventDateDraft(eventDatePickerDraft));
+    setShowDatePicker(false);
   };
 
   const handleTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
-    setShowTimePicker(false);
     if (event.type === 'dismissed' || !selectedTime) return;
     const hours = String(selectedTime.getHours()).padStart(2, '0');
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
@@ -332,7 +493,6 @@ export default function EventsScreen() {
   };
 
   const handleTemplateDefaultTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
-    setShowTemplateDefaultTimePicker(false);
     if (event.type === 'dismissed' || !selectedTime) return;
     const hours = String(selectedTime.getHours()).padStart(2, '0');
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
@@ -343,19 +503,6 @@ export default function EventsScreen() {
     accentColor: '#0EC3C9',
     textColor: isDarkMode ? '#F7F7F7' : '#121212',
     themeVariant: isDarkMode ? 'dark' as const : 'light' as const,
-  };
-
-  const applyDateDraft = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    setEventDateDraft(`${year}-${month}-${day}`);
-  };
-
-  const applyTimeDraft = (date: Date) => {
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    setEventTimeDraft(`${hours}:${minutes}`);
   };
 
   const applyWeekFromDate = (date: Date) => {
@@ -390,15 +537,63 @@ export default function EventsScreen() {
     });
   };
 
+  const promptAddEventToCalendar = (event: DispatchEvent) => {
+    if (calendarPromptedEventIdsRef.current.has(event.id)) return;
+    calendarPromptedEventIdsRef.current.add(event.id);
+
+    const startsAt = new Date(event.startsAt);
+    const when = Number.isNaN(startsAt.getTime())
+      ? 'the scheduled event time'
+      : startsAt.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+    Alert.alert(
+      'Add event to calendar?',
+      `${event.name} starts ${when}${event.location ? ` at ${event.location}` : ''}.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Add',
+          onPress: async () => {
+            try {
+              await addDispatchEventToCalendar(event);
+              Alert.alert('Added to calendar', `${event.name} was added to your calendar.`);
+            } catch (error) {
+              Alert.alert('Unable to add calendar event', error instanceof Error ? error.message : 'Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const updateWatchedEvents = (items: DispatchEvent[]) => {
+    setEvents(items);
+    const nextIds = new Set(items.map((item) => item.id));
+
+    if (!eventListInitializedRef.current) {
+      knownEventIdsRef.current = nextIds;
+      eventListInitializedRef.current = true;
+      return;
+    }
+
+    const addedEvents = items.filter((item) => !knownEventIdsRef.current.has(item.id));
+    knownEventIdsRef.current = nextIds;
+    addedEvents.forEach(promptAddEventToCalendar);
+  };
+
   useEffect(() => {
     if (!profile) return;
+    knownEventIdsRef.current = new Set();
+    eventListInitializedRef.current = false;
+    calendarPromptedEventIdsRef.current = new Set();
+
     return profile.role === 'manager'
       ? watchManagerEvents(profile.uid, (items) => {
-          setEvents(items);
+          updateWatchedEvents(items);
           setOptimisticCreatedEvents((prev) => prev.filter((pending) => !items.some((item) => item.id === pending.id)));
         })
       : watchWorkerEvents(profile.uid, (items) => {
-          setEvents(items);
+          updateWatchedEvents(items);
           setOptimisticCreatedEvents((prev) => prev.filter((pending) => !items.some((item) => item.id === pending.id)));
         });
   }, [profile]);
@@ -413,7 +608,7 @@ export default function EventsScreen() {
       setManagerTeams(teams);
       const workerIds = [...new Set(teams.flatMap((team) => team.workerIds || []).filter(Boolean))];
       setTeamWorkerIds(workerIds);
-    });
+    }, profile.organizationId);
   }, [profile]);
 
   useEffect(() => {
@@ -447,12 +642,18 @@ export default function EventsScreen() {
       setPendingRoleNotifications(items.map((item) => ({
         id: item.id,
         action: item.action,
+        status: item.status,
+        managerId: item.managerId,
+        eventId: item.eventId,
         eventName: item.eventName,
         eventLocation: item.eventLocation,
         eventStartsAt: item.eventStartsAt,
         roleName: item.roleName,
         roleTaskNames: item.roleTaskNames,
         roleId: item.roleId,
+        roleOpenSlots: item.roleOpenSlots,
+        roleAssignedWorkerIds: item.roleAssignedWorkerIds,
+        roleWaitlistWorkerIds: item.roleWaitlistWorkerIds,
       })));
     });
   }, [profile]);
@@ -588,6 +789,7 @@ export default function EventsScreen() {
 
     const initialTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
     setEventDateDraft('');
+    setEventDatePickerDraft(normalizeEventDate(new Date()));
     setEventTimeDraft(initialTemplate?.defaultTime || '');
     setShowDatePicker(false);
     setShowTimePicker(false);
@@ -1057,12 +1259,49 @@ export default function EventsScreen() {
 
   const allEvents = useMemo(
     () => {
-      const combined = [...events, ...optimisticCreatedEvents];
+      const activeEventIds = new Set(events.map((event) => event.id));
+      const pendingInviteEvents: DispatchEvent[] = profile?.role === 'worker'
+        ? pendingRoleNotifications
+            .filter((notification) => notification.action === 'assign')
+            .filter((notification) => notification.status === 'pending' || notification.status === 'declined')
+            .filter((notification) => !activeEventIds.has(notification.eventId))
+            .filter((notification) => Number.isFinite(new Date(notification.eventStartsAt || '').getTime()))
+            .map((notification) => ({
+              id: notification.eventId,
+              managerId: notification.managerId,
+              name: notification.eventName?.trim() || 'Event invite',
+              location: notification.eventLocation?.trim() || 'TBD',
+              startsAt: notification.eventStartsAt || new Date().toISOString(),
+              teamIds: [],
+              pendingInviteNotificationId: notification.id,
+              pendingInviteRoleId: notification.roleId,
+              roles: [
+                {
+                  id: notification.roleId,
+                  name: notification.roleName?.trim() || 'Invited role',
+                  assignedWorkerIds: notification.roleAssignedWorkerIds || [],
+                  waitlistWorkerIds: notification.roleWaitlistWorkerIds || [],
+                  openSlots: Math.max(0, notification.roleOpenSlots ?? 0),
+                  tasks: (notification.roleTaskNames || []).map((taskName, index) => ({
+                    id: `pending-task-${index}`,
+                    name: taskName,
+                    completedBy: [],
+                  })),
+                },
+              ],
+            }))
+        : [];
+      const combined = [...events, ...optimisticCreatedEvents, ...pendingInviteEvents];
       const unique = combined.filter((event, index, list) => list.findIndex((item) => item.id === event.id) === index);
       const validEvents = unique.filter((event) => Number.isFinite(new Date(event.startsAt).getTime()));
       return sortDispatchEvents(validEvents);
     },
-    [events, optimisticCreatedEvents]
+    [events, optimisticCreatedEvents, pendingRoleNotifications, profile?.role]
+  );
+
+  const actionableRoleNotifications = useMemo(
+    () => pendingRoleNotifications.filter((notification) => notification.status === 'pending'),
+    [pendingRoleNotifications]
   );
 
   const visibleEvents = useMemo(() => {
@@ -1216,9 +1455,78 @@ export default function EventsScreen() {
     );
   };
 
+  const confirmCancelWorkerRole = (event: DispatchEvent, role: EventRole) => {
+    if (!profile?.uid) return;
+
+    const busyKey = `${event.id}:${role.id}`;
+    if (roleCancellationBusyKey === busyKey) return;
+
+    setRoleCancellationBusyKey(busyKey);
+    cancelWorkerEventRole({
+      eventId: event.id,
+      roleId: role.id,
+      workerId: profile.uid,
+    }).catch((error) => {
+      Alert.alert('Unable to cancel role', error instanceof Error ? error.message : 'Please try again.');
+    }).finally(() => {
+      setRoleCancellationBusyKey(null);
+    });
+  };
+
   const renderWorkerTaskList = (event: DispatchEvent) => {
     if (!profile) return null;
 
+    const pendingInviteRole = event.pendingInviteRoleId
+      ? event.roles.find((role) => role.id === event.pendingInviteRoleId)
+      : null;
+
+    if (event.pendingInviteNotificationId && pendingInviteRole) {
+      const busy = notificationBusyId === event.pendingInviteNotificationId;
+      const alreadyWaitlisted = (pendingInviteRole.waitlistWorkerIds || []).includes(profile.uid);
+
+      return (
+        <View style={styles.taskList}>
+          <View style={[styles.pendingInviteRoleCard, isDarkMode ? styles.pendingInviteRoleCardDark : styles.pendingInviteRoleCardLight]}>
+            <View style={styles.pendingInviteRoleInfo}>
+              <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>Invited role</Text>
+              <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{pendingInviteRole.name}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Join waitlist for ${pendingInviteRole.name}`}
+              disabled={busy || alreadyWaitlisted}
+              style={[
+                styles.pendingInviteWaitlistButton,
+                isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight,
+                (busy || alreadyWaitlisted) && styles.drawerCloseDisabled,
+              ]}
+              onPress={() => handleJoinRoleWaitlist(event.pendingInviteNotificationId as string)}>
+              <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight]}>
+                {busy ? 'Joining...' : alreadyWaitlisted ? 'Waitlisted' : 'Join Waitlist'}
+              </Text>
+            </Pressable>
+          </View>
+          {pendingInviteRole.tasks.length ? (
+            pendingInviteRole.tasks.map((task) => (
+              <Text key={task.id} style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>
+                {'\u2022'} {task.name}
+              </Text>
+            ))
+          ) : (
+            <Text style={[styles.taskEmpty, isDarkMode ? styles.taskEmptyDark : styles.taskEmptyLight]}>
+              Accept or join the waitlist to see assigned tasks.
+            </Text>
+          )}
+        </View>
+      );
+    }
+
+    const assignedRoles = event.roles.filter((role) => role.assignedWorkerIds.includes(profile.uid));
+    const waitlistEligibleRoles = event.roles.filter((role) =>
+      (role.eligibleWaitlistWorkerIds || []).includes(profile.uid)
+      || (role.waitlistWorkerIds || []).includes(profile.uid)
+      || (role.waitlistInviteWorkerIds || []).includes(profile.uid)
+    );
     const workerTasks = event.roles
       .filter((role) => role.assignedWorkerIds.includes(profile.uid))
       .flatMap((role) =>
@@ -1232,13 +1540,91 @@ export default function EventsScreen() {
           doneByMe: (task.completedBy ?? []).includes(profile.uid),
         }))
       );
+    const renderWaitlistRoleCards = () => waitlistEligibleRoles.map((role) => {
+      const busyKey = `${event.id}:${role.id}`;
+      const busy = notificationBusyId === busyKey;
+      const alreadyWaitlisted = (role.waitlistWorkerIds || []).includes(profile.uid);
+      const hasWaitlistInvite = (role.waitlistInviteWorkerIds || []).includes(profile.uid);
+      const canAcceptWaitlistInvite = (hasWaitlistInvite || alreadyWaitlisted) && Math.max(0, role.openSlots || 0) > 0;
+      const waitlistButtonLabel = canAcceptWaitlistInvite
+        ? 'Accept'
+        : hasWaitlistInvite
+          ? 'Join Waitlist'
+          : alreadyWaitlisted
+            ? 'Waitlisted'
+            : 'Join Waitlist';
+
+      return (
+        <View key={`waitlist-role-${role.id}`} style={[styles.pendingInviteRoleCard, isDarkMode ? styles.pendingInviteRoleCardDark : styles.pendingInviteRoleCardLight]}>
+          <View style={styles.pendingInviteRoleInfo}>
+            <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>
+              {canAcceptWaitlistInvite ? 'Role invite' : alreadyWaitlisted ? 'Waitlisted role' : 'Available waitlist'}
+            </Text>
+            <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{role.name}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={canAcceptWaitlistInvite ? `Accept ${role.name} invite` : `Join waitlist for ${role.name}`}
+            disabled={busy || (!canAcceptWaitlistInvite && !hasWaitlistInvite && alreadyWaitlisted)}
+            style={[
+              styles.pendingInviteWaitlistButton,
+              canAcceptWaitlistInvite
+                ? (isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight)
+                : (isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight),
+              (busy || (!canAcceptWaitlistInvite && !hasWaitlistInvite && alreadyWaitlisted)) && styles.drawerCloseDisabled,
+            ]}
+            onPress={() => canAcceptWaitlistInvite ? handleAcceptEventRoleWaitlistInvite(event.id, role.id) : handleJoinEventRoleWaitlist(event.id, role.id)}>
+            <Text style={[
+              styles.pendingActionButtonText,
+              canAcceptWaitlistInvite
+                ? (isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight)
+                : (isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight),
+            ]}>
+              {busy ? '...' : waitlistButtonLabel}
+            </Text>
+          </Pressable>
+        </View>
+      );
+    });
 
     if (workerTasks.length === 0) {
+      if (waitlistEligibleRoles.length) {
+        return (
+          <View style={styles.taskList}>
+            {renderWaitlistRoleCards()}
+          </View>
+        );
+      }
+
       return <Text style={[styles.taskEmpty, isDarkMode ? styles.taskEmptyDark : styles.taskEmptyLight]}>No tasks assigned to you for this event.</Text>;
     }
 
     return (
       <View style={styles.taskList}>
+        {renderWaitlistRoleCards()}
+        {assignedRoles.map((role) => {
+          const busyKey = `${event.id}:${role.id}`;
+          const busy = roleCancellationBusyKey === busyKey;
+
+          return (
+            <Pressable
+              key={`cancel-role-${role.id}`}
+              accessibilityRole="button"
+              accessibilityLabel={`Cancel ${role.name} role`}
+              disabled={busy}
+              style={[
+                styles.workerCancelRoleButton,
+                isDarkMode ? styles.workerCancelRoleButtonDark : styles.workerCancelRoleButtonLight,
+                busy && styles.drawerCloseDisabled,
+              ]}
+              onPress={() => confirmCancelWorkerRole(event, role)}>
+              <MaterialIcons name="person-remove" size={16} color={isDarkMode ? '#fb7185' : '#dc2626'} />
+              <Text style={[styles.workerCancelRoleText, isDarkMode ? styles.workerCancelRoleTextDark : styles.workerCancelRoleTextLight]}>
+                {busy ? 'Cancelling...' : `Cancel ${role.name}`}
+              </Text>
+            </Pressable>
+          );
+        })}
         {workerTasks.map((task) => (
           <View key={task.id} style={styles.taskRow}>
             <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.taskName} · due {formatTaskDueTime(event, { id: task.id, name: task.taskName, expectedOffsetMinutes: task.expectedOffsetMinutes, optional: task.optional })}{task.optional ? ' (optional)' : ''}</Text>
@@ -1271,10 +1657,40 @@ export default function EventsScreen() {
     }
   };
 
+  const renderLocationMeta = (location: string, eventDate: string, eventTime: string) => (
+    <View style={styles.locationMetaRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${location} in a map app`}
+        hitSlop={8}
+        onPress={(event) => {
+          event.stopPropagation();
+          openMapAppPicker(location);
+        }}
+        style={styles.locationMetaText}>
+        <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>
+        {location} • {eventDate} • {eventTime}
+        </Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${location} in a map app`}
+        hitSlop={8}
+        onPress={(event) => {
+          event.stopPropagation();
+          openMapAppPicker(location);
+        }}
+        style={styles.mapIconButton}
+      >
+        <MaterialIcons name="map" size={18} color="#F98D2F" />
+      </Pressable>
+    </View>
+  );
+
   const openWorkerTeamChat = (event: DispatchEvent, workerId: string) => {
     const workerTeam = managerTeams.find((team) => (team.workerIds || []).includes(workerId));
 
-    router.push({
+    router.navigate({
       pathname: '/chat/[workerId]',
       params: {
         workerId,
@@ -1285,6 +1701,83 @@ export default function EventsScreen() {
         teamMemberIds: workerTeam?.workerIds?.join(',') || '',
       },
     });
+  };
+
+  const openEventRoleEditor = (event: DispatchEvent, role: EventRole) => {
+    setEventRoleEditor({
+      open: true,
+      eventId: event.id,
+      roleId: role.id,
+      name: role.name,
+    });
+  };
+
+  const closeEventRoleEditor = () => {
+    setEventRoleEditor(INITIAL_EVENT_ROLE_EDITOR);
+  };
+
+  const saveEventRoleEditor = async () => {
+    if (!profile?.uid || !eventRoleEditor.eventId || !eventRoleEditor.roleId) return;
+
+    const nextName = eventRoleEditor.name.trim();
+    if (!nextName.length) {
+      Alert.alert('Role name required', 'Please enter a role name.');
+      return;
+    }
+
+    const busyKey = `${eventRoleEditor.eventId}:${eventRoleEditor.roleId}:edit`;
+    if (roleMutationBusyKey === busyKey) return;
+
+    try {
+      setRoleMutationBusyKey(busyKey);
+      await updateEventRoleDetails({
+        eventId: eventRoleEditor.eventId,
+        roleId: eventRoleEditor.roleId,
+        managerId: profile.uid,
+        name: nextName,
+      });
+      closeEventRoleEditor();
+    } catch (error) {
+      Alert.alert('Unable to save role', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setRoleMutationBusyKey(null);
+    }
+  };
+
+  const confirmDeleteEventRole = (event: DispatchEvent, role: EventRole) => {
+    if (!profile?.uid) return;
+
+    Alert.alert(
+      'Delete role?',
+      `Delete ${role.name} from ${event.name}? Assigned workers and tasks for this role will be removed from the event.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const busyKey = `${event.id}:${role.id}:delete`;
+            if (roleMutationBusyKey === busyKey) return;
+
+            try {
+              setRoleMutationBusyKey(busyKey);
+              await deleteEventRole({
+                eventId: event.id,
+                roleId: role.id,
+                managerId: profile.uid,
+              });
+              setInviteDrawer((current) => (current.eventId === event.id && current.roleId === role.id ? INITIAL_DRAWER : current));
+              setReplaceDrawer((current) => (current.eventId === event.id && current.roleId === role.id ? INITIAL_DRAWER : current));
+              setEventRoleEditor((current) => (current.eventId === event.id && current.roleId === role.id ? INITIAL_EVENT_ROLE_EDITOR : current));
+            } catch (error) {
+              Alert.alert('Unable to delete role', error instanceof Error ? error.message : 'Please try again.');
+            } finally {
+              setRoleMutationBusyKey(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const renderManagerRole = (event: DispatchEvent, role: EventRole) => {
@@ -1299,7 +1792,26 @@ export default function EventsScreen() {
         <View key={role.id} style={[styles.roleCard, styles.roleCardLightFigma]}>
           <View style={styles.roleHeader}>
             <Text style={[styles.roleTitle, styles.roleTitleLight]}>{role.name}</Text>
-            <Text style={[styles.roleMeta, styles.roleMetaLight]}>{assignedIds.length} assigned - {openSlots} open</Text>
+            <View style={styles.roleHeaderActions}>
+              <Text style={[styles.roleMeta, styles.roleMetaLight]}>{assignedIds.length} assigned - {openSlots} open</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Edit ${role.name} role`}
+                hitSlop={8}
+                style={[styles.roleIconButton, styles.roleIconButtonLight]}
+                onPress={() => openEventRoleEditor(event, role)}>
+                <MaterialIcons name="edit" size={16} color="#0EC3C9" />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Delete ${role.name} role`}
+                hitSlop={8}
+                style={[styles.roleIconButton, styles.roleIconButtonLight]}
+                onPress={() => confirmDeleteEventRole(event, role)}
+                disabled={roleMutationBusyKey === `${event.id}:${role.id}:delete`}>
+                <MaterialIcons name="delete-outline" size={17} color="#dc2626" />
+              </Pressable>
+            </View>
           </View>
 
           <View style={styles.avatarRowLightFigma}>
@@ -1375,7 +1887,26 @@ export default function EventsScreen() {
       <View key={role.id} style={[styles.roleCard, styles.roleCardDarkFigma]}>
         <View style={styles.roleHeader}>
           <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{role.name}</Text>
-          <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>{assignedIds.length} assigned · {openSlots} open</Text>
+          <View style={styles.roleHeaderActions}>
+            <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>{assignedIds.length} assigned · {openSlots} open</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${role.name} role`}
+              hitSlop={8}
+              style={[styles.roleIconButton, styles.roleIconButtonDark]}
+              onPress={() => openEventRoleEditor(event, role)}>
+              <MaterialIcons name="edit" size={16} color="#0EC3C9" />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Delete ${role.name} role`}
+              hitSlop={8}
+              style={[styles.roleIconButton, styles.roleIconButtonDark]}
+              onPress={() => confirmDeleteEventRole(event, role)}
+              disabled={roleMutationBusyKey === `${event.id}:${role.id}:delete`}>
+              <MaterialIcons name="delete-outline" size={17} color="#fb7185" />
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.avatarRowLightFigma}>
@@ -1455,6 +1986,7 @@ export default function EventsScreen() {
 
   const replaceTarget = findRoleForDrawer(replaceDrawer);
   const inviteTarget = findRoleForDrawer(inviteDrawer);
+  const eventRoleEditorTarget = findRoleForDrawer(eventRoleEditor);
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
   const rolePickerTarget = createEventRolesDraft.find((role) => role.id === rolePickerRoleId) || null;
   const isEditingTemplate = !!editingTemplateId;
@@ -1655,6 +2187,49 @@ export default function EventsScreen() {
     }
   };
 
+  const handleJoinRoleWaitlist = async (notificationId: string) => {
+    if (!profile?.uid || notificationBusyId === notificationId) return;
+    try {
+      setNotificationBusyId(notificationId);
+      await joinRoleWaitlist({ notificationId, workerId: profile.uid });
+      Alert.alert('Added to waitlist', 'You will be invited if this role opens up.');
+    } catch (error) {
+      Alert.alert('Unable to join waitlist', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setNotificationBusyId(null);
+    }
+  };
+
+  const handleJoinEventRoleWaitlist = async (eventId: string, roleId: string) => {
+    if (!profile) return;
+
+    const busyKey = `${eventId}:${roleId}`;
+    setNotificationBusyId(busyKey);
+    try {
+      await joinEventRoleWaitlist({ eventId, roleId, workerId: profile.uid });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to join the waitlist right now.';
+      Alert.alert('Waitlist Failed', message);
+    } finally {
+      setNotificationBusyId((current) => (current === busyKey ? null : current));
+    }
+  };
+
+  const handleAcceptEventRoleWaitlistInvite = async (eventId: string, roleId: string) => {
+    if (!profile) return;
+
+    const busyKey = `${eventId}:${roleId}`;
+    setNotificationBusyId(busyKey);
+    try {
+      await acceptEventRoleWaitlistInvite({ eventId, roleId, workerId: profile.uid });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to accept the invite right now.';
+      Alert.alert('Invite Failed', message);
+    } finally {
+      setNotificationBusyId((current) => (current === busyKey ? null : current));
+    }
+  };
+
   const togglePendingNotificationExpanded = (notificationId: string) => {
     setExpandedPendingNotificationIds((current) => ({
       ...current,
@@ -1802,14 +2377,17 @@ export default function EventsScreen() {
           </View>
         </View>
       )}
-      {profile?.role === 'worker' && pendingRoleNotifications.length ? (
+      {profile?.role === 'worker' && actionableRoleNotifications.length ? (
         <View style={[styles.pendingNotificationsCard, isDarkMode ? styles.pendingNotificationsCardDark : styles.pendingNotificationsCardLight]}>
           <Text style={[styles.pendingNotificationsTitle, isDarkMode ? styles.pendingNotificationsTitleDark : styles.pendingNotificationsTitleLight]}>
             Role updates need your response
           </Text>
-          {pendingRoleNotifications.map((notification) => {
+          {actionableRoleNotifications.map((notification) => {
             const busy = notificationBusyId === notification.id;
             const expanded = !!expandedPendingNotificationIds[notification.id];
+            const roleIsFull = notification.action === 'assign'
+              && !notification.roleAssignedWorkerIds?.includes(profile.uid)
+              && Math.max(0, notification.roleOpenSlots ?? 1) <= 0;
             return (
               <View key={notification.id} style={styles.pendingNotificationRow}>
                 <View style={styles.pendingNotificationHeader}>
@@ -1852,19 +2430,28 @@ export default function EventsScreen() {
                     ]}
                     onPress={() => handleRoleNotificationResponse(notification.id, 'decline')}>
                     <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionDeclineTextDark : styles.pendingActionDeclineTextLight]}>
-                      {busy ? '…' : 'Decline'}
+                      {busy ? '...' : roleIsFull ? 'Cancel' : 'Decline'}
                     </Text>
                   </Pressable>
                   <Pressable
                     disabled={busy}
                     style={[
                       styles.pendingActionButton,
-                      isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight,
+                      roleIsFull
+                        ? (isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight)
+                        : (isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight),
                       styles.pendingActionPreferred,
                       busy && styles.drawerCloseDisabled,
                     ]}
-                    onPress={() => handleRoleNotificationResponse(notification.id, 'accept')}>
-                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight]}>{busy ? '…' : 'Accept'}</Text>
+                    onPress={() => roleIsFull ? handleJoinRoleWaitlist(notification.id) : handleRoleNotificationResponse(notification.id, 'accept')}>
+                    <Text style={[
+                      styles.pendingActionButtonText,
+                      roleIsFull
+                        ? (isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight)
+                        : (isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight),
+                    ]}>
+                      {busy ? '...' : roleIsFull ? 'Waitlist' : 'Accept'}
+                    </Text>
                   </Pressable>
                 </View>
               </View>
@@ -1931,7 +2518,11 @@ export default function EventsScreen() {
                 </View>
               </View>
 
-              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventDate} • {eventTime}</Text>
+              <Text style={[styles.eventDateTimeSubtitle, isDarkMode ? styles.eventDateTimeSubtitleDark : styles.eventDateTimeSubtitleLight]}>
+                {eventDate} - {eventTime}
+              </Text>
+
+              {renderLocationMeta(item.location, eventDate, eventTime)}
 
               {profile?.role === 'worker' ? (
                 <>
@@ -2102,6 +2693,49 @@ export default function EventsScreen() {
         </Pressable>
       </Modal>
 
+      <Modal visible={eventRoleEditor.open} animationType="slide" transparent onRequestClose={closeEventRoleEditor}>
+        <Pressable style={styles.drawerBackdrop} onPress={closeEventRoleEditor}>
+          <KeyboardAvoidingView
+            style={styles.keyboardAvoidingFill}
+            behavior={Platform.select({ ios: 'padding', android: 'height' })}
+            keyboardVerticalOffset={drawerKeyboardOffset}>
+            <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={() => null}>
+              <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Edit Role</Text>
+              <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
+                {eventRoleEditorTarget?.event.name || 'Event role'}
+              </Text>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Role Name</Text>
+              <TextInput
+                value={eventRoleEditor.name}
+                onChangeText={(value) => setEventRoleEditor((current) => ({ ...current, name: value }))}
+                placeholder="Role name"
+                placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.45)' : '#64748b'}
+                style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+              />
+              <View style={styles.roleEditorSummary}>
+                <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
+                  {eventRoleEditorTarget
+                    ? `${eventRoleEditorTarget.role.assignedWorkerIds.length} assigned · ${Math.max(0, eventRoleEditorTarget.role.openSlots || 0)} open`
+                    : 'Role details unavailable'}
+                </Text>
+                <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
+                  {eventRoleEditorTarget ? `${eventRoleEditorTarget.role.tasks.length} tasks` : ''}
+                </Text>
+              </View>
+              <Pressable
+                style={[styles.drawerClose, roleMutationBusyKey?.endsWith(':edit') && styles.drawerCloseDisabled]}
+                onPress={saveEventRoleEditor}
+                disabled={roleMutationBusyKey?.endsWith(':edit')}>
+                <Text style={styles.drawerCloseText}>{roleMutationBusyKey?.endsWith(':edit') ? 'Saving...' : 'Save Role'}</Text>
+              </Pressable>
+              <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeEventRoleEditor}>
+                <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
+              </Pressable>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
       <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateEventDrawer}>
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventDrawer}>
           <KeyboardAvoidingView
@@ -2113,8 +2747,9 @@ export default function EventsScreen() {
             <Text style={[styles.drawerSub, isDarkMode ? styles.createEventDrawerSubDark : styles.createEventDrawerSubLight]}>Choose a template to start your event setup</Text>
 
             <ScrollView
+              ref={createTemplateScrollRef}
               style={styles.createEventScroll}
-              contentContainerStyle={styles.createEventScrollContent}
+              contentContainerStyle={[styles.createEventScrollContent, styles.createTemplateScrollContent]}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator>
@@ -2258,6 +2893,7 @@ export default function EventsScreen() {
                 style={[styles.templateSelectTrigger, isDarkMode ? styles.createEventFieldInputDark : styles.createEventFieldInputLight]}
                 onPress={() => {
                   Keyboard.dismiss();
+                  setEventDatePickerDraft(parseEventDate());
                   setShowDatePicker(true);
                 }}>
                 <View style={styles.createEventIconInputRow}>
@@ -2270,7 +2906,7 @@ export default function EventsScreen() {
               {showDatePicker ? (
                 <View style={[styles.inlinePickerWrap, isDarkMode ? styles.inlinePickerWrapDark : styles.inlinePickerWrapLight]}>
                   <DateTimePicker
-                    value={parseEventDate()}
+                    value={eventDatePickerDraft}
                     mode="date"
                     display={Platform.OS === 'ios' ? 'inline' : 'default'}
                     onChange={handleDateChange}
@@ -2280,8 +2916,8 @@ export default function EventsScreen() {
                     <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowDatePicker(false)}>
                       <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
                     </Pressable>
-                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => { applyDateDraft(new Date()); setShowDatePicker(false); }}>
-                      <Text style={styles.pickerActionTextToday}>Select current</Text>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={handleSelectEventDate}>
+                      <Text style={styles.pickerActionTextToday}>Select</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -2318,8 +2954,8 @@ export default function EventsScreen() {
                     <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowTimePicker(false)}>
                       <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
                     </Pressable>
-                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => { applyTimeDraft(new Date()); setShowTimePicker(false); }}>
-                      <Text style={styles.pickerActionTextToday}>Select current</Text>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => setShowTimePicker(false)}>
+                      <Text style={styles.pickerActionTextToday}>Select</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -2327,15 +2963,12 @@ export default function EventsScreen() {
             </View>
 
             <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Location</Text>
-              <TextInput
+              <LocationAutocompleteField
+                label="Location"
                 value={eventLocationDraft}
                 onChangeText={setEventLocationDraft}
                 placeholder="Location"
-                placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : '#94a3b8'}
-                returnKeyType="next"
-                blurOnSubmit={false}
-                style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+                isDarkMode={isDarkMode}
               />
             </View>
 
@@ -2507,7 +3140,11 @@ export default function EventsScreen() {
                   />
                 </View>
 
-                <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+                <View
+                  style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}
+                  onLayout={(event) => {
+                    templateTaskDescriptionYRef.current = event.nativeEvent.layout.y;
+                  }}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task description</Text>
                   <TextInput
                     value={templateTaskEditor.description}
@@ -2515,6 +3152,7 @@ export default function EventsScreen() {
                     placeholder="Task description"
                     placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
                     multiline
+                    onFocus={() => scrollCreateTemplateFieldAboveKeyboard(templateTaskDescriptionYRef.current)}
                     style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
                   />
                 </View>
@@ -2659,8 +3297,8 @@ export default function EventsScreen() {
                     <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowTemplateDefaultTimePicker(false)}>
                       <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
                     </Pressable>
-                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => { const now = new Date(); setTemplateDefaultTimeDraft(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`); setShowTemplateDefaultTimePicker(false); }}>
-                      <Text style={styles.pickerActionTextToday}>Select current</Text>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => setShowTemplateDefaultTimePicker(false)}>
+                      <Text style={styles.pickerActionTextToday}>Select</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -2668,17 +3306,20 @@ export default function EventsScreen() {
             </View>
 
             <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Default location (optional)</Text>
-              <TextInput
+              <LocationAutocompleteField
+                label="Default location (optional)"
                 value={templateDefaultLocationDraft}
                 onChangeText={setTemplateDefaultLocationDraft}
                 placeholder="Downtown"
-                placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
-                style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+                isDarkMode={isDarkMode}
               />
             </View>
 
-            <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+            <View
+              style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}
+              onLayout={(event) => {
+                templateDefaultDescriptionYRef.current = event.nativeEvent.layout.y;
+              }}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Default description (optional)</Text>
               <TextInput
                 value={templateDefaultDescriptionDraft}
@@ -2686,6 +3327,7 @@ export default function EventsScreen() {
                 placeholder="Describe this template"
                 placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
                 multiline
+                onFocus={() => scrollCreateTemplateFieldAboveKeyboard(templateDefaultDescriptionYRef.current)}
                 style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
               />
             </View>
@@ -2999,6 +3641,10 @@ const styles = StyleSheet.create({
   pendingActionAcceptDark: { borderColor: '#F98D2F', borderWidth: 1, backgroundColor: '#F98D2F' },
   pendingActionAcceptTextLight: { color: '#F7F7F7' },
   pendingActionAcceptTextDark: { color: '#12274D' },
+  pendingActionWaitlistLight: { borderColor: '#0EC3C9', borderWidth: 1, backgroundColor: '#0EC3C9' },
+  pendingActionWaitlistDark: { borderColor: '#0EC3C9', borderWidth: 1, backgroundColor: '#0EC3C9' },
+  pendingActionWaitlistTextLight: { color: '#F7F7F7' },
+  pendingActionWaitlistTextDark: { color: '#12274D' },
   pendingActionPreferred: { shadowColor: '#F98D2F', shadowOpacity: 0.16, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   pickerCard: { marginTop: 8, marginBottom: 12, borderRadius: 16, borderWidth: 1, padding: 8 },
   pickerCardLight: { backgroundColor: '#F7F7F7', borderColor: '#0EC3C9' },
@@ -3031,6 +3677,9 @@ const styles = StyleSheet.create({
   title: { fontWeight: '700', fontSize: 20, flex: 1, marginRight: 8 },
   titleLight: { color: '#232832' },
   titleDark: { color: '#F4F8FF' },
+  eventDateTimeSubtitle: { fontSize: 14, fontWeight: '700', marginTop: -2, marginBottom: 2 },
+  eventDateTimeSubtitleLight: { color: '#232832' },
+  eventDateTimeSubtitleDark: { color: '#F4F8FF' },
   statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
   statusPillLight: { backgroundColor: '#e2e8f0' },
   statusPillCompletedLight: { backgroundColor: '#F7F7F7', borderWidth: 1, borderColor: '#F98D2F' },
@@ -3048,6 +3697,9 @@ const styles = StyleSheet.create({
   meta: { marginTop: 6, fontSize: 12 },
   metaLight: { color: '#232832', opacity: 0.72 },
   metaDark: { color: '#F4F8FF', opacity: 0.72 },
+  locationMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  locationMetaText: { flex: 1 },
+  mapIconButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   expandHint: { marginTop: 8, fontSize: 12, fontWeight: '600' },
   expandHintLight: { color: '#F98D2F' },
   expandHintLightFigma: { marginTop: 0, fontSize: 12, lineHeight: 16, fontWeight: '700', color: '#0EC3C9' },
@@ -3062,6 +3714,10 @@ const styles = StyleSheet.create({
   roleCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   roleCardDarkFigma: { borderColor: '#061229', backgroundColor: '#203E75', borderRadius: 8, padding: 8, gap: 12 },
   roleHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  roleHeaderActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexShrink: 0 },
+  roleIconButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  roleIconButtonLight: { backgroundColor: '#F7F7F7' },
+  roleIconButtonDark: { backgroundColor: '#12274D' },
   roleTitle: { fontWeight: '700', fontSize: 14 },
   roleTitleLight: { color: '#232832' },
   roleTitleDark: { color: '#F4F8FF' },
@@ -3120,6 +3776,17 @@ const styles = StyleSheet.create({
   taskAttachmentIcon: { fontSize: 16, marginLeft: 8 },
   taskStatus: { fontSize: 12, fontWeight: '600' },
   taskStatusDone: { color: '#22c55e' },
+  workerCancelRoleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 10 },
+  workerCancelRoleButtonLight: { borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  workerCancelRoleButtonDark: { borderColor: '#7f1d1d', backgroundColor: '#2f1018' },
+  workerCancelRoleText: { fontSize: 12, fontWeight: '700' },
+  workerCancelRoleTextLight: { color: '#b91c1c' },
+  workerCancelRoleTextDark: { color: '#fecaca' },
+  pendingInviteRoleCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderRadius: 10, borderWidth: 1, padding: 10 },
+  pendingInviteRoleCardLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(14,195,201,0.35)' },
+  pendingInviteRoleCardDark: { backgroundColor: '#12274D', borderColor: 'rgba(14,195,201,0.45)' },
+  pendingInviteRoleInfo: { flex: 1, gap: 2 },
+  pendingInviteWaitlistButton: { minWidth: 112, borderRadius: 10, borderWidth: 1, paddingVertical: 9, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
   taskEmpty: { marginTop: 8, fontSize: 12 },
   taskEmptyLight: { color: '#64748b' },
   taskEmptyDark: { color: '#F4F8FF' },
@@ -3195,6 +3862,7 @@ const styles = StyleSheet.create({
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
   createEventScroll: { marginTop: 8 },
   createEventScrollContent: { paddingBottom: 16 },
+  createTemplateScrollContent: { paddingBottom: 260 },
   drawerLight: { backgroundColor: '#fff' },
   drawerDark: { backgroundColor: '#1A2540' },
   createEventDrawerLight: { backgroundColor: '#F7F7F7', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
@@ -3217,6 +3885,7 @@ const styles = StyleSheet.create({
   drawerMeta: { marginTop: 4, fontSize: 12 },
   drawerMetaLight: { color: '#64748b' },
   drawerMetaDark: { color: '#F4F8FF' },
+  roleEditorSummary: { marginTop: 10, marginBottom: 12, gap: 2 },
   inviteTeamCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10 },
   inviteTeamCardLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
   inviteTeamCardDark: { borderColor: '#061229', backgroundColor: '#203E75' },
@@ -3312,6 +3981,16 @@ const styles = StyleSheet.create({
   createEventInputPlaceholderDark: { color: 'rgba(247,247,247,0.33)', fontSize: 12, fontWeight: '700' },
   createEventTextInputDark: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#203E75', color: '#F7F7F7', borderRadius: 8, minHeight: 44, fontSize: 12, fontWeight: '700' },
   createEventTextAreaDark: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#203E75', color: '#F7F7F7', borderRadius: 8, minHeight: 76, fontSize: 12, fontWeight: '700' },
+  locationAutocompleteWrap: { gap: 8 },
+  locationAutocompleteHint: { fontSize: 12, fontWeight: '600' },
+  locationAutocompleteError: { color: '#dc2626' },
+  locationSuggestions: { borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
+  locationSuggestionsLight: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#F7F7F7' },
+  locationSuggestionsDark: { borderColor: 'rgba(247,247,247,0.14)', backgroundColor: '#12274D' },
+  locationSuggestionRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  locationSuggestionTextWrap: { flex: 1, minWidth: 0 },
+  locationSuggestionTitle: { fontSize: 12, fontWeight: '800' },
+  locationSuggestionMeta: { marginTop: 2, fontSize: 11 },
   drawerClose: { marginTop: 12, backgroundColor: '#1d4ed8', borderRadius: 10, alignItems: 'center', paddingVertical: 12 },
   drawerCloseDisabled: { opacity: 0.45 },
   drawerCloseText: { color: '#fff', fontWeight: '700' },

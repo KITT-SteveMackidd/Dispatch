@@ -12,6 +12,10 @@ import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme
 import { usePushNotificationBridge } from '@/services/push-notifications';
 
 export { ErrorBoundary } from 'expo-router';
+export const unstable_settings = {
+  initialRouteName: '(tabs)',
+};
+
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
@@ -64,6 +68,8 @@ function RootNavigator() {
         <Stack.Screen name="(auth)/setup" options={{ title: 'Complete Profile' }} />
         <Stack.Screen name="(auth)/verify-email" options={{ title: 'Verify Email' }} />
         <Stack.Screen name="account-settings" options={{ title: 'Account Settings' }} />
+        <Stack.Screen name="team/[teamId]" options={{ title: 'Team' }} />
+        <Stack.Screen name="chat/[workerId]" options={{ headerShown: false }} />
         <Stack.Screen name="event/[id]" options={{ presentation: 'modal', title: 'Event Details' }} />
       </Stack>
     </ThemeProvider>

@@ -36,6 +36,8 @@ export default function SignInScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const oauthEnabled = false;
 
@@ -47,6 +49,29 @@ export default function SignInScreen() {
     androidClientId: isExpoGo ? undefined : process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
   });
+
+  const scrollToActions = () => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+  };
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      scrollToActions();
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const onSignIn = async () => {
     if (!email.trim() || !password) return Alert.alert('Missing fields', 'Enter email and password.');
@@ -138,9 +163,11 @@ export default function SignInScreen() {
 
   const renderLightScreen = () => (
     <>
-      <View style={authStyles.lightLogoWrap}>
-        <Image source={lightSignInLogoSource} style={authStyles.lightHeroGraphic} resizeMode="contain" />
-      </View>
+      {!keyboardVisible ? (
+        <View style={authStyles.lightLogoWrap}>
+          <Image source={lightSignInLogoSource} style={authStyles.lightHeroGraphic} resizeMode="contain" />
+        </View>
+      ) : null}
 
       <View style={authStyles.lightCard}>
         <View style={{ gap: 8 }}>
@@ -157,6 +184,7 @@ export default function SignInScreen() {
             placeholder="Email"
             returnKeyType="next"
             onSubmitEditing={() => passwordInputRef.current?.focus()}
+            onFocus={scrollToActions}
             blurOnSubmit={false}
             placeholderTextColor="rgba(18,18,18,0.33)"
             style={[
@@ -175,6 +203,7 @@ export default function SignInScreen() {
             placeholder="Password"
             returnKeyType="go"
             onSubmitEditing={onSignIn}
+            onFocus={scrollToActions}
             placeholderTextColor="rgba(18,18,18,0.33)"
             style={[
               authStyles.lightInput,
@@ -212,9 +241,11 @@ export default function SignInScreen() {
 
   const renderDarkScreen = () => (
     <>
-      <View style={authStyles.darkLogoWrap}>
-        <Image source={darkSignInLogoSource} style={authStyles.darkHeroGraphic} resizeMode="contain" />
-      </View>
+      {!keyboardVisible ? (
+        <View style={authStyles.darkLogoWrap}>
+          <Image source={darkSignInLogoSource} style={authStyles.darkHeroGraphic} resizeMode="contain" />
+        </View>
+      ) : null}
 
       <View style={authStyles.darkCard}>
         <View style={{ gap: 8 }}>
@@ -231,6 +262,7 @@ export default function SignInScreen() {
             placeholder="Email"
             returnKeyType="next"
             onSubmitEditing={() => passwordInputRef.current?.focus()}
+            onFocus={scrollToActions}
             blurOnSubmit={false}
             placeholderTextColor="rgba(247,247,247,0.33)"
             style={authStyles.darkInput}
@@ -243,6 +275,7 @@ export default function SignInScreen() {
             placeholder="Password"
             returnKeyType="go"
             onSubmitEditing={onSignIn}
+            onFocus={scrollToActions}
             placeholderTextColor="rgba(247,247,247,0.33)"
             style={authStyles.darkInput}
           />
@@ -278,7 +311,11 @@ export default function SignInScreen() {
       behavior={Platform.select({ ios: 'padding', android: 'height' })}>
       <Pressable style={authStyles.flex} onPress={Keyboard.dismiss}>
         <ScrollView
-          contentContainerStyle={isDarkMode ? authStyles.darkScrollContent : authStyles.lightScrollContent}
+          ref={scrollRef}
+          contentContainerStyle={[
+            isDarkMode ? authStyles.darkScrollContent : authStyles.lightScrollContent,
+            keyboardVisible && { justifyContent: 'flex-end', paddingBottom: 16 },
+          ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag">
           {isDarkMode ? renderDarkScreen() : renderLightScreen()}

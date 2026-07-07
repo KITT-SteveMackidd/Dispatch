@@ -9,28 +9,54 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
+    function userDocAfter() {
+      return getAfter(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDocExists() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     function userRole() {
-      return signedIn() && userDoc().exists() ? userDoc().data.role : null;
+      return userDocExists() ? userDoc().data.role : null;
+    }
+
+    function userOrganizationId() {
+      return userDocExists() ? userDoc().data.organizationId : null;
     }
 
     function isManager() {
-      return signedIn() && userRole() == 'manager';
+      return signedIn() && userRole() in ['manager', 'Manager'];
     }
 
-    function isWorker() {
-      return signedIn() && userRole() == 'worker';
+    function isManagerAfterWrite() {
+      return signedIn() && userDocAfter().data.role in ['manager', 'Manager'];
     }
 
     function teamDoc(teamId) {
       return get(/databases/$(database)/documents/teams/$(teamId));
     }
 
-    function isTeamManager(teamId) {
-      return signedIn() && teamDoc(teamId).exists() && teamDoc(teamId).data.managerId == request.auth.uid;
+    function teamDocExists(teamId) {
+      return exists(/databases/$(database)/documents/teams/$(teamId));
     }
 
-    function isTeamWorker(teamId) {
-      return signedIn() && teamDoc(teamId).exists() && request.auth.uid in teamDoc(teamId).data.workerIds;
+    function isTeamManager(teamId) {
+      return signedIn() && teamDocExists(teamId) && teamDoc(teamId).data.managerId == request.auth.uid;
+    }
+
+    function isOrganizationManager(organizationId) {
+      return isManager()
+        && organizationId is string
+        && userOrganizationId() == organizationId;
+    }
+
+    function acceptedWorkerInviteForTeam(teamId) {
+      return signedIn()
+        && request.resource.data.lastAcceptedInviteId is string
+        && getAfter(/databases/$(database)/documents/workerInvites/$(request.resource.data.lastAcceptedInviteId)).data.workerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/workerInvites/$(request.resource.data.lastAcceptedInviteId)).data.teamId == teamId
+        && getAfter(/databases/$(database)/documents/workerInvites/$(request.resource.data.lastAcceptedInviteId)).data.status == 'accepted';
     }
 
     function isInviteManager() {
@@ -42,21 +68,41 @@ service cloud.firestore {
         && (
           (resource.data.workerId != null && resource.data.workerId == request.auth.uid)
           || (request.auth.token.email != null && resource.data.email == request.auth.token.email)
+          || (request.auth.token.email != null && resource.data.normalizedEmail == request.auth.token.email)
         );
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isSameOrganizationProfile() {
+      return signedIn()
+        && userOrganizationId() is string
+        && resource.data.organizationId == userOrganizationId();
     }
 
     function validInviteStatus(status) {
       return status in ['created', 'delivery_queued', 'delivered', 'delivery_failed', 'pending_acceptance', 'accepted', 'declined', 'expired', 'revoked', 'cancelled'];
     }
 
+    function missingOrNull(fieldName) {
+      return !(fieldName in request.resource.data) || request.resource.data[fieldName] == null;
+    }
+
     match /users/{userId} {
-      allow read: if signedIn() && request.auth.uid == userId;
-      allow create: if signedIn() && request.auth.uid == userId;
-      allow update: if signedIn() && request.auth.uid == userId;
+      allow read: if isSelf(userId) || isSameOrganizationProfile();
+      allow create: if isSelf(userId);
+      allow update: if isSelf(userId);
     }
 
     match /teams/{teamId} {
-      allow read: if signedIn() && (resource.data.managerId == request.auth.uid || request.auth.uid in resource.data.workerIds);
+      allow read: if signedIn()
+        && (
+          resource.data.managerId == request.auth.uid
+          || request.auth.uid in resource.data.workerIds
+          || isOrganizationManager(resource.data.organizationId)
+        );
 
       allow create: if isManager()
         && request.resource.data.managerId == request.auth.uid
@@ -65,9 +111,65 @@ service cloud.firestore {
 
       allow update: if isTeamManager(teamId)
         && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.workerIds is list;
+        && request.resource.data.workerIds is list
+      || (
+        isOrganizationManager(resource.data.organizationId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerIds', 'updatedAt'])
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.managerIds is list
+        && request.resource.data.managerIds.hasAll(resource.data.managerIds)
+        && request.auth.uid in request.resource.data.managerIds
+      )
+      || (
+        acceptedWorkerInviteForTeam(teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'lastAcceptedInviteId', 'updatedAt'])
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.workerIds is list
+        && request.resource.data.workerIds.hasAll(resource.data.workerIds)
+        && request.auth.uid in request.resource.data.workerIds
+      );
 
       allow delete: if isTeamManager(teamId);
+    }
+
+    match /organizations/{organizationId} {
+      allow read: if signedIn()
+        && (
+          request.auth.uid in resource.data.managerIds
+          || request.auth.uid in resource.data.workerIds
+        );
+
+      allow create: if isManager()
+        && request.auth.uid in request.resource.data.managerIds
+        && request.resource.data.createdBy == request.auth.uid
+      || (
+        isManagerAfterWrite()
+        && request.auth.uid in request.resource.data.managerIds
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.workerIds is list
+        && request.resource.data.workerIds.size() == 0
+      );
+
+      allow update: if isManager()
+        && request.auth.uid in resource.data.managerIds
+        && request.resource.data.managerIds is list
+        && request.resource.data.workerIds is list
+      || (
+        isManager()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerIds', 'updatedAt'])
+        && resource.data.pendingManagerInviteEmails is list
+        && resource.data.pendingManagerInviteCanonicalEmails is list
+        && (
+          request.auth.token.email in resource.data.pendingManagerInviteEmails
+          || userDoc().data.canonicalEmail in resource.data.pendingManagerInviteCanonicalEmails
+        )
+        && !(request.auth.uid in resource.data.managerIds)
+        && request.auth.uid in request.resource.data.managerIds
+        && request.resource.data.managerIds.hasAll(resource.data.managerIds)
+        && request.resource.data.managerIds.size() == resource.data.managerIds.size() + 1
+      );
     }
 
     match /workerInvites/{inviteId} {
@@ -77,8 +179,8 @@ service cloud.firestore {
         && request.resource.data.managerId == request.auth.uid
         && validInviteStatus(request.resource.data.status)
         && request.resource.data.expiresAt is timestamp
-        && request.resource.data.consumedAt == null
-        && request.resource.data.inviteTokenId == null;
+        && missingOrNull('consumedAt')
+        && missingOrNull('inviteTokenId');
 
       allow update: if (
         isInviteManager()
@@ -98,6 +200,44 @@ service cloud.firestore {
       );
     }
 
+    match /managerInvites/{inviteId} {
+      allow read: if signedIn()
+        && (
+          resource.data.inviterId == request.auth.uid
+          || resource.data.email == request.auth.token.email
+          || resource.data.normalizedEmail == request.auth.token.email
+          || (
+            resource.data.canonicalEmail is string
+            && userDoc().data.canonicalEmail == resource.data.canonicalEmail
+          )
+        );
+
+      allow create: if isManager()
+        && request.resource.data.inviterId == request.auth.uid
+        && request.resource.data.status == 'pending';
+
+      allow update: if (
+        isManager()
+        && resource.data.inviterId == request.auth.uid
+        && request.resource.data.inviterId == resource.data.inviterId
+        && request.resource.data.organizationId == resource.data.organizationId
+      ) || (
+        isManager()
+        && (
+          resource.data.email == request.auth.token.email
+          || resource.data.normalizedEmail == request.auth.token.email
+          || (
+            resource.data.canonicalEmail is string
+            && userDoc().data.canonicalEmail == resource.data.canonicalEmail
+          )
+        )
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.managerUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerUserId', 'status', 'statusReason', 'acceptedAt', 'updatedAt'])
+      );
+    }
+
     match /inviteTokens/{inviteId} {
       allow read: if signedIn() && (
         resource.data.managerId == request.auth.uid
@@ -105,7 +245,6 @@ service cloud.firestore {
       );
 
       allow create: if isManager()
-        && request.resource.id == inviteId
         && request.resource.data.inviteId == inviteId
         && request.resource.data.managerId == request.auth.uid
         && request.resource.data.status == 'active'

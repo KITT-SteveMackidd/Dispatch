@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
-import { markUserNotificationsRead, UserNotification, watchUserNotifications } from '@/services/dispatch';
+import { createOrganisationForManager, markUserNotificationsRead, UserNotification, watchUserNotifications } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { headerLogoSource } from '@/constants/branding';
 
@@ -11,7 +11,7 @@ const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
 
 export default function ProfileScreen() {
-  const { profile, authUser, signOut } = useSession();
+  const { profile, authUser, refreshProfile, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -19,6 +19,15 @@ export default function ProfileScreen() {
   const canManageTemplates = profile?.role === 'manager';
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [organisationModalOpen, setOrganisationModalOpen] = useState(false);
+  const [organisationName, setOrganisationName] = useState('');
+  const [creatingOrganisation, setCreatingOrganisation] = useState(false);
+  const organisationPromptShownRef = useRef<string | null>(null);
+  const isManagerWithoutOrganisation = profile?.role === 'manager' && !profile.organizationId;
+  const displayName = useMemo(
+    () => getPreferredDisplayName(profile?.displayName, authUser?.displayName, authUser?.email),
+    [authUser?.displayName, authUser?.email, profile?.displayName]
+  );
 
   useEffect(() => {
     if (!profile?.uid) {
@@ -28,6 +37,21 @@ export default function ProfileScreen() {
 
     return watchUserNotifications(profile.uid, setNotifications);
   }, [profile?.uid]);
+
+  useEffect(() => {
+    if (!profile?.uid || !isManagerWithoutOrganisation) return;
+    if (organisationPromptShownRef.current === profile.uid) return;
+
+    organisationPromptShownRef.current = profile.uid;
+    Alert.alert(
+      'No organisation invite yet',
+      'You have not been invited to an organisation. If you are a part of an existing organisation please wait to be invited by another manager. If you want to create a new organization you can click create.',
+      [
+        { text: 'Wait', style: 'cancel' },
+        { text: 'Create', onPress: () => setOrganisationModalOpen(true) },
+      ]
+    );
+  }, [isManagerWithoutOrganisation, profile?.uid]);
 
   const unreadIds = useMemo(() => notifications.filter((item) => !item.read).map((item) => item.id), [notifications]);
 
@@ -47,6 +71,26 @@ export default function ProfileScreen() {
 
   const stub = (label: string) => Alert.alert(label, 'This panel is a UI placeholder for now.');
 
+  const createOrganisation = async () => {
+    if (!profile?.uid || !organisationName.trim()) {
+      Alert.alert('Organization name required', 'Enter a name for the organization.');
+      return;
+    }
+
+    try {
+      setCreatingOrganisation(true);
+      await createOrganisationForManager({ managerId: profile.uid, name: organisationName.trim() });
+      await refreshProfile();
+      setOrganisationModalOpen(false);
+      setOrganisationName('');
+      Alert.alert('Organization created', 'Your organization is ready.');
+    } catch (error) {
+      Alert.alert('Unable to create organization', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setCreatingOrganisation(false);
+    }
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
@@ -63,11 +107,20 @@ export default function ProfileScreen() {
 
       <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
         <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}>
-          <Text style={styles.avatarText}>{(profile?.displayName || 'U').slice(0, 1).toUpperCase()}</Text>
+          <Text style={styles.avatarText}>{displayName.slice(0, 1).toUpperCase()}</Text>
         </View>
-        <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>{profile?.displayName || 'Dispatch User'}</Text>
+        <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>{displayName}</Text>
         <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>{authUser?.email || 'No email found'}</Text>
+        <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
+          {profile?.organizationName || 'No organisation yet'}
+        </Text>
       </View>
+
+      {isManagerWithoutOrganisation ? (
+        <Pressable style={[styles.row, styles.createOrganisationRow]} onPress={() => setOrganisationModalOpen(true)}>
+          <Text style={styles.createOrganisationText}>Create Organization</Text>
+        </Pressable>
+      ) : null}
 
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Account Settings</Text>
@@ -102,6 +155,30 @@ export default function ProfileScreen() {
             </ScrollView>
             <Pressable style={styles.closeBtn} onPress={() => setNotificationsOpen(false)}>
               <Text style={styles.closeBtnText}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={organisationModalOpen} animationType="slide" transparent onRequestClose={() => setOrganisationModalOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setOrganisationModalOpen(false)}>
+          <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
+            <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Create Organization</Text>
+            <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
+              Create a new organization for your managers, workers, and teams.
+            </Text>
+            <TextInput
+              value={organisationName}
+              onChangeText={setOrganisationName}
+              placeholder="Organization name"
+              placeholderTextColor={isDarkMode ? '#94A3B8' : '#94a3b8'}
+              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+            />
+            <Pressable style={[styles.closeBtn, creatingOrganisation && styles.disabled]} onPress={createOrganisation} disabled={creatingOrganisation}>
+              <Text style={styles.closeBtnText}>{creatingOrganisation ? 'Creating...' : 'Create'}</Text>
+            </Pressable>
+            <Pressable style={[styles.secondaryBtn, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => setOrganisationModalOpen(false)}>
+              <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Cancel</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -144,10 +221,42 @@ const styles = StyleSheet.create({
   rowText: { fontWeight: '600' },
   rowTextLight: { color: '#1e293b' },
   rowTextDark: { color: '#F4F8FF' },
+  createOrganisationRow: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
+  createOrganisationText: { color: '#061229', fontWeight: '700' },
+  input: { marginTop: 14, padding: 13, borderRadius: 12, borderWidth: 1 },
+  inputLight: { backgroundColor: '#f8fafc', color: '#232832', borderColor: '#e2e8f0' },
+  inputDark: { backgroundColor: '#1A2540', color: '#F4F8FF', borderColor: '#001A4D' },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.35)' },
   modalCard: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
   modalScroll: { marginTop: 10 },
   notificationRow: { borderBottomWidth: 1, borderBottomColor: '#334155', paddingVertical: 10 },
   closeBtn: { marginTop: 12, borderRadius: 10, paddingVertical: 12, alignItems: 'center', backgroundColor: '#0EC3C9' },
   closeBtnText: { color: '#061229', fontWeight: '700' },
+  secondaryBtn: { marginTop: 10, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  disabled: { opacity: 0.65 },
 });
+
+function getPreferredDisplayName(profileName?: string | null, authName?: string | null, email?: string | null) {
+  const profileDisplayName = cleanName(profileName);
+  if (profileDisplayName) return profileDisplayName;
+
+  const authDisplayName = cleanName(authName);
+  if (authDisplayName) return authDisplayName;
+
+  const emailName = displayNameFromEmail(email);
+  return emailName || 'Dispatch User';
+}
+
+function cleanName(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'dispatch user') return '';
+  return trimmed;
+}
+
+function displayNameFromEmail(email?: string | null) {
+  const local = email?.trim().toLowerCase().split('@')[0] || '';
+  const withoutAlias = local.split('+')[0];
+  const words = withoutAlias.split(/[._-]+/).filter(Boolean);
+  if (!words.length) return '';
+  return words.map((word) => word.slice(0, 1).toUpperCase() + word.slice(1)).join(' ');
+}

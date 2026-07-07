@@ -16,7 +16,7 @@ import {
 } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { AppRole, UserProfile } from '@/types/dispatch';
-import { acceptPendingInvitesForUser, linkPendingEmailInvites } from '@/services/dispatch';
+import { acceptPendingInvitesForUser, acceptPendingWorkerInvitesForUser, linkPendingManagerInvites } from '@/services/dispatch';
 
 type SessionContextType = {
   profile: UserProfile | null;
@@ -29,6 +29,7 @@ type SessionContextType = {
   signInWithApple: (params: { idToken: string; displayName?: string; role?: AppRole }) => Promise<void>;
   signUp: (params: { email: string; password: string; displayName: string; role: AppRole }) => Promise<void>;
   saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string }) => Promise<void>;
+  refreshProfile: () => Promise<UserProfile | null>;
   sendPasswordReset: (email: string) => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
@@ -42,20 +43,70 @@ async function loadProfile(uid: string): Promise<UserProfile | null> {
   const snap = await getDoc(doc(db, 'users', uid));
   if (!snap.exists()) return null;
   const data = snap.data() as Partial<UserProfile>;
-  if (!data.role) return null;
+  const role = normalizeRole(data.role);
+  if (!role) return null;
   return {
     uid,
     displayName: data.displayName || 'Dispatch User',
-    role: data.role,
+    role,
+    organizationId: data.organizationId || null,
+    organizationName: data.organizationName || null,
+    email: data.email || null,
+    canonicalEmail: data.canonicalEmail || null,
     phoneNumber: data.phoneNumber,
   };
 }
 
-async function syncInviteLinking(userId: string, email?: string | null) {
-  const normalizedEmail = email?.trim();
+function normalizeEmail(email?: string | null) {
+  return email?.trim().toLowerCase() || '';
+}
+
+function canonicalizeEmail(email?: string | null) {
+  const normalized = normalizeEmail(email);
+  const atIndex = normalized.indexOf('@');
+  if (atIndex <= 0) return normalized;
+
+  const local = normalized.slice(0, atIndex);
+  const domain = normalized.slice(atIndex + 1);
+  const plusIndex = local.indexOf('+');
+  return `${plusIndex >= 0 ? local.slice(0, plusIndex) : local}@${domain}`;
+}
+
+function normalizeRole(role?: string | null): AppRole | null {
+  const value = role?.trim().toLowerCase();
+  return value === 'manager' || value === 'worker' ? value : null;
+}
+
+function displayNameFromEmail(email?: string | null) {
+  const local = normalizeEmail(email).split('@')[0];
+  const withoutAlias = local.split('+')[0];
+  const words = withoutAlias.split(/[._-]+/).filter(Boolean);
+  if (!words.length) return '';
+  return words.map((word) => word.slice(0, 1).toUpperCase() + word.slice(1)).join(' ');
+}
+
+function cleanDisplayName(displayName?: string | null, email?: string | null) {
+  const trimmed = displayName?.trim();
+  if (trimmed && trimmed.toLowerCase() !== 'dispatch user') return trimmed;
+  return displayNameFromEmail(email) || 'Dispatch User';
+}
+
+async function syncInviteLinking(userId: string, email?: string | null, role?: AppRole | null) {
+  const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return;
-  await acceptPendingInvitesForUser({ userId, email: normalizedEmail });
-  await linkPendingEmailInvites({ userId, email: normalizedEmail });
+
+  if (role === 'worker') {
+    await acceptPendingWorkerInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
+    return;
+  }
+
+  if (role === 'manager') {
+    await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
+    return;
+  }
+
+  await acceptPendingInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
+  await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
 }
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
@@ -100,28 +151,38 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Please verify your email address before signing in. Check your inbox for the verification link.');
     }
 
-    await syncInviteLinking(cred.user.uid, cred.user.email || email);
+    let nextProfile = await loadProfile(cred.user.uid);
+    await syncInviteLinking(cred.user.uid, cred.user.email || email, nextProfile?.role);
+    nextProfile = await loadProfile(cred.user.uid);
+    if (nextProfile) {
+      setProfile(nextProfile);
+      setNeedsProfile(false);
+    }
   };
 
   const upsertProfile = async (params: { uid: string; displayName: string; role: AppRole; email?: string | null; phoneNumber?: string | null; merge?: boolean }) => {
+    const normalizedEmail = normalizeEmail(params.email);
+    const displayName = cleanDisplayName(params.displayName, normalizedEmail);
     await setDoc(
       doc(db, 'users', params.uid),
       {
         uid: params.uid,
-        displayName: params.displayName,
+        displayName,
         role: params.role,
-        email: params.email || null,
+        email: normalizedEmail || null,
+        canonicalEmail: canonicalizeEmail(normalizedEmail) || null,
         phoneNumber: params.phoneNumber?.trim() || null,
         updatedAt: serverTimestamp(),
-        ...(params.merge ? {} : { createdAt: serverTimestamp() }),
+        ...(params.merge ? {} : { organizationId: null, organizationName: null, createdAt: serverTimestamp() }),
       },
       { merge: params.merge ?? true }
     );
 
-    setProfile({ uid: params.uid, displayName: params.displayName, role: params.role, phoneNumber: params.phoneNumber?.trim() || undefined });
     setNeedsProfile(false);
 
-    await syncInviteLinking(params.uid, params.email);
+    await syncInviteLinking(params.uid, normalizedEmail, params.role);
+    const nextProfile = await loadProfile(params.uid);
+    setProfile(nextProfile || { uid: params.uid, displayName, role: params.role, organizationId: null, organizationName: null, email: normalizedEmail || null, canonicalEmail: canonicalizeEmail(normalizedEmail) || null, phoneNumber: params.phoneNumber?.trim() || undefined });
   };
 
   const signInWithGoogle = async (params: { idToken: string; accessToken?: string; role?: AppRole }) => {
@@ -133,7 +194,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!existing && params.role) {
       await upsertProfile({
         uid: cred.user.uid,
-        displayName: cred.user.displayName || 'Dispatch User',
+        displayName: cleanDisplayName(cred.user.displayName, cred.user.email),
         role: params.role,
         email: cred.user.email,
         merge: false,
@@ -141,10 +202,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    await syncInviteLinking(cred.user.uid, cred.user.email);
+    await syncInviteLinking(cred.user.uid, cred.user.email, existing?.role);
+    const nextProfile = await loadProfile(cred.user.uid);
 
-    if (existing) {
-      setProfile(existing);
+    if (nextProfile) {
+      setProfile(nextProfile);
       setNeedsProfile(false);
     } else {
       setNeedsProfile(true);
@@ -167,7 +229,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!existing && params.role) {
       await upsertProfile({
         uid: cred.user.uid,
-        displayName: params.displayName || cred.user.displayName || 'Dispatch User',
+        displayName: cleanDisplayName(params.displayName || cred.user.displayName, cred.user.email),
         role: params.role,
         email: cred.user.email,
         merge: false,
@@ -175,10 +237,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    await syncInviteLinking(cred.user.uid, cred.user.email);
+    await syncInviteLinking(cred.user.uid, cred.user.email, existing?.role);
+    const nextProfile = await loadProfile(cred.user.uid);
 
-    if (existing) {
-      setProfile(existing);
+    if (nextProfile) {
+      setProfile(nextProfile);
       setNeedsProfile(false);
     } else {
       setNeedsProfile(true);
@@ -213,17 +276,31 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         uid: user.uid,
         displayName: params.displayName.trim(),
         role: params.role,
-        email: user.email || null,
+        email: normalizeEmail(user.email) || null,
+        canonicalEmail: canonicalizeEmail(user.email) || null,
         phoneNumber: params.phoneNumber?.trim() || null,
         updatedAt: serverTimestamp(),
       },
       { merge: true }
     );
 
-    await syncInviteLinking(user.uid, user.email);
+    if (params.role === 'worker') {
+      await acceptPendingWorkerInvitesForUser({ userId: user.uid, email: user.email || '' }).catch(() => null);
+    } else {
+      await syncInviteLinking(user.uid, user.email);
+    }
 
-    setProfile({ uid: user.uid, displayName: params.displayName.trim(), role: params.role, phoneNumber: params.phoneNumber?.trim() || undefined });
+    const nextProfile = await loadProfile(user.uid);
+    setProfile(nextProfile || { uid: user.uid, displayName: params.displayName.trim(), role: params.role, organizationId: null, organizationName: null, phoneNumber: params.phoneNumber?.trim() || undefined });
     setNeedsProfile(false);
+  };
+
+  const refreshProfile = async () => {
+    if (!auth.currentUser) return null;
+    const nextProfile = await loadProfile(auth.currentUser.uid);
+    setProfile(nextProfile);
+    setNeedsProfile(!nextProfile);
+    return nextProfile;
   };
 
   const sendPasswordReset = async (email: string) => {
@@ -275,6 +352,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       signInWithApple,
       signUp,
       saveProfile,
+      refreshProfile,
       sendPasswordReset,
       sendVerificationEmail,
       refreshAuthUser,

@@ -19,6 +19,7 @@ import { AppRole, DispatchEvent, EventTask, Team } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { headerLogoSource } from '@/constants/branding';
+import { openMapAppPicker } from '@/lib/map-apps';
 
 const lightTodayLogoSource = headerLogoSource;
 const darkTodayLogoSource = headerLogoSource;
@@ -110,7 +111,7 @@ export default function TodayScreen() {
 
     if (profile.role === 'manager') {
       setWorkerTeams([]);
-      return watchManagerTeams(profile.uid, setManagerTeams);
+      return watchManagerTeams(profile.uid, setManagerTeams, profile.organizationId);
     }
 
     setManagerTeams([]);
@@ -495,6 +496,40 @@ export default function TodayScreen() {
     }
   };
 
+  const renderLocationMeta = (
+    location: string,
+    eventDate: string,
+    eventTime: string,
+    textStyle: any,
+    iconColor: string
+  ) => (
+    <View style={styles.locationMetaRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${location} in a map app`}
+        hitSlop={8}
+        onPress={(event) => {
+          event.stopPropagation();
+          openMapAppPicker(location);
+        }}
+        style={styles.locationMetaText}>
+        <Text style={textStyle}>{location} - {eventDate} - {eventTime}</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${location} in a map app`}
+        hitSlop={8}
+        onPress={(event) => {
+          event.stopPropagation();
+          openMapAppPicker(location);
+        }}
+        style={styles.mapIconButton}
+      >
+        <MaterialIcons name="map" size={18} color={iconColor} />
+      </Pressable>
+    </View>
+  );
+
   const renderWorkerChecklist = (event: DispatchEvent) => {
     if (profile?.role !== 'worker') return null;
 
@@ -575,7 +610,7 @@ export default function TodayScreen() {
     const workerTeam = managerTeams.find((team) => eventTeamIds.has(team.id) && (team.workerIds || []).includes(workerId))
       || managerTeams.find((team) => (team.workerIds || []).includes(workerId));
 
-    router.push({
+    router.navigate({
       pathname: '/chat/[workerId]',
       params: {
         workerId,
@@ -595,7 +630,7 @@ export default function TodayScreen() {
     const managerTeam = workerTeams.find((team) => eventTeamIds.has(team.id) && team.managerId === managerId)
       || workerTeams.find((team) => team.managerId === managerId);
 
-    router.push({
+    router.navigate({
       pathname: '/chat/[workerId]',
       params: {
         workerId: managerId,
@@ -648,11 +683,12 @@ export default function TodayScreen() {
         <View style={styles.figmaCardTop}>
           <View style={styles.figmaCardTitleWrap}>
             <Text style={styles.figmaCardTitleLight} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.eventDateTimeSubtitleLight}>{eventDate} - {eventTime}</Text>
           </View>
           <Text style={styles.figmaExpandLight}>{isExpanded ? 'Hide' : 'Expand'}</Text>
         </View>
 
-        <Text style={styles.figmaCardMetaLight}>{item.location} - {eventDate} - {eventTime}</Text>
+        {renderLocationMeta(item.location, eventDate, eventTime, styles.figmaCardMetaLight, '#F98D2F')}
 
         <View style={styles.figmaProgressSection}>
           <View style={styles.figmaProgressHeader}>
@@ -755,11 +791,12 @@ export default function TodayScreen() {
         <View style={styles.figmaCardTop}>
           <View style={styles.figmaCardTitleWrap}>
             <Text style={styles.figmaCardTitleDark} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.eventDateTimeSubtitleDark}>{eventDate} - {eventTime}</Text>
           </View>
           <Text style={styles.figmaExpandDark}>{isExpanded ? 'Hide' : 'Expand'}</Text>
         </View>
 
-        <Text style={styles.figmaCardMetaDark}>{item.location} - {eventDate} - {eventTime}</Text>
+        {renderLocationMeta(item.location, eventDate, eventTime, styles.figmaCardMetaDark, '#F98D2F')}
 
         <View style={styles.figmaProgressSection}>
           <View style={styles.figmaProgressHeader}>
@@ -905,7 +942,10 @@ export default function TodayScreen() {
           const card = !isDarkMode && isManager ? renderLightManagerCard(item, isExpanded) : isDarkMode && isManager ? renderDarkManagerCard(item, isExpanded) : (
             <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
-                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
+                <View style={styles.cardTitleStack}>
+                  <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
+                  <Text style={isDarkMode ? styles.eventDateTimeSubtitleDark : styles.eventDateTimeSubtitleLight}>{eventDate} - {eventTime}</Text>
+                </View>
                 {isManager && overdueTaskCount > 0 ? (
                   <View style={styles.overdueChip}>
                     <Text style={styles.overdueChipText}>{overdueTaskCount}</Text>
@@ -914,7 +954,13 @@ export default function TodayScreen() {
                 <Text style={[styles.expandHint, isDarkMode ? styles.expandHintDark : styles.expandHintLight]}>{isExpanded ? 'Hide' : 'Expand'}</Text>
               </View>
 
-              <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.location} • {eventDate} • {eventTime}</Text>
+              {renderLocationMeta(
+                item.location,
+                eventDate,
+                eventTime,
+                [styles.meta, isDarkMode ? styles.metaDark : styles.metaLight],
+                '#F98D2F'
+              )}
 
               {isManager ? (
                 <>
@@ -1078,10 +1124,15 @@ const styles = StyleSheet.create({
   figmaCardTitleWrap: { flex: 1 },
   figmaCardTitleLight: { color: '#121212', fontSize: 16, fontWeight: '700' },
   figmaCardTitleDark: { color: '#F7F7F7', fontSize: 16, fontWeight: '700' },
+  eventDateTimeSubtitleLight: { color: '#121212', fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
+  eventDateTimeSubtitleDark: { color: '#F7F7F7', fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
   figmaExpandLight: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
   figmaExpandDark: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
   figmaCardMetaLight: { color: '#121212', fontSize: 12, fontWeight: '200' },
   figmaCardMetaDark: { color: '#F7F7F7', fontSize: 12, fontWeight: '200' },
+  locationMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  locationMetaText: { flex: 1 },
+  mapIconButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   figmaProgressSection: { gap: 8 },
   figmaProgressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   figmaProgressLabelLight: { color: '#121212', fontSize: 10, fontWeight: '700' },
@@ -1127,7 +1178,8 @@ const styles = StyleSheet.create({
   swipeDeleteActionText: { color: '#fee2e2', fontWeight: '700' },
   cardDark: { backgroundColor: '#12274D', borderColor: '#12274D', borderRadius: 16, padding: 16, marginBottom: 8 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontWeight: '700', fontSize: 20, marginBottom: 6, flex: 1 },
+  cardTitleStack: { flex: 1, marginBottom: 6 },
+  title: { fontWeight: '700', fontSize: 20, flex: 1 },
   titleLight: { color: '#232832' },
   titleDark: { color: '#F4F8FF' },
   expandHint: { fontSize: 12, fontWeight: '700', marginLeft: 8 },

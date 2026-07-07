@@ -4,8 +4,20 @@ export type UserProfile = {
   uid: string;
   displayName: string;
   role: AppRole;
+  organizationId?: string | null;
+  organizationName?: string | null;
+  email?: string | null;
+  canonicalEmail?: string | null;
   phoneNumber?: string;
   avatarUrl?: string;
+};
+
+export type Organisation = {
+  id: string;
+  name: string;
+  managerIds: string[];
+  workerIds?: string[];
+  createdBy?: string;
 };
 
 export type EventTaskAttachment = {
@@ -30,6 +42,9 @@ export type EventRole = {
   id: string;
   name: string;
   assignedWorkerIds: string[];
+  waitlistWorkerIds?: string[];
+  eligibleWaitlistWorkerIds?: string[];
+  waitlistInviteWorkerIds?: string[];
   openSlots: number;
   tasks: EventTask[];
 };
@@ -37,17 +52,23 @@ export type EventRole = {
 export type DispatchEvent = {
   id: string;
   managerId: string;
+  organizationId?: string | null;
   name: string;
   location: string;
   startsAt: string;
   endsAt?: string;
   teamIds: string[];
   roles: EventRole[];
+  pendingInviteNotificationId?: string;
+  pendingInviteRoleId?: string;
 };
 
 export type Team = {
   id: string;
   managerId: string;
+  managerIds?: string[];
+  organizationId?: string | null;
+  organizationName?: string | null;
   name: string;
   workerIds: string[];
 };
@@ -69,6 +90,8 @@ export type WorkerInvite = {
   managerId: string;
   teamId?: string;
   teamName?: string;
+  organizationId?: string | null;
+  organizationName?: string | null;
   email: string;
   normalizedEmail?: string;
   workerId?: string | null;
@@ -92,6 +115,23 @@ export type WorkerInvite = {
   managerClearedAt?: { toDate?: () => Date } | Date | null;
   createdAt?: { toDate?: () => Date } | Date | null;
   sentAt?: { toDate?: () => Date } | Date | null;
+};
+
+export type ManagerInviteStatus = 'pending' | 'accepted' | 'declined' | 'cancelled';
+
+export type ManagerInvite = {
+  id: string;
+  inviterId: string;
+  organizationId: string;
+  organizationName?: string | null;
+  email: string;
+  normalizedEmail?: string;
+  canonicalEmail?: string;
+  managerUserId?: string | null;
+  status: ManagerInviteStatus;
+  statusReason?: string;
+  createdAt?: { toDate?: () => Date } | Date | null;
+  acceptedAt?: { toDate?: () => Date } | Date | null;
 };
 
 export type InviteTokenStatus = 'active' | 'consumed' | 'expired' | 'revoked' | 'cancelled';

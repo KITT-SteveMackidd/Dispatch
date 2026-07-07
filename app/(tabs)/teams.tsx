@@ -6,6 +6,8 @@ import {
   acceptWorkerInvite,
   createTeam,
   declineWorkerInvite,
+  ensureTeamCommunicationThreads,
+  inviteManagerByEmailToOrganisation,
   inviteWorkerByEmailToTeam,
   loadUserProfilesByIds,
   loadWorkerTeams,
@@ -28,7 +30,7 @@ import { useThemeMode } from '@/context/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { headerLogoSource } from '@/constants/branding';
 
-type DrawerMode = 'add-team' | 'invite-worker';
+type DrawerMode = 'add-team' | 'invite-worker' | 'invite-manager';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
@@ -64,7 +66,7 @@ export default function TeamsScreen() {
   useEffect(() => {
     if (!profile) return;
     if (profile.role === 'manager') {
-      const unsubTeams = watchManagerTeams(profile.uid, setTeams);
+      const unsubTeams = watchManagerTeams(profile.uid, setTeams, profile.organizationId);
       const unsubEvents = watchManagerEvents(profile.uid, setEvents);
       return () => {
         unsubTeams();
@@ -88,7 +90,7 @@ export default function TeamsScreen() {
   }, [teams, inviteTeamId]);
 
   useEffect(() => {
-    if (profile?.role !== 'manager') {
+    if (profile?.role !== 'manager' || drawerMode !== 'invite-worker') {
       setMatchedWorker(null);
       setSearchingWorker(false);
       return;
@@ -124,7 +126,7 @@ export default function TeamsScreen() {
       active = false;
       clearTimeout(timer);
     };
-  }, [inviteEmail, profile]);
+  }, [drawerMode, inviteEmail, profile]);
 
   useEffect(() => {
     if (!profile || profile.role !== 'manager') {
@@ -134,6 +136,14 @@ export default function TeamsScreen() {
 
     return watchManagerWorkerInvites(profile.uid, setInvites);
   }, [profile]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager' || !teams.length) return;
+
+    teams.forEach((team) => {
+      ensureTeamCommunicationThreads(team).catch(() => null);
+    });
+  }, [profile?.role, teams]);
 
   useEffect(() => {
     if (!profile) {
@@ -168,7 +178,7 @@ export default function TeamsScreen() {
     }
 
     const ids = [...new Set([
-      ...teams.flatMap((team) => [team.managerId, ...team.workerIds]),
+      ...teams.flatMap((team) => [...(team.managerIds || [team.managerId]), ...team.workerIds]),
       ...invites.map((invite) => invite.workerId).filter(Boolean) as string[],
     ].filter((id) => id && id !== profile.uid))];
 
@@ -227,11 +237,11 @@ export default function TeamsScreen() {
 
   const getOtherMemberIds = (team: Team) => {
     if (!profile) return [];
-    return [...new Set([team.managerId, ...team.workerIds].filter((memberId) => memberId && memberId !== profile.uid))];
+    return [...new Set([...(team.managerIds || [team.managerId]), ...team.workerIds].filter((memberId) => memberId && memberId !== profile.uid))];
   };
 
   const openDirectChat = (workerId: string, team?: Team) => {
-    router.push({
+    router.navigate({
       pathname: '/chat/[workerId]',
       params: {
         workerId,
@@ -253,7 +263,7 @@ export default function TeamsScreen() {
       return;
     }
 
-    router.push({
+    router.navigate({
       pathname: '/team/[teamId]',
       params: {
         teamId: team.id,
@@ -284,7 +294,7 @@ export default function TeamsScreen() {
         setTeamName('');
         setDrawerMessageTone('success');
         setDrawerMessage('Team created.');
-      } else {
+      } else if (drawerMode === 'invite-worker') {
         const teamId = inviteTeamId === 'solo' ? undefined : inviteTeamId;
         const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId, email: inviteEmail });
         setInviteEmail('');
@@ -294,6 +304,18 @@ export default function TeamsScreen() {
           result.linked
             ? (teamId ? 'Worker account found. In-app invite created and now awaiting worker acceptance.' : 'Worker account found. Direct invite created and awaiting worker acceptance.')
             : 'Invite sent. The worker will need to sign in and explicitly accept it in the app.'
+        );
+      } else {
+        const result = await inviteManagerByEmailToOrganisation({ inviterId: profile.uid, email: inviteEmail });
+        setInviteEmail('');
+        setMatchedWorker(null);
+        setDrawerMessageTone('success');
+        setDrawerMessage(
+          result.linked
+            ? 'Manager account found. They were added to your organization.'
+            : result.reused
+              ? 'A pending manager invite already exists for this organization.'
+              : 'Manager invite saved. They will join the organization when they create or sign in with that email.'
         );
       }
     } catch (error) {
@@ -573,6 +595,15 @@ export default function TeamsScreen() {
                 onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
                 <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'invite-worker' && styles.modeTextSelected]}>Invite Worker</Text>
               </Pressable>
+              <Pressable
+                style={[
+                  styles.modeButton,
+                  isDarkMode ? styles.modeButtonDark : styles.modeButtonLight,
+                  drawerMode === 'invite-manager' && styles.modeButtonSelected,
+                ]}
+                onPress={() => { setDrawerMode('invite-manager'); setInviteTeamId('solo'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
+                <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'invite-manager' && styles.modeTextSelected]}>Invite Manager</Text>
+              </Pressable>
             </View>
 
             {drawerMode === 'add-team' ? (
@@ -580,7 +611,7 @@ export default function TeamsScreen() {
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Team name</Text>
                 <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
               </>
-            ) : (
+            ) : drawerMode === 'invite-worker' ? (
               <>
                 <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Choose team (or solo)</Text>
                 <View style={styles.teamChipWrap}>
@@ -615,6 +646,14 @@ export default function TeamsScreen() {
                     : 'Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.'}
                 </Text>
               </>
+            ) : (
+              <>
+                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Manager email</Text>
+                <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="manager@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
+                <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
+                  Managers are added to the organization and can work across every team. They are not assigned to one team here.
+                </Text>
+              </>
             )}
 
             {drawerMessage ? (
@@ -626,7 +665,7 @@ export default function TeamsScreen() {
             <Pressable
               style={[
                 styles.drawerSave,
-                drawerMode === 'invite-worker'
+                drawerMode === 'invite-worker' || drawerMode === 'invite-manager'
                   ? styles.drawerSaveInviteWorker
                   : drawerMode === 'add-team'
                     ? styles.drawerSaveCreateTeam
@@ -640,7 +679,7 @@ export default function TeamsScreen() {
               <Text
                 style={[
                   styles.drawerSaveText,
-                  drawerMode === 'invite-worker'
+                  drawerMode === 'invite-worker' || drawerMode === 'invite-manager'
                     ? styles.drawerSaveTextInviteWorker
                     : drawerMode === 'add-team'
                       ? styles.drawerSaveTextCreateTeam
@@ -648,7 +687,7 @@ export default function TeamsScreen() {
                       ? styles.drawerSaveTextDark
                       : styles.drawerSaveTextLight,
                 ]}>
-                {saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : 'Invite Worker'}
+                {saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-manager' ? 'Invite Manager' : 'Invite Worker'}
               </Text>
             </Pressable>
 

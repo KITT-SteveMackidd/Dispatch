@@ -4,6 +4,7 @@ export type NotificationRouteData = {
   senderId?: string;
   teamId?: string;
   relatedEventId?: string;
+  userNotificationId?: string;
 };
 
 export function resolveChatRouteFromNotification(data: NotificationRouteData, currentUserId?: string) {

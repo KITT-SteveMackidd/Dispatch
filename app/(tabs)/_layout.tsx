@@ -1,7 +1,7 @@
 import { Feather, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, Text } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Pressable, Text } from 'react-native';
 import { useSession } from '@/context/session';
 import { watchUserTeamUnreadCounts, watchUserUnreadNotificationCount } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
@@ -13,6 +13,27 @@ export default function TabLayout() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const [teamUnreadTotal, setTeamUnreadTotal] = useState(0);
   const [profileUnreadTotal, setProfileUnreadTotal] = useState(0);
+  const workerInvitePromptShownRef = useRef<string | null>(null);
+  const managerOrganisationPromptShownRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (profile?.role !== 'worker' || profile.organizationId) return;
+    if (workerInvitePromptShownRef.current === profile.uid) return;
+
+    workerInvitePromptShownRef.current = profile.uid;
+    Alert.alert(
+      'No team invite yet',
+      'You have not been invited to join a team yet. Please wait until a manager invites you.'
+    );
+  }, [profile?.uid, profile?.role, profile?.organizationId]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager' || profile.organizationId) return;
+    if (managerOrganisationPromptShownRef.current === profile.uid) return;
+
+    managerOrganisationPromptShownRef.current = profile.uid;
+    router.replace('/(tabs)/profile');
+  }, [profile?.uid, profile?.role, profile?.organizationId, router]);
 
   useEffect(() => {
     if (!profile) {

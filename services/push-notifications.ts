@@ -68,6 +68,7 @@ export function usePushNotificationBridge() {
   const { profile } = useSession();
   const seenChatUpdateRef = useRef<Record<string, number>>({});
   const seenUserNotificationIdsRef = useRef<Set<string>>(new Set());
+  const scheduledUserNotificationIdsRef = useRef<Record<string, string>>({});
   const seenRoleNotificationIdsRef = useRef<Set<string>>(new Set());
 
   useNotificationRouting(profile?.uid);
@@ -130,7 +131,17 @@ export function usePushNotificationBridge() {
 
     const unsubUserNotifications = watchUserNotifications(profile.uid, (items) => {
       items.forEach((item) => {
-        if (item.read || seenUserNotificationIdsRef.current.has(item.id)) return;
+        if (item.read) {
+          seenUserNotificationIdsRef.current.add(item.id);
+          const scheduledNotificationId = scheduledUserNotificationIdsRef.current[item.id];
+          if (scheduledNotificationId) {
+            Notifications.dismissNotificationAsync(scheduledNotificationId).catch(() => undefined);
+            delete scheduledUserNotificationIdsRef.current[item.id];
+          }
+          return;
+        }
+
+        if (seenUserNotificationIdsRef.current.has(item.id)) return;
 
         seenUserNotificationIdsRef.current.add(item.id);
         Notifications.scheduleNotificationAsync({
@@ -140,9 +151,12 @@ export function usePushNotificationBridge() {
             data: {
               kind: 'user_notification',
               relatedEventId: item.relatedEventId,
+              userNotificationId: item.id,
             } satisfies NotificationRouteData,
           },
           trigger: null,
+        }).then((scheduledNotificationId) => {
+          scheduledUserNotificationIdsRef.current[item.id] = scheduledNotificationId;
         }).catch(() => undefined);
       });
     });

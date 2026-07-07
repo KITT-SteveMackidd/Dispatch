@@ -41,13 +41,14 @@ export default function WorkerChatScreen() {
     teamName?: string;
     teamMemberIds?: string;
     isTeamAll?: string;
+    teamThreadId?: string;
     teamThreadPath?: string;
   }>();
 
   const workerId = params.workerId ?? 'worker';
   const workerLabel = params.workerLabel ?? workerId;
   const teamId = params.teamId;
-  const isTeamBroadcast = params.isTeamAll === '1' || workerId.startsWith('all:') || workerId.startsWith('team:') || workerLabel.toLowerCase() === 'all';
+  const isTeamBroadcast = !!params.teamThreadId || params.isTeamAll === '1' || workerId.startsWith('all:') || workerId.startsWith('team:') || workerLabel.toLowerCase() === 'all';
   const memberIds = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean);
   const broadcastCount = memberIds.length;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -73,13 +74,14 @@ export default function WorkerChatScreen() {
 
   const threadId = useMemo(() => {
     if (!profile) return null;
+    if (params.teamThreadId?.trim()) return params.teamThreadId.trim();
     return buildChatThreadId({
       teamId,
       selfId: profile.uid,
       otherUserId: isTeamBroadcast ? undefined : workerId,
       isTeamBroadcast,
     });
-  }, [isTeamBroadcast, profile, teamId, workerId]);
+  }, [isTeamBroadcast, params.teamThreadId, profile, teamId, workerId]);
 
   useEffect(() => {
     if (!threadId) {
@@ -176,6 +178,30 @@ export default function WorkerChatScreen() {
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
   const hasPendingImage = pendingAttachments.some((attachment) => attachment.kind === 'image');
 
+  const goBack = () => {
+    setShowAttachmentPicker(false);
+    setShowEmojiPicker(false);
+
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    if (teamId) {
+      router.replace({
+        pathname: '/team/[teamId]',
+        params: {
+          teamId,
+          teamName: params.teamName || 'Team',
+          memberIds: memberIds.join(','),
+        },
+      });
+      return;
+    }
+
+    router.replace('/(tabs)/teams');
+  };
+
   const sendMessage = async () => {
     const text = draft.trim();
     if ((!text && !pendingAttachments.length) || !profile || !threadId || sending) return;
@@ -230,7 +256,7 @@ export default function WorkerChatScreen() {
 
       <View style={[styles.headerShell, isDarkMode ? styles.headerShellDark : styles.headerShellLight, { paddingTop: insets.top }]}>
         <View style={[styles.headerRow, isDarkMode ? styles.headerRowDark : styles.headerRowLight]}>
-          <Pressable style={styles.backButton} onPress={() => router.back()} hitSlop={8}>
+          <Pressable style={styles.backButton} onPress={goBack} hitSlop={8}>
             <MaterialIcons name="arrow-back-ios" size={28} color={isDarkMode ? '#F7F7F7' : '#121212'} />
           </Pressable>
 
@@ -266,9 +292,9 @@ export default function WorkerChatScreen() {
           return (
             <View style={[styles.messageRow, mine ? styles.messageRowSelf : styles.messageRowOther]}>
               <View style={[styles.bubble, mine ? (isDarkMode ? styles.bubbleSelfDark : styles.bubbleSelfLight) : isDarkMode ? styles.bubbleOtherDark : styles.bubbleOtherLight]}>
-                {isTeamBroadcast && !mine ? (
-                  <Text style={[styles.senderName, isDarkMode ? styles.senderNameDark : styles.senderNameLight]}>
-                    {message.senderName?.trim() || 'Team member'}
+                {isTeamBroadcast ? (
+                  <Text style={[styles.senderName, mine ? styles.senderNameSelf : styles.senderNameOther]}>
+                    {mine ? profile?.displayName || message.senderName?.trim() || 'You' : message.senderName?.trim() || 'Team member'}
                   </Text>
                 ) : null}
                 {message.text ? (
@@ -417,8 +443,8 @@ const styles = StyleSheet.create({
   bubbleOtherLight: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
   bubbleOtherDark: { backgroundColor: '#DBE2F9', borderBottomLeftRadius: 0, borderBottomRightRadius: 8 },
   senderName: { marginBottom: 4, fontSize: 11, lineHeight: 14, fontWeight: '700' },
-  senderNameLight: { color: '#475569' },
-  senderNameDark: { color: 'rgba(247,247,247,0.8)' },
+  senderNameSelf: { color: '#121212' },
+  senderNameOther: { color: '#0EC3C9' },
   messageText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
   messageTextSelf: { color: '#F7F7F7' },
   messageTextLight: { color: '#121212' },
