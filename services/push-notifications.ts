@@ -7,15 +7,21 @@ import { useSession } from '@/context/session';
 import { saveUserPushToken, watchIncomingChatThreadHeads, watchUserNotifications, watchWorkerRoleAssignmentNotifications } from '@/services/dispatch';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+let notificationHandlerConfigured = false;
+
+function ensureNotificationHandler() {
+  if (notificationHandlerConfigured) return;
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+  notificationHandlerConfigured = true;
+}
 
 function parseDate(value?: { toDate?: () => Date } | Date | null) {
   if (!value) return 0;
@@ -28,6 +34,8 @@ function useNotificationRouting(currentUserId?: string) {
   const router = useRouter();
 
   useEffect(() => {
+    if (!currentUserId) return;
+
     const go = (data?: NotificationRouteData) => {
       if (!data) return;
 
@@ -61,7 +69,7 @@ function useNotificationRouting(currentUserId?: string) {
     return () => {
       responseSub.remove();
     };
-  }, [router]);
+  }, [currentUserId, router]);
 }
 
 export function usePushNotificationBridge() {
@@ -75,6 +83,7 @@ export function usePushNotificationBridge() {
 
   useEffect(() => {
     if (!profile?.uid) return;
+    ensureNotificationHandler();
 
     (async () => {
       const permissions = await Notifications.requestPermissionsAsync().catch(() => null);
