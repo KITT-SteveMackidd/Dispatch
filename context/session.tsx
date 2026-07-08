@@ -14,7 +14,7 @@ import {
   signOut as firebaseSignOut,
   updateProfile,
 } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
+import { auth, db, firebaseConfigError } from '@/lib/firebase';
 import { AppRole, UserProfile } from '@/types/dispatch';
 import { acceptPendingInvitesForUser, acceptPendingWorkerInvitesForUser, linkPendingManagerInvites } from '@/services/dispatch';
 
@@ -40,6 +40,7 @@ type SessionContextType = {
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
 
 async function loadProfile(uid: string): Promise<UserProfile | null> {
+  if (firebaseConfigError) return null;
   const snap = await getDoc(doc(db, 'users', uid));
   if (!snap.exists()) return null;
   const data = snap.data() as Partial<UserProfile>;
@@ -109,6 +110,12 @@ async function syncInviteLinking(userId: string, email?: string | null, role?: A
   await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
 }
 
+function assertFirebaseConfigured() {
+  if (firebaseConfigError) {
+    throw new Error(`${firebaseConfigError}. Rebuild the app with the required Firebase environment variables.`);
+  }
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -118,6 +125,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const requiresEmailVerification = Boolean(authUser && !authUser.emailVerified);
 
   useEffect(() => {
+    if (firebaseConfigError) {
+      setAuthUser(null);
+      setProfile(null);
+      setNeedsProfile(false);
+      setLoading(false);
+      return;
+    }
+
     const unsub = onAuthStateChanged(auth, async (user) => {
       setAuthUser(user);
 
@@ -144,6 +159,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    assertFirebaseConfigured();
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
 
     if (!cred.user.emailVerified) {
@@ -161,6 +177,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const upsertProfile = async (params: { uid: string; displayName: string; role: AppRole; email?: string | null; phoneNumber?: string | null; merge?: boolean }) => {
+    assertFirebaseConfigured();
     const normalizedEmail = normalizeEmail(params.email);
     const displayName = cleanDisplayName(params.displayName, normalizedEmail);
     await setDoc(
@@ -186,6 +203,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signInWithGoogle = async (params: { idToken: string; accessToken?: string; role?: AppRole }) => {
+    assertFirebaseConfigured();
     const credential = GoogleAuthProvider.credential(params.idToken, params.accessToken);
     const cred = await signInWithCredential(auth, credential);
     const additional = getAdditionalUserInfo(cred);
@@ -217,6 +235,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signInWithApple = async (params: { idToken: string; displayName?: string; role?: AppRole }) => {
+    assertFirebaseConfigured();
     const provider = new OAuthProvider('apple.com');
     const credential = provider.credential({ idToken: params.idToken });
     const cred = await signInWithCredential(auth, credential);
@@ -250,6 +269,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signUp = async (params: { email: string; password: string; displayName: string; role: AppRole }) => {
+    assertFirebaseConfigured();
     const normalizedEmail = params.email.trim();
     const trimmedName = params.displayName.trim();
 
@@ -267,6 +287,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string }) => {
+    assertFirebaseConfigured();
     if (!auth.currentUser) throw new Error('Not authenticated');
     const user = auth.currentUser;
     await updateProfile(user, { displayName: params.displayName.trim() });
@@ -296,6 +317,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const refreshProfile = async () => {
+    if (firebaseConfigError) return null;
     if (!auth.currentUser) return null;
     const nextProfile = await loadProfile(auth.currentUser.uid);
     setProfile(nextProfile);
@@ -304,18 +326,21 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const sendPasswordReset = async (email: string) => {
+    assertFirebaseConfigured();
     const normalizedEmail = email.trim();
     if (!normalizedEmail) throw new Error('Email is required.');
     await sendPasswordResetEmail(auth, normalizedEmail);
   };
 
   const sendVerificationEmail = async () => {
+    assertFirebaseConfigured();
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
     await sendEmailVerification(user);
   };
 
   const refreshAuthUser = async () => {
+    if (firebaseConfigError) return false;
     const user = auth.currentUser;
     if (!user) {
       setAuthUser(null);
@@ -329,12 +354,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const revokeSession = async () => {
+    assertFirebaseConfigured();
     await firebaseSignOut(auth);
     setProfile(null);
     setNeedsProfile(false);
   };
 
   const signOut = async () => {
+    assertFirebaseConfigured();
     await firebaseSignOut(auth);
     setProfile(null);
     setNeedsProfile(false);
