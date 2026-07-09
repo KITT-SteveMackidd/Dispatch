@@ -46,6 +46,19 @@ module.exports = ({ config: baseConfig }) => {
       },
     ]);
   }
+  if (
+    process.env.SENTRY_ORG
+    && process.env.SENTRY_PROJECT
+    && !plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === '@sentry/react-native/expo')
+  ) {
+    plugins.push([
+      '@sentry/react-native/expo',
+      {
+        organization: process.env.SENTRY_ORG,
+        project: process.env.SENTRY_PROJECT,
+      },
+    ]);
+  }
   config.plugins = plugins;
 
   config.updates = {

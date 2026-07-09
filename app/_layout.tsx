@@ -10,9 +10,14 @@ import 'react-native-reanimated';
 
 import { SessionProvider, useSession } from '@/context/session';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
+import { captureStartupError, wrapWithSentry } from '@/lib/sentry';
 import { usePushNotificationBridge } from '@/services/push-notifications';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
+  useEffect(() => {
+    captureStartupError(error);
+  }, [error]);
+
   return (
     <View style={styles.errorScreen}>
       <ScrollView contentContainerStyle={styles.errorContent}>
@@ -33,7 +38,7 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-export default function RootLayout() {
+function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     Inter: require('../assets/fonts/Inter-Regular.ttf'),
@@ -90,6 +95,8 @@ function RootNavigator() {
     </ThemeProvider>
   );
 }
+
+export default wrapWithSentry(RootLayout);
 
 function PushNotificationBridge() {
   usePushNotificationBridge();
