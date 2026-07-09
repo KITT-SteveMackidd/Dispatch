@@ -40,6 +40,7 @@ type SessionContextType = {
 };
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
+const SESSION_STARTUP_TIMEOUT_MS = 8000;
 
 async function loadProfile(uid: string): Promise<UserProfile | null> {
   if (firebaseConfigError) return null;
@@ -135,7 +136,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    let authStateReceived = false;
+    const timeout = setTimeout(() => {
+      if (authStateReceived) return;
+      const currentUser = auth.currentUser;
+      setAuthUser(currentUser);
+      setProfile(null);
+      setNeedsProfile(Boolean(currentUser));
+      setLoading(false);
+    }, SESSION_STARTUP_TIMEOUT_MS);
+
     const unsub = onAuthStateChanged(auth, async (user) => {
+      authStateReceived = true;
+      clearTimeout(timeout);
       setAuthUser(user);
 
       if (!user) {
@@ -157,7 +170,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return unsub;
+    return () => {
+      clearTimeout(timeout);
+      unsub();
+    };
   }, []);
 
   useEffect(() => {
