@@ -4,6 +4,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  DocumentReference,
   documentId,
   getDoc,
   getDocs,
@@ -319,6 +320,16 @@ function mapTeams(snap: { docs: Array<{ id: string; data: () => unknown }> }): T
   });
 }
 
+function removeWorkerFromOtherRoleWaitlists(role: EventRole, acceptedRoleId: string, workerId: string): EventRole {
+  if (role.id === acceptedRoleId) return role;
+  return {
+    ...role,
+    waitlistWorkerIds: (role.waitlistWorkerIds || []).filter((id) => id !== workerId),
+    waitlistInviteWorkerIds: (role.waitlistInviteWorkerIds || []).filter((id) => id !== workerId),
+    eligibleWaitlistWorkerIds: (role.eligibleWaitlistWorkerIds || []).filter((id) => id !== workerId),
+  };
+}
+
 function parseEventDateTime(value?: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   const parsed = new Date(value).getTime();
@@ -444,6 +455,33 @@ async function loadOrganisationManagerIds(organizationId?: string | null) {
   if (!organisationSnap?.exists()) return [];
   const organisation = organisationSnap.data() as Partial<Organisation>;
   return organisation.managerIds || [];
+}
+
+async function ensureOrganisationManagersOnTeam(
+  teamRef: DocumentReference,
+  team: Omit<Team, 'id'>,
+  activeManagerId?: string
+) {
+  const organisationManagerIds = await loadOrganisationManagerIds(team.organizationId);
+  const managerIds = [
+    ...new Set([
+      team.managerId,
+      ...(team.managerIds || []),
+      activeManagerId,
+      ...organisationManagerIds,
+    ].filter(Boolean)),
+  ] as string[];
+
+  const existingManagerIds = team.managerIds || [];
+  const hasAllManagers = managerIds.every((managerId) => existingManagerIds.includes(managerId));
+  if (!hasAllManagers) {
+    await updateDoc(teamRef, {
+      managerIds,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  return managerIds;
 }
 
 async function ensureTeamChatThreads(params: {
@@ -737,6 +775,15 @@ export async function createDispatchEvent(params: {
   };
 
   const docRef = await addDoc(collection(db, 'events'), eventPayload);
+  await Promise.all(
+    roles.flatMap((role) =>
+      (role.assignedWorkerIds || []).map((workerId) =>
+        queueEventRoleReminderEmail({ eventId: docRef.id, roleId: role.id, workerId }).catch((error) => {
+          console.warn('Dispatch event reminder email queue failed', error);
+        })
+      )
+    )
+  );
 
   return {
     id: docRef.id,
@@ -962,17 +1009,103 @@ export async function createOrganisationForManager(params: { managerId: string; 
   return { id: organisationRef.id, ...organisation };
 }
 
+export async function deleteDispatchAccount(params: { userId: string }): Promise<{ deletedOrganization: boolean }> {
+  const userRef = doc(db, 'users', params.userId);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) return { deletedOrganization: false };
+
+  const user = userSnap.data() as Partial<UserProfile>;
+  const organizationId = user.organizationId || null;
+  let deletedOrganization = false;
+  const batch = writeBatch(db);
+
+  if (organizationId) {
+    const organisationRef = doc(db, 'organizations', organizationId);
+    const organisationSnap = await getDoc(organisationRef);
+    const organisation = organisationSnap.exists() ? organisationSnap.data() as Partial<Organisation> : null;
+
+    if (user.role === 'manager' && organisation) {
+      const managerIds = organisation.managerIds || [];
+      const nextManagerIds = managerIds.filter((managerId) => managerId !== params.userId);
+
+      if (!nextManagerIds.length) {
+        const organizationUsersSnap = await getDocs(query(collection(db, 'users'), where('organizationId', '==', organizationId)));
+        organizationUsersSnap.docs.forEach((memberDoc) => {
+          if (memberDoc.id === params.userId) return;
+          batch.update(memberDoc.ref, {
+            organizationId: null,
+            organizationName: null,
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        const organizationTeamsSnap = await getDocs(query(collection(db, 'teams'), where('organizationId', '==', organizationId))).catch(() => null);
+        organizationTeamsSnap?.docs.forEach((teamDoc) => {
+          batch.delete(teamDoc.ref);
+        });
+
+        batch.delete(organisationRef);
+        deletedOrganization = true;
+      } else {
+        batch.update(organisationRef, {
+          managerIds: nextManagerIds,
+          updatedAt: serverTimestamp(),
+        });
+
+        const organizationTeamsSnap = await getDocs(query(collection(db, 'teams'), where('organizationId', '==', organizationId))).catch(() => null);
+        organizationTeamsSnap?.docs.forEach((teamDoc) => {
+          const team = teamDoc.data() as Partial<Team>;
+          const nextTeamManagerIds = (team.managerIds || []).filter((managerId) => managerId !== params.userId);
+          batch.update(teamDoc.ref, {
+            managerId: team.managerId === params.userId ? nextManagerIds[0] : team.managerId,
+            managerIds: nextTeamManagerIds.length ? nextTeamManagerIds : nextManagerIds,
+            updatedAt: serverTimestamp(),
+          });
+        });
+      }
+    }
+
+    if (user.role === 'worker' && organisation) {
+      batch.update(organisationRef, {
+        workerIds: (organisation.workerIds || []).filter((workerId) => workerId !== params.userId),
+        updatedAt: serverTimestamp(),
+      });
+
+      const workerTeamsSnap = await getDocs(query(collection(db, 'teams'), where('workerIds', 'array-contains', params.userId))).catch(() => null);
+      workerTeamsSnap?.docs.forEach((teamDoc) => {
+        const team = teamDoc.data() as Partial<Team>;
+        batch.update(teamDoc.ref, {
+          workerIds: (team.workerIds || []).filter((workerId) => workerId !== params.userId),
+          updatedAt: serverTimestamp(),
+        });
+      });
+    }
+  }
+
+  batch.delete(userRef);
+  await batch.commit();
+
+  return { deletedOrganization };
+}
+
 export async function createTeam(managerId: string, name: string) {
   const trimmed = name.trim();
   if (!trimmed) throw new Error('Team name is required');
 
   const managerSnap = await getDoc(doc(db, 'users', managerId));
   const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+  const organizationId = manager.organizationId || null;
+  const managerIds = [
+    ...new Set([
+      managerId,
+      ...(await loadOrganisationManagerIds(organizationId)),
+    ].filter(Boolean)),
+  ] as string[];
 
   const teamRef = await addDoc(collection(db, 'teams'), {
     managerId,
-    managerIds: [managerId],
-    organizationId: manager.organizationId || null,
+    managerIds,
+    organizationId,
     organizationName: manager.organizationName || null,
     name: trimmed,
     workerIds: [],
@@ -981,9 +1114,9 @@ export async function createTeam(managerId: string, name: string) {
   await ensureTeamChatThreads({
     teamId: teamRef.id,
     teamName: trimmed,
-    managerIds: [managerId],
+    managerIds,
     workerIds: [],
-    organizationId: manager.organizationId || null,
+    organizationId,
   });
 }
 
@@ -1116,6 +1249,7 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
   const managerCanUseTeam = team.managerId === managerId
     || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && manager.role === 'manager');
   if (!managerCanUseTeam) throw new Error('Only managers in this organisation can invite workers to this team');
+  await ensureOrganisationManagersOnTeam(teamRef, team, managerId);
 
   const existingInvite = await loadActiveInvite({ managerId, teamId, email: normalizedEmail });
   if (existingInvite) {
@@ -1257,6 +1391,102 @@ async function sendInviteEmail(params: {
     reason: `Invite email queued in Firestore collection "${collectionName}" for delivery worker.`,
     via: 'firebase-mail-collection',
   };
+}
+
+async function queueEventRoleInviteEmail(params: {
+  email?: string | null;
+  eventName: string;
+  eventLocation?: string | null;
+  eventStartsAt?: string | null;
+  roleName: string;
+  managerId: string;
+  workerId: string;
+  eventId: string;
+  roleId: string;
+}) {
+  const email = params.email?.trim().toLowerCase();
+  if (!email) return;
+
+  const appLink = getInviteAppLink();
+  const eventDate = params.eventStartsAt
+    ? new Date(params.eventStartsAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : 'the scheduled event time';
+  const locationText = params.eventLocation?.trim() || 'Location TBD';
+  const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
+
+  await addDoc(collection(db, collectionName), {
+    to: [email],
+    message: {
+      subject: `Dispatch role invite: ${params.roleName} for ${params.eventName}`,
+      text: `You have been invited to ${params.roleName} for ${params.eventName} on ${eventDate} at ${locationText}. Open Dispatch to accept or join the waitlist: ${appLink}`,
+      html: `<p>You have been invited to <strong>${params.roleName}</strong> for <strong>${params.eventName}</strong>.</p><p><strong>When:</strong> ${eventDate}<br/><strong>Where:</strong> ${locationText}</p><p><a href="${appLink}">Open Dispatch</a> to accept or join the waitlist.</p>`,
+    },
+    dispatchEventRoleInvite: {
+      managerId: params.managerId,
+      workerId: params.workerId,
+      eventId: params.eventId,
+      roleId: params.roleId,
+      eventName: params.eventName,
+      roleName: params.roleName,
+      appLink,
+      email,
+    },
+    createdAt: serverTimestamp(),
+  });
+}
+
+async function queueEventRoleReminderEmail(params: {
+  eventId: string;
+  roleId: string;
+  workerId: string;
+}) {
+  const [eventSnap, workerSnap] = await Promise.all([
+    getDoc(doc(db, 'events', params.eventId)).catch(() => null),
+    getDoc(doc(db, 'users', params.workerId)).catch(() => null),
+  ]);
+  if (!eventSnap?.exists() || !workerSnap?.exists()) return;
+
+  const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+  const worker = workerSnap.data() as Partial<UserProfile>;
+  const email = worker.email?.trim().toLowerCase();
+  if (!email) return;
+
+  const role = (event.roles || []).find((item) => item.id === params.roleId);
+  if (!role || !(role.assignedWorkerIds || []).includes(params.workerId)) return;
+
+  const eventStart = new Date(event.startsAt);
+  if (Number.isNaN(eventStart.getTime()) || eventStart.getTime() <= Date.now()) return;
+
+  const reminderAt = new Date(Math.max(Date.now(), eventStart.getTime() - 12 * 60 * 60 * 1000));
+  const eventDate = eventStart.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const locationText = event.location?.trim() || 'Location TBD';
+  const appLink = getInviteAppLink();
+  const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
+  const reminderId = `event-reminder-${params.eventId}-${params.roleId}-${params.workerId}`.replace(/[^A-Za-z0-9_-]/g, '-');
+
+  await setDoc(doc(db, collectionName, reminderId), {
+    to: [email],
+    delivery: {
+      startTime: reminderAt,
+    },
+    message: {
+      subject: `Dispatch reminder: ${event.name} today`,
+      text: `Reminder: you are assigned to ${role.name} for ${event.name} at ${eventDate}. Location: ${locationText}. Open Dispatch: ${appLink}`,
+      html: `<p>Reminder: you are assigned to <strong>${role.name}</strong> for <strong>${event.name}</strong>.</p><p><strong>When:</strong> ${eventDate}<br/><strong>Where:</strong> ${locationText}</p><p><a href="${appLink}">Open Dispatch</a></p>`,
+    },
+    dispatchEventReminder: {
+      eventId: params.eventId,
+      roleId: params.roleId,
+      workerId: params.workerId,
+      eventName: event.name,
+      roleName: role.name,
+      appLink,
+      email,
+      reminderAt,
+    },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
 
 export async function retryWorkerInviteDelivery(params: { managerId: string; inviteId: string }) {
@@ -1623,6 +1853,7 @@ export async function inviteWorkerByEmailToTeam(params: {
     const managerCanUseTeam = team.managerId === managerId
       || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && manager.role === 'manager');
     if (!managerCanUseTeam) throw new Error('Only managers in this organisation can invite workers to this team');
+    await ensureOrganisationManagersOnTeam(teamRef, team, managerId);
     teamName = team.name || 'Dispatch Team';
     organizationId = team.organizationId || null;
     organizationName = team.organizationName || null;
@@ -2001,7 +2232,33 @@ export async function updateEventRoleAssignment(params: {
       responseOptions: ['accept', 'decline'],
       createdAt: serverTimestamp(),
     });
+
   });
+
+  if (action === 'assign') {
+    const [workerSnap, eventSnap] = await Promise.all([
+      getDoc(doc(db, 'users', workerId)).catch(() => null),
+      getDoc(doc(db, 'events', eventId)).catch(() => null),
+    ]);
+    const worker = workerSnap?.exists() ? workerSnap.data() as Partial<UserProfile> : null;
+    const event = eventSnap?.exists() ? eventSnap.data() as Omit<DispatchEvent, 'id'> : null;
+    const role = event?.roles?.find((item) => item.id === roleId);
+    if (!event || !role) return;
+
+    await queueEventRoleInviteEmail({
+      email: worker?.email,
+      managerId,
+      workerId,
+      eventId,
+      roleId,
+      eventName: event.name,
+      eventLocation: event.location || null,
+      eventStartsAt: event.startsAt || null,
+      roleName: role.name,
+    }).catch((error) => {
+      console.warn('Dispatch event role invite email queue failed', error);
+    });
+  }
 }
 
 export async function updateEventRoleDetails(params: {
@@ -2009,6 +2266,7 @@ export async function updateEventRoleDetails(params: {
   roleId: string;
   managerId: string;
   name: string;
+  tasks?: EventRole['tasks'];
 }) {
   const { eventId, roleId, managerId, name } = params;
   const nextName = name.trim();
@@ -2026,7 +2284,11 @@ export async function updateEventRoleDetails(params: {
     if (!roles.some((role) => role.id === roleId)) throw new Error('Role not found');
 
     tx.update(ref, {
-      roles: roles.map((role) => (role.id === roleId ? { ...role, name: nextName } : role)),
+      roles: roles.map((role) => (role.id === roleId ? {
+        ...role,
+        name: nextName,
+        ...(params.tasks ? { tasks: params.tasks } : {}),
+      } : role)),
       updatedAt: serverTimestamp(),
     });
   });
@@ -2051,7 +2313,12 @@ export async function deleteEventRole(params: {
     if (!roles.some((role) => role.id === roleId)) throw new Error('Role not found');
 
     const nextRoles = roles.filter((role) => role.id !== roleId);
-    const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
+    const workerIds = [...new Set(nextRoles.flatMap((role) => [
+      ...(role.assignedWorkerIds || []),
+      ...(role.waitlistWorkerIds || []),
+      ...(role.eligibleWaitlistWorkerIds || []),
+      ...(role.waitlistInviteWorkerIds || []),
+    ]))];
 
     tx.update(ref, {
       roles: nextRoles,
@@ -2059,6 +2326,27 @@ export async function deleteEventRole(params: {
       updatedAt: serverTimestamp(),
     });
   });
+
+  const notifications = await getDocs(
+    query(
+      collection(db, 'roleAssignmentNotifications'),
+      where('eventId', '==', eventId),
+      where('roleId', '==', roleId)
+    )
+  );
+  if (!notifications.empty) {
+    const batch = writeBatch(db);
+    notifications.docs.forEach((notificationDoc) => {
+      batch.update(notificationDoc.ref, {
+        status: 'declined',
+        statusReason: 'This role was deleted from the event.',
+        respondedAt: serverTimestamp(),
+        response: 'decline',
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  }
 }
 
 export async function cancelWorkerEventRole(params: {
@@ -2255,6 +2543,10 @@ export async function acceptEventRoleWaitlistInvite(params: {
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === params.roleId);
     if (!role) throw new Error('Role not found');
+    const alreadyAssignedToEvent = roles.some((item) => (item.assignedWorkerIds || []).includes(params.workerId));
+    if (alreadyAssignedToEvent && !(role.assignedWorkerIds || []).includes(params.workerId)) {
+      throw new Error('You already accepted a role for this event.');
+    }
     const hasWaitlistInvite = (role.waitlistInviteWorkerIds || []).includes(params.workerId);
     const isWaitlisted = (role.waitlistWorkerIds || []).includes(params.workerId);
     if (!hasWaitlistInvite && !isWaitlisted) {
@@ -2293,18 +2585,20 @@ export async function acceptEventRoleWaitlistInvite(params: {
     const workerName = workerSnap.exists()
       ? ((workerSnap.data() as Partial<UserProfile>).displayName || 'Worker')
       : 'Worker';
-    const nextRoles = roles.map((item) => (
-      item.id === params.roleId
-        ? {
+    const nextRoles = roles.map((item) => {
+      if (item.id === params.roleId) {
+        return {
           ...item,
           assignedWorkerIds: [...(item.assignedWorkerIds || []), params.workerId],
           waitlistWorkerIds: (item.waitlistWorkerIds || []).filter((id) => id !== params.workerId),
           waitlistInviteWorkerIds: (item.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
           eligibleWaitlistWorkerIds: (item.eligibleWaitlistWorkerIds || []).filter((id) => id !== params.workerId),
           openSlots: Math.max(0, (item.openSlots || 0) - 1),
-        }
-        : item
-    ));
+        };
+      }
+
+      return removeWorkerFromOtherRoleWaitlists(item, params.roleId, params.workerId);
+    });
     const workerIds = [...new Set(nextRoles.flatMap((item) => [
       ...(item.assignedWorkerIds || []),
       ...(item.waitlistWorkerIds || []),
@@ -2325,6 +2619,15 @@ export async function acceptEventRoleWaitlistInvite(params: {
       read: false,
       createdAt: serverTimestamp(),
     });
+
+  });
+
+  await queueEventRoleReminderEmail({
+    eventId: params.eventId,
+    roleId: params.roleId,
+    workerId: params.workerId,
+  }).catch((error) => {
+    console.warn('Dispatch event reminder email queue failed', error);
   });
 }
 
@@ -2359,12 +2662,18 @@ export async function respondToRoleAssignmentNotification(params: {
       const targetRole = notificationRole;
       if (!targetRole) throw new Error('Role not found');
       const alreadyAssigned = (targetRole.assignedWorkerIds || []).includes(params.workerId);
+      const alreadyAssignedToEvent = nextRoles.some((role) => (role.assignedWorkerIds || []).includes(params.workerId));
+      if (alreadyAssignedToEvent && !alreadyAssigned) {
+        throw new Error('You already accepted a role for this event.');
+      }
       if (!alreadyAssigned && Math.max(0, targetRole.openSlots || 0) <= 0) {
         throw new Error('This role is full. Join the waitlist instead.');
       }
 
       nextRoles = nextRoles.map((role) => {
-        if (role.id !== notification.roleId) return role;
+        if (role.id !== notification.roleId) {
+          return removeWorkerFromOtherRoleWaitlists(role, notification.roleId, params.workerId);
+        }
 
         const assignedWorkerIds = role.assignedWorkerIds || [];
         if (assignedWorkerIds.includes(params.workerId)) return role;
@@ -2465,6 +2774,27 @@ export async function respondToRoleAssignmentNotification(params: {
       const acceptedNotification = acceptedNotificationSnap.data() as Partial<RoleAssignmentNotification>;
       if (acceptedNotification.action !== 'assign' || !acceptedNotification.eventId || !acceptedNotification.roleId) return;
 
+      await queueEventRoleReminderEmail({
+        eventId: acceptedNotification.eventId,
+        roleId: acceptedNotification.roleId,
+        workerId: params.workerId,
+      }).catch((error) => {
+        console.warn('Dispatch event reminder email queue failed', error);
+      });
+
+      const acceptedEventSnap = await getDoc(doc(db, 'events', acceptedNotification.eventId));
+      const acceptedEvent = acceptedEventSnap.exists() ? acceptedEventSnap.data() as Omit<DispatchEvent, 'id'> : null;
+      const acceptedRole = acceptedEvent?.roles?.find((role) => role.id === acceptedNotification.roleId);
+
+      const workerEventNotifications = await getDocs(
+        query(
+          collection(db, 'roleAssignmentNotifications'),
+          where('eventId', '==', acceptedNotification.eventId),
+          where('workerId', '==', params.workerId),
+          where('action', '==', 'assign'),
+          where('status', '==', 'pending')
+        )
+      );
       const competingNotifications = await getDocs(
         query(
           collection(db, 'roleAssignmentNotifications'),
@@ -2476,10 +2806,24 @@ export async function respondToRoleAssignmentNotification(params: {
       );
 
       const batch = writeBatch(db);
+      workerEventNotifications.docs
+        .filter((docSnap) => docSnap.id !== params.notificationId)
+        .forEach((docSnap) => {
+          batch.update(docSnap.ref, {
+            status: 'declined',
+            statusReason: 'Worker accepted another role for this event. Join the waitlist if this role opens again.',
+            respondedAt: serverTimestamp(),
+            response: 'decline',
+            updatedAt: serverTimestamp(),
+          });
+        });
       competingNotifications.docs
         .filter((docSnap) => docSnap.id !== params.notificationId)
         .forEach((docSnap) => {
           batch.update(docSnap.ref, {
+            roleOpenSlots: Math.max(0, acceptedRole?.openSlots || 0),
+            roleAssignedWorkerIds: acceptedRole?.assignedWorkerIds || [],
+            roleWaitlistWorkerIds: acceptedRole?.waitlistWorkerIds || [],
             statusReason: 'This role has been filled. Join the waitlist to be considered if it opens again.',
             updatedAt: serverTimestamp(),
           });

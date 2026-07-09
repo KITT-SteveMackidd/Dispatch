@@ -61,6 +61,7 @@ export type DispatchEvent = {
   roles: EventRole[];
   pendingInviteNotificationId?: string;
   pendingInviteRoleId?: string;
+  pendingInviteNotificationIds?: Record<string, string>;
 };
 
 export type Team = {

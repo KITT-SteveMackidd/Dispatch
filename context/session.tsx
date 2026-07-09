@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   GoogleAuthProvider,
   OAuthProvider,
   createUserWithEmailAndPassword,
+  deleteUser,
   getAdditionalUserInfo,
   onAuthStateChanged,
   sendEmailVerification,
@@ -16,7 +17,7 @@ import {
 } from 'firebase/auth';
 import { auth, db, firebaseConfigError } from '@/lib/firebase';
 import { AppRole, UserProfile } from '@/types/dispatch';
-import { acceptPendingInvitesForUser, acceptPendingWorkerInvitesForUser, linkPendingManagerInvites } from '@/services/dispatch';
+import { acceptPendingInvitesForUser, acceptPendingWorkerInvitesForUser, deleteDispatchAccount, linkPendingManagerInvites } from '@/services/dispatch';
 
 type SessionContextType = {
   profile: UserProfile | null;
@@ -34,6 +35,7 @@ type SessionContextType = {
   sendVerificationEmail: () => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
   revokeSession: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -157,6 +159,45 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     return unsub;
   }, []);
+
+  useEffect(() => {
+    if (firebaseConfigError || !authUser) return undefined;
+
+    return onSnapshot(
+      doc(db, 'users', authUser.uid),
+      (snap) => {
+        if (!snap.exists()) {
+          setProfile(null);
+          setNeedsProfile(true);
+          return;
+        }
+
+        const data = snap.data() as Partial<UserProfile>;
+        const role = normalizeRole(data.role);
+        if (!role) {
+          setProfile(null);
+          setNeedsProfile(true);
+          return;
+        }
+
+        setProfile({
+          uid: authUser.uid,
+          displayName: data.displayName || 'Dispatch User',
+          role,
+          organizationId: data.organizationId || null,
+          organizationName: data.organizationName || null,
+          email: data.email || null,
+          canonicalEmail: data.canonicalEmail || null,
+          phoneNumber: data.phoneNumber,
+        });
+        setNeedsProfile(false);
+      },
+      () => {
+        setProfile(null);
+        setNeedsProfile(true);
+      }
+    );
+  }, [authUser]);
 
   const signIn = async (email: string, password: string) => {
     assertFirebaseConfigured();
@@ -360,6 +401,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNeedsProfile(false);
   };
 
+  const deleteAccount = async () => {
+    assertFirebaseConfigured();
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not authenticated');
+
+    await deleteDispatchAccount({ userId: user.uid });
+    await deleteUser(user);
+    setAuthUser(null);
+    setProfile(null);
+    setNeedsProfile(false);
+  };
+
   const signOut = async () => {
     assertFirebaseConfigured();
     await firebaseSignOut(auth);
@@ -384,6 +437,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       sendVerificationEmail,
       refreshAuthUser,
       revokeSession,
+      deleteAccount,
       signOut,
     }),
     [profile, authUser, loading, needsProfile, requiresEmailVerification]

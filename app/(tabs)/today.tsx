@@ -68,6 +68,15 @@ function getWorkerSummaries(event: DispatchEvent): WorkerSummary[] {
   return [...map.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
 }
 
+function getWorkerRoleSubtitle(event: DispatchEvent, workerId?: string | null) {
+  if (!workerId) return '';
+  return event.roles
+    .filter((role) => (role.assignedWorkerIds || []).includes(workerId))
+    .map((role) => role.name)
+    .filter(Boolean)
+    .join(', ');
+}
+
 function formatOrdinalDay(date: Date) {
   const day = date.getDate();
   const remainder = day % 10;
@@ -931,6 +940,7 @@ export default function TodayScreen() {
           const isExpanded = !!expandedEventIds[item.id];
           const workers = isManager ? getWorkerSummaries(item) : [];
           const managerInfo = managerInfoById[item.managerId];
+          const workerRoleSubtitle = profile?.role === 'worker' ? getWorkerRoleSubtitle(item, profile.uid) : '';
           const nextTask = profile?.role === 'worker' ? workerNextTask(item, profile.uid) : null;
           const nextTaskDueAtMs = nextTask ? getTaskDueAtMs(item, nextTask) : Number.POSITIVE_INFINITY;
           const countdownClock = formatCountdownClock(nextTaskDueAtMs);
@@ -945,6 +955,9 @@ export default function TodayScreen() {
                 <View style={styles.cardTitleStack}>
                   <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
                   <Text style={isDarkMode ? styles.eventDateTimeSubtitleDark : styles.eventDateTimeSubtitleLight}>{eventDate} - {eventTime}</Text>
+                  {workerRoleSubtitle ? (
+                    <Text style={isDarkMode ? styles.workerRoleSubtitleDark : styles.workerRoleSubtitleLight}>{workerRoleSubtitle}</Text>
+                  ) : null}
                 </View>
                 {isManager && overdueTaskCount > 0 ? (
                   <View style={styles.overdueChip}>
@@ -1126,6 +1139,8 @@ const styles = StyleSheet.create({
   figmaCardTitleDark: { color: '#F7F7F7', fontSize: 16, fontWeight: '700' },
   eventDateTimeSubtitleLight: { color: '#121212', fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
   eventDateTimeSubtitleDark: { color: '#F7F7F7', fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
+  workerRoleSubtitleLight: { color: '#121212', fontSize: 13, lineHeight: 17, fontWeight: '800', marginTop: 2 },
+  workerRoleSubtitleDark: { color: '#F7F7F7', fontSize: 13, lineHeight: 17, fontWeight: '800', marginTop: 2 },
   figmaExpandLight: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
   figmaExpandDark: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
   figmaCardMetaLight: { color: '#121212', fontSize: 12, fontWeight: '200' },
