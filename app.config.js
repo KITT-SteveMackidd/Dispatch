@@ -3,6 +3,8 @@ const projectId =
   process.env.EAS_PROJECT_ID ||
   '7d0f7257-64f9-443f-ba27-a75af5fbafaa';
 const owner = process.env.EXPO_PUBLIC_EXPO_OWNER || process.env.EXPO_OWNER || 'smackidd';
+const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE;
+const updatesEnabled = buildProfile !== 'preview';
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
@@ -46,28 +48,17 @@ module.exports = ({ config: baseConfig }) => {
       },
     ]);
   }
-  if (
-    process.env.SENTRY_ORG
-    && process.env.SENTRY_PROJECT
-    && !plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === '@sentry/react-native/expo')
-  ) {
-    plugins.push([
-      '@sentry/react-native/expo',
-      {
-        organization: process.env.SENTRY_ORG,
-        project: process.env.SENTRY_PROJECT,
-      },
-    ]);
-  }
   config.plugins = plugins;
 
-  config.updates = {
-    ...(config.updates || {}),
-    enabled: true,
-    checkAutomatically: 'ON_LOAD',
-    fallbackToCacheTimeout: 0,
-    ...(projectId ? { url: `https://u.expo.dev/${projectId}` } : {}),
-  };
+  config.updates = updatesEnabled
+    ? {
+        ...(config.updates || {}),
+        enabled: true,
+        checkAutomatically: 'ON_LOAD',
+        fallbackToCacheTimeout: 0,
+        ...(projectId ? { url: `https://u.expo.dev/${projectId}` } : {}),
+      }
+    : { enabled: false };
 
   config.extra = {
     ...(config.extra || {}),

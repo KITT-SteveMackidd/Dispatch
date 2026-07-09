@@ -10,14 +10,9 @@ import 'react-native-reanimated';
 
 import { SessionProvider, useSession } from '@/context/session';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
-import { captureStartupError, wrapWithSentry } from '@/lib/sentry';
 import { usePushNotificationBridge } from '@/services/push-notifications';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
-  useEffect(() => {
-    captureStartupError(error);
-  }, [error]);
-
   return (
     <View style={styles.errorScreen}>
       <ScrollView contentContainerStyle={styles.errorContent}>
@@ -96,7 +91,7 @@ function RootNavigator() {
   );
 }
 
-export default wrapWithSentry(RootLayout);
+export default RootLayout;
 
 function PushNotificationBridge() {
   usePushNotificationBridge();
