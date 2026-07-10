@@ -17,13 +17,7 @@ export default function TabLayout() {
   const managerOrganisationPromptShownRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (profile?.role !== 'worker') return;
-    if (profile.organizationId) {
-      if (workerInvitePromptShownRef.current === profile.uid) {
-        workerInvitePromptShownRef.current = null;
-      }
-      return;
-    }
+    if (profile?.role !== 'worker' || profile.organizationId) return;
     if (workerInvitePromptShownRef.current === profile.uid) return;
 
     workerInvitePromptShownRef.current = profile.uid;

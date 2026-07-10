@@ -11,7 +11,7 @@ const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
 
 export default function ProfileScreen() {
-  const { profile, authUser, deleteAccount, refreshProfile, signOut } = useSession();
+  const { profile, authUser, refreshProfile, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -22,7 +22,6 @@ export default function ProfileScreen() {
   const [organisationModalOpen, setOrganisationModalOpen] = useState(false);
   const [organisationName, setOrganisationName] = useState('');
   const [creatingOrganisation, setCreatingOrganisation] = useState(false);
-  const [deletingAccount, setDeletingAccount] = useState(false);
   const organisationPromptShownRef = useRef<string | null>(null);
   const isManagerWithoutOrganisation = profile?.role === 'manager' && !profile.organizationId;
   const displayName = useMemo(
@@ -92,42 +91,6 @@ export default function ProfileScreen() {
     }
   };
 
-  const confirmDeleteAccount = () => {
-    if (!profile?.uid || deletingAccount) return;
-
-    const managerSoleOrgMessage = profile.role === 'manager' && profile.organizationId
-      ? ' If you are the only manager in this organization, the organization will also be deleted and workers will no longer belong to it.'
-      : '';
-
-    Alert.alert(
-      'Delete account?',
-      `This permanently deletes your Dispatch account.${managerSoleOrgMessage}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setDeletingAccount(true);
-              await deleteAccount();
-              router.replace('/(auth)/signin');
-            } catch (error) {
-              const message = error instanceof Error ? error.message : 'Unable to delete account.';
-              const needsRecentLogin = /recent|requires-recent-login|auth\/requires-recent-login/i.test(message);
-              Alert.alert(
-                'Unable to delete account',
-                needsRecentLogin ? 'For your security, please sign out, sign back in, and try deleting your account again.' : message
-              );
-            } finally {
-              setDeletingAccount(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
@@ -176,14 +139,6 @@ export default function ProfileScreen() {
       </Pressable>
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => stub('Help & Support')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Help & Support</Text>
-      </Pressable>
-      <Pressable
-        style={[styles.row, isDarkMode ? styles.deleteRowDark : styles.deleteRowLight, deletingAccount && styles.disabled]}
-        onPress={confirmDeleteAccount}
-        disabled={deletingAccount}>
-        <Text style={[styles.rowText, isDarkMode ? styles.deleteRowTextDark : styles.deleteRowTextLight]}>
-          {deletingAccount ? 'Deleting account...' : 'Delete Account'}
-        </Text>
       </Pressable>
 
       <Modal visible={notificationsOpen} animationType="slide" transparent onRequestClose={() => setNotificationsOpen(false)}>
@@ -266,10 +221,6 @@ const styles = StyleSheet.create({
   rowText: { fontWeight: '600' },
   rowTextLight: { color: '#1e293b' },
   rowTextDark: { color: '#F4F8FF' },
-  deleteRowLight: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  deleteRowDark: { backgroundColor: '#2f1018', borderColor: '#7f1d1d' },
-  deleteRowTextLight: { color: '#b91c1c' },
-  deleteRowTextDark: { color: '#fecaca' },
   createOrganisationRow: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
   createOrganisationText: { color: '#061229', fontWeight: '700' },
   input: { marginTop: 14, padding: 13, borderRadius: 12, borderWidth: 1 },
