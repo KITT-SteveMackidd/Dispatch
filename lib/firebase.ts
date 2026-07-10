@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuth, initializeAuth } from 'firebase/auth';
 import type { Auth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
@@ -42,6 +43,21 @@ const app: FirebaseApp | null = firebaseConfigError
     : initializeApp(firebaseConfig);
 const storageBucketUrl = firebaseConfig.storageBucket ? `gs://${firebaseConfig.storageBucket}` : undefined;
 
-export const auth = app ? getAuth(app) : (null as unknown as Auth);
+function getDispatchAuth(firebaseApp: FirebaseApp): Auth {
+  try {
+    const reactNativePersistence = (require('firebase/auth') as {
+      getReactNativePersistence?: (storage: typeof AsyncStorage) => unknown;
+    }).getReactNativePersistence;
+    if (!reactNativePersistence) return getAuth(firebaseApp);
+
+    return initializeAuth(firebaseApp, {
+      persistence: reactNativePersistence(AsyncStorage) as never,
+    });
+  } catch {
+    return getAuth(firebaseApp);
+  }
+}
+
+export const auth = app ? getDispatchAuth(app) : (null as unknown as Auth);
 export const db = app ? getFirestore(app) : (null as unknown as Firestore);
 export const storage = app ? getStorage(app, storageBucketUrl) : (null as unknown as FirebaseStorage);

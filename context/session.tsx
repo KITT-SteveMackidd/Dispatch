@@ -16,7 +16,6 @@ import {
 } from 'firebase/auth';
 import { auth, db, firebaseConfigError } from '@/lib/firebase';
 import { AppRole, UserProfile } from '@/types/dispatch';
-import { acceptPendingInvitesForUser, acceptPendingWorkerInvitesForUser, linkPendingManagerInvites } from '@/services/dispatch';
 
 type SessionContextType = {
   profile: UserProfile | null;
@@ -98,15 +97,18 @@ async function syncInviteLinking(userId: string, email?: string | null, role?: A
   if (!normalizedEmail) return;
 
   if (role === 'worker') {
+    const { acceptPendingWorkerInvitesForUser } = await import('@/services/dispatch');
     await acceptPendingWorkerInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
     return;
   }
 
   if (role === 'manager') {
+    const { linkPendingManagerInvites } = await import('@/services/dispatch');
     await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
     return;
   }
 
+  const { acceptPendingInvitesForUser, linkPendingManagerInvites } = await import('@/services/dispatch');
   await acceptPendingInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
   await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
 }
@@ -322,6 +324,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     );
 
     if (params.role === 'worker') {
+      const { acceptPendingWorkerInvitesForUser } = await import('@/services/dispatch');
       await acceptPendingWorkerInvitesForUser({ userId: user.uid, email: user.email || '' }).catch(() => null);
     } else {
       await syncInviteLinking(user.uid, user.email);

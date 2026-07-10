@@ -10,7 +10,6 @@ import 'react-native-reanimated';
 
 import { SessionProvider, useSession } from '@/context/session';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
-import { usePushNotificationBridge } from '@/services/push-notifications';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   return (
@@ -102,6 +101,7 @@ function RootNavigator() {
 }
 
 function PushNotificationBridge() {
+  const { usePushNotificationBridge } = require('@/services/push-notifications') as typeof import('@/services/push-notifications');
   usePushNotificationBridge();
   return null;
 }
