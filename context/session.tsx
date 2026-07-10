@@ -15,6 +15,7 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { auth, db, firebaseConfigError } from '@/lib/firebase';
+import { captureStartupIssue, markStartup } from '@/lib/sentry';
 import { AppRole, UserProfile } from '@/types/dispatch';
 
 type SessionContextType = {
@@ -140,7 +141,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const requiresEmailVerification = Boolean(authUser && !authUser.emailVerified);
 
   useEffect(() => {
+    markStartup('session_effect_started', {
+      firebaseConfigError: Boolean(firebaseConfigError),
+    });
+
     if (firebaseConfigError) {
+      captureStartupIssue('Dispatch Firebase config missing in build', {
+        firebaseConfigError,
+      });
       setAuthUser(null);
       setProfile(null);
       setNeedsProfile(false);
@@ -152,6 +160,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const timeout = setTimeout(() => {
       if (authStateReceived) return;
       const currentUser = auth.currentUser;
+      captureStartupIssue('Dispatch auth state startup timeout', {
+        timeoutMs: SESSION_STARTUP_TIMEOUT_MS,
+        hasCurrentUser: Boolean(currentUser),
+      });
       setAuthUser(currentUser);
       setProfile(null);
       setNeedsProfile(Boolean(currentUser));
@@ -159,6 +171,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }, SESSION_STARTUP_TIMEOUT_MS);
 
     const unsub = onAuthStateChanged(auth, async (user) => {
+      markStartup('auth_state_received', {
+        hasUser: Boolean(user),
+        emailVerified: Boolean(user?.emailVerified),
+      });
       authStateReceived = true;
       clearTimeout(timeout);
       setAuthUser(user);
@@ -171,14 +187,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        markStartup('profile_load_started', { uid: user.uid });
         const p = await withTimeout(
           loadProfile(user.uid),
           PROFILE_STARTUP_TIMEOUT_MS,
           'Timed out loading profile.'
         );
+        markStartup('profile_load_finished', {
+          hasProfile: Boolean(p),
+          role: p?.role,
+          hasOrganization: Boolean(p?.organizationId),
+        });
         setProfile(p);
         setNeedsProfile(!p);
-      } catch {
+      } catch (profileError) {
+        captureStartupIssue('Dispatch profile startup load failed', {
+          uid: user.uid,
+          message: profileError instanceof Error ? profileError.message : String(profileError),
+        });
         setProfile(null);
         setNeedsProfile(true);
       } finally {

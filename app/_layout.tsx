@@ -8,6 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
 import { splashFullLogoSource } from '@/constants/branding';
+import { captureStartupIssue, markStartup, Sentry } from '@/lib/sentry';
 
 type SessionModule = typeof import('@/context/session');
 type ThemeModule = typeof import('@/context/theme');
@@ -37,7 +38,7 @@ export const unstable_settings = {
 
 const STARTUP_TIMEOUT_MS = 8000;
 
-export default function RootLayout() {
+function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     Inter: require('../assets/fonts/Inter-Regular.ttf'),
@@ -51,7 +52,13 @@ export default function RootLayout() {
   const [startupError, setStartupError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const timeout = setTimeout(() => setStartupTimedOut(true), STARTUP_TIMEOUT_MS);
+    markStartup('root_layout_mounted');
+    const timeout = setTimeout(() => {
+      setStartupTimedOut(true);
+      captureStartupIssue('Dispatch startup font timeout', {
+        timeoutMs: STARTUP_TIMEOUT_MS,
+      });
+    }, STARTUP_TIMEOUT_MS);
     return () => clearTimeout(timeout);
   }, []);
 
@@ -61,11 +68,16 @@ export default function RootLayout() {
     if (!appReady || startupModules || startupError) return;
 
     try {
+      markStartup('loading_startup_modules');
       setStartupModules({
         session: require('@/context/session') as SessionModule,
         theme: require('@/context/theme') as ThemeModule,
       });
+      markStartup('startup_modules_loaded');
     } catch (moduleError) {
+      captureStartupIssue('Dispatch startup module load failed', {
+        message: moduleError instanceof Error ? moduleError.message : String(moduleError),
+      });
       setStartupError(moduleError instanceof Error ? moduleError : new Error('Unable to load startup modules.'));
     }
   }, [appReady, startupModules, startupError]);
@@ -87,6 +99,10 @@ function LoadedApp({ modules }: { modules: StartupModules }) {
   const { SessionProvider } = modules.session;
   const { ThemeProvider: AppThemeProvider } = modules.theme;
 
+  useEffect(() => {
+    markStartup('render_loaded_app');
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SessionProvider>
@@ -103,6 +119,16 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
   const { useThemeMode } = modules.theme;
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
+
+  useEffect(() => {
+    markStartup('root_navigator_state', {
+      hasAuthUser: Boolean(authUser),
+      hasProfile: Boolean(profile),
+      needsProfile,
+      loading,
+      requiresEmailVerification,
+    });
+  }, [authUser, profile, needsProfile, loading, requiresEmailVerification]);
 
   if (loading) return <StartupSplash />;
 
@@ -126,6 +152,8 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
     </ThemeProvider>
   );
 }
+
+export default Sentry.wrap(RootLayout);
 
 function PushNotificationBridge() {
   const { usePushNotificationBridge } = require('@/services/push-notifications') as typeof import('@/services/push-notifications');
