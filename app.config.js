@@ -29,7 +29,7 @@ module.exports = ({ config: baseConfig }) => {
   };
 
   config.runtimeVersion = {
-    policy: 'appVersion',
+    policy: 'fingerprint',
   };
 
   const plugins = [...(config.plugins || [])];
