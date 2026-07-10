@@ -16,6 +16,7 @@ import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
 import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
+import { firebaseConfigError, firebaseConfigWarnings } from '@/lib/firebase';
 
 const lightSignInLogoSource = authLightLogoSource;
 const darkSignInLogoSource = authDarkLogoSource;
@@ -101,6 +102,16 @@ export default function SignInScreen() {
         </View>
 
         <View style={authStyles.lightForm}>
+          {firebaseConfigError ? (
+            <Text style={{ color: '#b42318', fontSize: 13, fontWeight: '700' }}>
+              {firebaseConfigError}
+            </Text>
+          ) : null}
+          {firebaseConfigWarnings.map((warning) => (
+            <Text key={warning} style={{ color: '#b45309', fontSize: 13, fontWeight: '700' }}>
+              {warning}
+            </Text>
+          ))}
           <TextInput
             value={email}
             onChangeText={setEmail}
@@ -179,6 +190,16 @@ export default function SignInScreen() {
         </View>
 
         <View style={authStyles.lightForm}>
+          {firebaseConfigError ? (
+            <Text style={{ color: '#fca5a5', fontSize: 13, fontWeight: '700' }}>
+              {firebaseConfigError}
+            </Text>
+          ) : null}
+          {firebaseConfigWarnings.map((warning) => (
+            <Text key={warning} style={{ color: '#fbbf24', fontSize: 13, fontWeight: '700' }}>
+              {warning}
+            </Text>
+          ))}
           <TextInput
             value={email}
             onChangeText={setEmail}

@@ -103,15 +103,15 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
       {authUser && profile?.uid && !requiresEmailVerification ? <PushNotificationBridge /> : null}
-      {!loading && !authUser ? <Redirect href="/(auth)/signin" /> : null}
+      {loading || !authUser ? <Redirect href="/(auth)/signin" /> : null}
       {!loading && authUser && requiresEmailVerification ? <Redirect href="/(auth)/verify-email" /> : null}
       {!loading && authUser && !requiresEmailVerification && needsProfile && !profile ? <Redirect href="/(auth)/setup" /> : null}
       <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signin" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signup" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/setup" options={{ title: 'Complete Profile' }} />
         <Stack.Screen name="(auth)/verify-email" options={{ title: 'Verify Email' }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="account-settings" options={{ title: 'Account Settings' }} />
         <Stack.Screen name="team/[teamId]" options={{ title: 'Team' }} />
         <Stack.Screen name="chat/[workerId]" options={{ headerShown: false }} />

@@ -36,6 +36,12 @@ export const firebaseConfigError = missingFirebaseConfigKeys.length
   ? `Missing Firebase configuration: ${missingFirebaseConfigKeys.join(', ')}`
   : null;
 
+export const firebaseConfigWarnings = [
+  firebaseConfig.appId && !firebaseConfig.appId.includes(':web:')
+    ? 'Firebase App ID does not look like a Web app ID. Use the Firebase Web app config for EXPO_PUBLIC_FIREBASE_APP_ID.'
+    : null,
+].filter(Boolean) as string[];
+
 const app: FirebaseApp | null = firebaseConfigError
   ? null
   : getApps().length
