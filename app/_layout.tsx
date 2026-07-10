@@ -3,7 +3,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { useFonts } from 'expo-font';
 import { Redirect, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
@@ -33,6 +33,8 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
+const STARTUP_TIMEOUT_MS = 8000;
+
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -42,16 +44,24 @@ export default function RootLayout() {
     'Inter-ExtraBold': require('../assets/fonts/Inter-ExtraBold.ttf'),
     ...FontAwesome.font,
   });
+  const [startupTimedOut, setStartupTimedOut] = useState(false);
 
   useEffect(() => {
-    if (error) throw error;
-  }, [error]);
+    const timeout = setTimeout(() => setStartupTimedOut(true), STARTUP_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  const appReady = loaded || startupTimedOut || Boolean(error);
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
-  }, [loaded]);
+    if (appReady) SplashScreen.hideAsync().catch(() => undefined);
+  }, [appReady]);
 
-  if (!loaded) return null;
+  if (!appReady) return null;
+
+  if (error) {
+    return <ErrorBoundary error={error} retry={() => undefined} />;
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
