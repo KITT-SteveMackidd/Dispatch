@@ -3,15 +3,15 @@
 This repo is now set up for:
 
 - **EAS Update on every push to `master`** for JS/assets changes
-- **Manual GitHub Actions development builds** for Android or iOS
-- **Expo development client** builds that can be installed on your phone
+- **Manual GitHub Actions internal builds** for Android or iOS
+- **Standalone preview builds** that can be installed on your phone
 
 ## What was added
 
 - `app.config.js` for dynamic Expo owner/project metadata
 - `eas.json` with `development`, `preview`, and `production` profiles
 - `.github/workflows/eas-update.yml` to publish updates on `master`
-- `.github/workflows/eas-build-development.yml` to trigger dev builds manually
+- `.github/workflows/eas-build-development.yml` to trigger internal builds manually
 - `expo-updates` dependency
 
 ## One-time manual setup
@@ -74,7 +74,7 @@ When the build finishes, Expo/EAS will provide an install page / QR code.
 - **Android:** open the install link or scan the QR code on the device, then install the APK
 - **iPhone:** install through the EAS device install flow / ad hoc install prompted by Expo
 
-This preview build opens as a normal standalone app and does **not** require `npx expo start --dev-client`.
+This preview build opens as a normal standalone app and does **not** require a local dev server.
 
 ## 5) Use remote updates from `master`
 
@@ -84,15 +84,13 @@ After the preview build is installed:
 - GitHub Actions publishes an **EAS Update** to the `production` branch
 - the installed preview app will fetch that update on launch because the preview profile is pinned to the same update channel
 
-## Optional: keep the development client too
+## Optional: build an internal development app
 
-The **Build development client** workflow still exists for debugging and local dev-server work:
+The **Build development app** workflow still exists for internal test installs on the `development` update channel:
 
 ```bash
-npx expo start --dev-client
+npx eas build --profile development --platform ios
 ```
-
-Use that only when you specifically want live local development.
 
 ## Important note about native changes
 
