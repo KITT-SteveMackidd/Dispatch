@@ -1,13 +1,10 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
 import { Redirect, Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
-import { splashFullLogoSource } from '@/constants/branding';
 import { captureStartupIssue, markStartup, Sentry } from '@/lib/sentry';
 
 type SessionModule = typeof import('@/context/session');
@@ -36,38 +33,12 @@ export const unstable_settings = {
   initialRouteName: '(auth)/signin',
 };
 
-const STARTUP_TIMEOUT_MS = 8000;
-const ROOT_NAVIGATOR_TIMEOUT_MS = 10000;
-
 function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    Inter: require('../assets/fonts/Inter-Regular.ttf'),
-    'Inter-SemiBold': require('../assets/fonts/Inter-SemiBold.ttf'),
-    'Inter-Bold': require('../assets/fonts/Inter-Bold.ttf'),
-    'Inter-ExtraBold': require('../assets/fonts/Inter-ExtraBold.ttf'),
-    ...FontAwesome.font,
-  });
-  const [startupTimedOut, setStartupTimedOut] = useState(false);
   const [startupModules, setStartupModules] = useState<StartupModules | null>(null);
   const [startupError, setStartupError] = useState<Error | null>(null);
 
   useEffect(() => {
     markStartup('root_layout_mounted');
-    const timeout = setTimeout(() => {
-      setStartupTimedOut(true);
-      captureStartupIssue('Dispatch startup font timeout', {
-        timeoutMs: STARTUP_TIMEOUT_MS,
-      });
-    }, STARTUP_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, []);
-
-  const appReady = loaded || startupTimedOut || Boolean(error);
-
-  useEffect(() => {
-    if (!appReady || startupModules || startupError) return;
-
     try {
       markStartup('loading_startup_modules');
       setStartupModules({
@@ -81,16 +52,14 @@ function RootLayout() {
       });
       setStartupError(moduleError instanceof Error ? moduleError : new Error('Unable to load startup modules.'));
     }
-  }, [appReady, startupModules, startupError]);
+  }, []);
 
-  if (!appReady) return <StartupSplash />;
-
-  if (error || startupError) {
-    return <ErrorBoundary error={error || startupError || new Error('Startup failed.')} retry={() => undefined} />;
+  if (startupError) {
+    return <ErrorBoundary error={startupError} retry={() => undefined} />;
   }
 
   if (!startupModules) {
-    return <StartupSplash />;
+    return <BootScreen />;
   }
 
   return <LoadedApp modules={startupModules} />;
@@ -120,7 +89,6 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
   const { useThemeMode } = modules.theme;
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
-  const [sessionTimedOut, setSessionTimedOut] = useState(false);
 
   useEffect(() => {
     markStartup('root_navigator_state', {
@@ -129,36 +97,15 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
       needsProfile,
       loading,
       requiresEmailVerification,
-      sessionTimedOut,
     });
-  }, [authUser, profile, needsProfile, loading, requiresEmailVerification, sessionTimedOut]);
-
-  useEffect(() => {
-    if (!loading) {
-      setSessionTimedOut(false);
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      captureStartupIssue('Dispatch root navigator session timeout', {
-        timeoutMs: ROOT_NAVIGATOR_TIMEOUT_MS,
-        hasAuthUser: Boolean(authUser),
-        hasProfile: Boolean(profile),
-      });
-      setSessionTimedOut(true);
-    }, ROOT_NAVIGATOR_TIMEOUT_MS);
-
-    return () => clearTimeout(timeout);
-  }, [authUser, loading, profile]);
-
-  if (loading && !sessionTimedOut) return <StartupSplash />;
+  }, [authUser, profile, needsProfile, loading, requiresEmailVerification]);
 
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
       {authUser && profile?.uid && !requiresEmailVerification ? <PushNotificationBridge /> : null}
-      {!authUser ? <Redirect href="/(auth)/signin" /> : null}
-      {authUser && requiresEmailVerification ? <Redirect href="/(auth)/verify-email" /> : null}
-      {authUser && !requiresEmailVerification && needsProfile && !profile ? <Redirect href="/(auth)/setup" /> : null}
+      {!loading && !authUser ? <Redirect href="/(auth)/signin" /> : null}
+      {!loading && authUser && requiresEmailVerification ? <Redirect href="/(auth)/verify-email" /> : null}
+      {!loading && authUser && !requiresEmailVerification && needsProfile && !profile ? <Redirect href="/(auth)/setup" /> : null}
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signin" options={{ headerShown: false }} />
@@ -182,24 +129,33 @@ function PushNotificationBridge() {
   return null;
 }
 
-function StartupSplash() {
+function BootScreen() {
   return (
-    <View style={styles.startupSplash}>
-      <Image source={splashFullLogoSource} style={styles.startupLogo} resizeMode="contain" />
+    <View style={styles.bootScreen}>
+      <Text style={styles.bootTitle}>Dispatch</Text>
+      <Text style={styles.bootText}>Starting...</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  startupSplash: {
+  bootScreen: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#061229',
+    padding: 24,
   },
-  startupLogo: {
-    width: '100%',
-    aspectRatio: 402 / 310,
+  bootTitle: {
+    color: '#ffffff',
+    fontSize: 34,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  bootText: {
+    color: '#dbeafe',
+    fontSize: 16,
+    fontWeight: '700',
   },
   errorScreen: {
     flex: 1,

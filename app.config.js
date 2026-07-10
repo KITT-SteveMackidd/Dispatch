@@ -9,9 +9,6 @@ const updatesEnabled = buildProfile === 'production';
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
   config.splash = {
-    ...(config.splash || {}),
-    image: './assets/images/dispatch-splash-full.png',
-    resizeMode: config.splash?.resizeMode || 'contain',
     backgroundColor: '#061229',
   };
 
@@ -41,9 +38,6 @@ module.exports = ({ config: baseConfig }) => {
     plugins.push([
       'expo-splash-screen',
       {
-        image: './assets/images/dispatch-splash-full.png',
-        imageWidth: 402,
-        resizeMode: 'contain',
         backgroundColor: '#061229',
       },
     ]);
