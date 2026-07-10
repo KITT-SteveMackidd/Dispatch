@@ -7,6 +7,8 @@ const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EA
 const updatesEnabled = buildProfile === 'production';
 const sentryOrg = process.env.SENTRY_ORG;
 const sentryProject = process.env.SENTRY_PROJECT;
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
+const shouldUploadSentrySourceMaps = Boolean(sentryOrg && sentryProject && sentryAuthToken);
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
@@ -39,12 +41,11 @@ module.exports = ({ config: baseConfig }) => {
   config.runtimeVersion = 'dispatch-sdk54-rn081-v1';
 
   const plugins = [...(config.plugins || [])];
-  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === '@sentry/react-native/expo')) {
-    plugins.push(
-      sentryOrg && sentryProject
-        ? ['@sentry/react-native/expo', { organization: sentryOrg, project: sentryProject }]
-        : '@sentry/react-native/expo'
-    );
+  if (
+    shouldUploadSentrySourceMaps &&
+    !plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === '@sentry/react-native/expo')
+  ) {
+    plugins.push(['@sentry/react-native/expo', { organization: sentryOrg, project: sentryProject }]);
   }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-splash-screen')) {
     plugins.push([
