@@ -8,6 +8,12 @@ const updatesEnabled = buildProfile === 'production';
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
+  config.splash = {
+    ...(config.splash || {}),
+    image: config.splash?.image || './assets/images/splash-icon.png',
+    resizeMode: config.splash?.resizeMode || 'contain',
+    backgroundColor: '#06132a',
+  };
 
   if (owner) {
     config.owner = owner;
@@ -31,6 +37,16 @@ module.exports = ({ config: baseConfig }) => {
   config.runtimeVersion = 'dispatch-sdk54-rn081-v1';
 
   const plugins = [...(config.plugins || [])];
+  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-splash-screen')) {
+    plugins.push([
+      'expo-splash-screen',
+      {
+        image: './assets/images/splash-icon.png',
+        resizeMode: 'contain',
+        backgroundColor: '#06132a',
+      },
+    ]);
+  }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-web-browser')) {
     plugins.push('expo-web-browser');
   }

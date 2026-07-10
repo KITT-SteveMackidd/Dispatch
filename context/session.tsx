@@ -38,6 +38,18 @@ type SessionContextType = {
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
 const SESSION_STARTUP_TIMEOUT_MS = 8000;
+const PROFILE_STARTUP_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeout);
+  });
+}
 
 async function loadProfile(uid: string): Promise<UserProfile | null> {
   if (firebaseConfigError) return null;
@@ -159,7 +171,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const p = await loadProfile(user.uid);
+        const p = await withTimeout(
+          loadProfile(user.uid),
+          PROFILE_STARTUP_TIMEOUT_MS,
+          'Timed out loading profile.'
+        );
         setProfile(p);
         setNeedsProfile(!p);
       } catch {

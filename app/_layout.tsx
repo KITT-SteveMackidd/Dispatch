@@ -2,14 +2,14 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Redirect, Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
 import { SessionProvider, useSession } from '@/context/session';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
+import { authDarkLogoSource } from '@/constants/branding';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   return (
@@ -27,10 +27,8 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => voi
 }
 
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
+  initialRouteName: '(auth)/signin',
 };
-
-SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 const STARTUP_TIMEOUT_MS = 8000;
 
@@ -52,11 +50,7 @@ export default function RootLayout() {
 
   const appReady = loaded || startupTimedOut || Boolean(error);
 
-  useEffect(() => {
-    if (appReady) SplashScreen.hideAsync().catch(() => undefined);
-  }, [appReady]);
-
-  if (!appReady) return null;
+  if (!appReady) return <StartupSplash />;
 
   if (error) {
     return <ErrorBoundary error={error} retry={() => undefined} />;
@@ -77,7 +71,7 @@ function RootNavigator() {
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
 
-  if (loading) return null;
+  if (loading) return <StartupSplash />;
 
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
@@ -106,10 +100,28 @@ function PushNotificationBridge() {
   return null;
 }
 
+function StartupSplash() {
+  return (
+    <View style={styles.startupSplash}>
+      <Image source={authDarkLogoSource} style={styles.startupLogo} resizeMode="contain" />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  startupSplash: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#06132a',
+  },
+  startupLogo: {
+    width: 220,
+    height: 120,
+  },
   errorScreen: {
     flex: 1,
-    backgroundColor: '#f4f6ff',
+    backgroundColor: '#06132a',
   },
   errorContent: {
     flexGrow: 1,
