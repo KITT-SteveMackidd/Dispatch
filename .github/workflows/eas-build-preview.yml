@@ -59,5 +59,6 @@ jobs:
           eas build
           --platform ${{ inputs.platform }}
           --profile preview
+          --environment preview
           --non-interactive
           --no-wait

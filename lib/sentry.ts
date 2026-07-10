@@ -25,6 +25,24 @@ scope.setTag('expo.execution_environment', Constants.executionEnvironment);
 scope.setTag('expo.update_id', Updates.updateId || 'embedded');
 scope.setTag('expo.is_embedded_launch', String(Updates.isEmbeddedLaunch));
 
+if (isSentryEnabled) {
+  Sentry.captureMessage('Dispatch preview startup heartbeat', {
+    level: 'info',
+    tags: {
+      area: 'startup',
+      kind: 'heartbeat',
+    },
+    extra: {
+      buildProfile,
+      release,
+      executionEnvironment: Constants.executionEnvironment,
+      updateId: Updates.updateId || 'embedded',
+      isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+    },
+  });
+  Sentry.flush().catch(() => undefined);
+}
+
 export function markStartup(step: string, data?: Record<string, unknown>) {
   Sentry.addBreadcrumb({
     category: 'dispatch.startup',
