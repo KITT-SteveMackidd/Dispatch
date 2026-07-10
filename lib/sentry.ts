@@ -2,7 +2,8 @@ import * as Sentry from '@sentry/react-native';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 
-const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN?.trim();
+const extra = Constants.expoConfig?.extra as { sentryDsn?: string } | undefined;
+const dsn = (process.env.EXPO_PUBLIC_SENTRY_DSN || extra?.sentryDsn || '').trim();
 const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE || 'local';
 const release = `${Constants.expoConfig?.slug || 'dispatch'}@${Constants.expoConfig?.version || '0.0.0'}`;
 

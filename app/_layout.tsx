@@ -37,6 +37,7 @@ export const unstable_settings = {
 };
 
 const STARTUP_TIMEOUT_MS = 8000;
+const ROOT_NAVIGATOR_TIMEOUT_MS = 10000;
 
 function RootLayout() {
   const [loaded, error] = useFonts({
@@ -119,6 +120,7 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
   const { useThemeMode } = modules.theme;
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
+  const [sessionTimedOut, setSessionTimedOut] = useState(false);
 
   useEffect(() => {
     markStartup('root_navigator_state', {
@@ -127,10 +129,29 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
       needsProfile,
       loading,
       requiresEmailVerification,
+      sessionTimedOut,
     });
-  }, [authUser, profile, needsProfile, loading, requiresEmailVerification]);
+  }, [authUser, profile, needsProfile, loading, requiresEmailVerification, sessionTimedOut]);
 
-  if (loading) return <StartupSplash />;
+  useEffect(() => {
+    if (!loading) {
+      setSessionTimedOut(false);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      captureStartupIssue('Dispatch root navigator session timeout', {
+        timeoutMs: ROOT_NAVIGATOR_TIMEOUT_MS,
+        hasAuthUser: Boolean(authUser),
+        hasProfile: Boolean(profile),
+      });
+      setSessionTimedOut(true);
+    }, ROOT_NAVIGATOR_TIMEOUT_MS);
+
+    return () => clearTimeout(timeout);
+  }, [authUser, loading, profile]);
+
+  if (loading && !sessionTimedOut) return <StartupSplash />;
 
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>

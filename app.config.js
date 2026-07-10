@@ -87,6 +87,7 @@ module.exports = ({ config: baseConfig }) => {
 
   config.extra = {
     ...(config.extra || {}),
+    sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
     eas: {
       ...(config.extra?.eas || {}),
       ...(projectId ? { projectId } : {}),
