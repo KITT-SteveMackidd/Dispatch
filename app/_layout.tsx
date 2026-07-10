@@ -7,9 +7,14 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
-import { SessionProvider, useSession } from '@/context/session';
-import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
-import { authDarkLogoSource } from '@/constants/branding';
+import { splashFullLogoSource } from '@/constants/branding';
+
+type SessionModule = typeof import('@/context/session');
+type ThemeModule = typeof import('@/context/theme');
+type StartupModules = {
+  session: SessionModule;
+  theme: ThemeModule;
+};
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   return (
@@ -42,6 +47,8 @@ export default function RootLayout() {
     ...FontAwesome.font,
   });
   const [startupTimedOut, setStartupTimedOut] = useState(false);
+  const [startupModules, setStartupModules] = useState<StartupModules | null>(null);
+  const [startupError, setStartupError] = useState<Error | null>(null);
 
   useEffect(() => {
     const timeout = setTimeout(() => setStartupTimedOut(true), STARTUP_TIMEOUT_MS);
@@ -50,24 +57,50 @@ export default function RootLayout() {
 
   const appReady = loaded || startupTimedOut || Boolean(error);
 
+  useEffect(() => {
+    if (!appReady || startupModules || startupError) return;
+
+    try {
+      setStartupModules({
+        session: require('@/context/session') as SessionModule,
+        theme: require('@/context/theme') as ThemeModule,
+      });
+    } catch (moduleError) {
+      setStartupError(moduleError instanceof Error ? moduleError : new Error('Unable to load startup modules.'));
+    }
+  }, [appReady, startupModules, startupError]);
+
   if (!appReady) return <StartupSplash />;
 
-  if (error) {
-    return <ErrorBoundary error={error} retry={() => undefined} />;
+  if (error || startupError) {
+    return <ErrorBoundary error={error || startupError || new Error('Startup failed.')} retry={() => undefined} />;
   }
+
+  if (!startupModules) {
+    return <StartupSplash />;
+  }
+
+  return <LoadedApp modules={startupModules} />;
+}
+
+function LoadedApp({ modules }: { modules: StartupModules }) {
+  const { SessionProvider } = modules.session;
+  const { ThemeProvider: AppThemeProvider } = modules.theme;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SessionProvider>
         <AppThemeProvider>
-          <RootNavigator />
+          <RootNavigator modules={modules} />
         </AppThemeProvider>
       </SessionProvider>
     </GestureHandlerRootView>
   );
 }
 
-function RootNavigator() {
+function RootNavigator({ modules }: { modules: StartupModules }) {
+  const { useSession } = modules.session;
+  const { useThemeMode } = modules.theme;
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
 
@@ -103,7 +136,7 @@ function PushNotificationBridge() {
 function StartupSplash() {
   return (
     <View style={styles.startupSplash}>
-      <Image source={authDarkLogoSource} style={styles.startupLogo} resizeMode="contain" />
+      <Image source={splashFullLogoSource} style={styles.startupLogo} resizeMode="contain" />
     </View>
   );
 }
@@ -113,15 +146,15 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#06132a',
+    backgroundColor: '#061229',
   },
   startupLogo: {
-    width: 220,
-    height: 120,
+    width: '100%',
+    aspectRatio: 402 / 310,
   },
   errorScreen: {
     flex: 1,
-    backgroundColor: '#06132a',
+    backgroundColor: '#061229',
   },
   errorContent: {
     flexGrow: 1,
@@ -129,7 +162,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   errorTitle: {
-    color: '#111827',
+    color: '#ffffff',
     fontSize: 26,
     fontWeight: '800',
     marginBottom: 12,
@@ -141,7 +174,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   errorStack: {
-    color: '#374151',
+    color: '#dbeafe',
     fontSize: 12,
     lineHeight: 18,
     marginBottom: 24,

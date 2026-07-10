@@ -10,9 +10,9 @@ module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
   config.splash = {
     ...(config.splash || {}),
-    image: config.splash?.image || './assets/images/splash-icon.png',
+    image: './assets/images/dispatch-splash-full.png',
     resizeMode: config.splash?.resizeMode || 'contain',
-    backgroundColor: '#06132a',
+    backgroundColor: '#061229',
   };
 
   if (owner) {
@@ -41,9 +41,10 @@ module.exports = ({ config: baseConfig }) => {
     plugins.push([
       'expo-splash-screen',
       {
-        image: './assets/images/splash-icon.png',
+        image: './assets/images/dispatch-splash-full.png',
+        imageWidth: 402,
         resizeMode: 'contain',
-        backgroundColor: '#06132a',
+        backgroundColor: '#061229',
       },
     ]);
   }
