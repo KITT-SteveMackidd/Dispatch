@@ -28,9 +28,7 @@ module.exports = ({ config: baseConfig }) => {
     package: config.android?.package || 'com.smackidd.dispatch',
   };
 
-  config.runtimeVersion = {
-    policy: 'fingerprint',
-  };
+  config.runtimeVersion = 'dispatch-sdk54-rn081-v1';
 
   const plugins = [...(config.plugins || [])];
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-web-browser')) {
