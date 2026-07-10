@@ -5,10 +5,6 @@ const projectId =
 const owner = process.env.EXPO_PUBLIC_EXPO_OWNER || process.env.EXPO_OWNER || 'smackidd';
 const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE;
 const updatesEnabled = buildProfile === 'production';
-const sentryOrg = process.env.SENTRY_ORG;
-const sentryProject = process.env.SENTRY_PROJECT;
-const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
-const shouldUploadSentrySourceMaps = Boolean(sentryOrg && sentryProject && sentryAuthToken);
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
@@ -41,12 +37,6 @@ module.exports = ({ config: baseConfig }) => {
   config.runtimeVersion = 'dispatch-sdk54-rn081-v1';
 
   const plugins = [...(config.plugins || [])];
-  if (
-    shouldUploadSentrySourceMaps &&
-    !plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === '@sentry/react-native/expo')
-  ) {
-    plugins.push(['@sentry/react-native/expo', { organization: sentryOrg, project: sentryProject }]);
-  }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-splash-screen')) {
     plugins.push([
       'expo-splash-screen',
@@ -87,7 +77,6 @@ module.exports = ({ config: baseConfig }) => {
 
   config.extra = {
     ...(config.extra || {}),
-    sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
     eas: {
       ...(config.extra?.eas || {}),
       ...(projectId ? { projectId } : {}),
