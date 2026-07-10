@@ -13,6 +13,7 @@ type ThemeContextValue = {
 };
 
 const STORAGE_KEY = 'dispatch.theme.mode';
+const THEME_STARTUP_TIMEOUT_MS = 3000;
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
@@ -23,6 +24,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+    const timeout = setTimeout(() => {
+      if (mounted) setIsLoaded(true);
+    }, THEME_STARTUP_TIMEOUT_MS);
 
     const loadTheme = async () => {
       try {
@@ -34,6 +38,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
           setThemeModeState(storedTheme);
         }
       } finally {
+        clearTimeout(timeout);
         if (mounted) setIsLoaded(true);
       }
     };
@@ -42,6 +47,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
+      clearTimeout(timeout);
     };
   }, []);
 

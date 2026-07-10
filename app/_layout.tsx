@@ -75,10 +75,10 @@ export default function RootLayout() {
 }
 
 function RootNavigator() {
-  const { resolvedThemeMode, isLoaded } = useThemeMode();
+  const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
 
-  if (loading || !isLoaded) return null;
+  if (loading) return null;
 
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
