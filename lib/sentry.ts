@@ -26,8 +26,7 @@ scope.setTag('expo.update_id', Updates.updateId || 'embedded');
 scope.setTag('expo.is_embedded_launch', String(Updates.isEmbeddedLaunch));
 
 if (isSentryEnabled) {
-  Sentry.captureMessage('Dispatch preview startup heartbeat', {
-    level: 'info',
+  Sentry.captureException(new Error('Dispatch preview startup heartbeat'), {
     tags: {
       area: 'startup',
       kind: 'heartbeat',
