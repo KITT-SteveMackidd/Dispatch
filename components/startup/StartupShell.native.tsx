@@ -30,10 +30,8 @@ export function StartupShell({ children }: StartupShellProps) {
 
     async function loadStartupModules() {
       try {
-        const [sessionModule, themeModule] = await Promise.all([
-          import('@/context/session'),
-          import('@/context/theme'),
-        ]);
+        const sessionModule = require('@/context/session') as typeof import('@/context/session');
+        const themeModule = require('@/context/theme') as typeof import('@/context/theme');
 
         if (!active) return;
         clearTimeout(timeout);
