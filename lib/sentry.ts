@@ -13,5 +13,7 @@ export function markStartup(step: string, data?: Record<string, unknown>) {
 }
 
 export function captureStartupIssue(message: string, data?: Record<string, unknown>) {
-  console.warn('[dispatch.startup]', message, data || {});
+  if (__DEV__) {
+    console.info('[dispatch.startup]', message, data || {});
+  }
 }

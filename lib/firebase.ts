@@ -7,7 +7,7 @@ import type { Firestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import type { FirebaseStorage } from 'firebase/storage';
 
-const env = (key: string) => process.env[key]?.trim();
+const cleanEnv = (value?: string) => value?.trim();
 
 const firebaseConfigKeys = {
   apiKey: 'EXPO_PUBLIC_FIREBASE_API_KEY',
@@ -19,12 +19,12 @@ const firebaseConfigKeys = {
 } as const;
 
 const firebaseConfig: Record<keyof typeof firebaseConfigKeys, string | undefined> = {
-  apiKey: env(firebaseConfigKeys.apiKey),
-  authDomain: env(firebaseConfigKeys.authDomain),
-  projectId: env(firebaseConfigKeys.projectId),
-  storageBucket: env(firebaseConfigKeys.storageBucket),
-  messagingSenderId: env(firebaseConfigKeys.messagingSenderId),
-  appId: env(firebaseConfigKeys.appId),
+  apiKey: cleanEnv(process.env.EXPO_PUBLIC_FIREBASE_API_KEY),
+  authDomain: cleanEnv(process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN),
+  projectId: cleanEnv(process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID),
+  storageBucket: cleanEnv(process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET),
+  messagingSenderId: cleanEnv(process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID),
+  appId: cleanEnv(process.env.EXPO_PUBLIC_FIREBASE_APP_ID),
 };
 
 const missingFirebaseConfigKeys = Object.entries(firebaseConfig)
