@@ -2,8 +2,6 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import 'react-native-reanimated';
 
 import { captureStartupIssue, markStartup, Sentry } from '@/lib/sentry';
 
@@ -74,13 +72,11 @@ function LoadedApp({ modules }: { modules: StartupModules }) {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SessionProvider>
-        <AppThemeProvider>
-          <RootNavigator modules={modules} />
-        </AppThemeProvider>
-      </SessionProvider>
-    </GestureHandlerRootView>
+    <SessionProvider>
+      <AppThemeProvider>
+        <RootNavigator modules={modules} />
+      </AppThemeProvider>
+    </SessionProvider>
   );
 }
 

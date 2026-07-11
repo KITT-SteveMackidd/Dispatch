@@ -2,6 +2,7 @@ import { Feather, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icon
 import { Tabs, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSession } from '@/context/session';
 import { watchUserTeamUnreadCounts, watchUserUnreadNotificationCount } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
@@ -65,6 +66,7 @@ export default function TabLayout() {
   };
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: '#F98D2F',
@@ -134,5 +136,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </GestureHandlerRootView>
   );
 }

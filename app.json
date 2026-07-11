@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dispatch",
-    "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/images/dispatch-splash-full.png",
       "resizeMode": "contain",
