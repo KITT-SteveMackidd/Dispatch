@@ -8,9 +8,6 @@ const updatesEnabled = buildProfile === 'production';
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
-  config.splash = {
-    backgroundColor: '#061229',
-  };
 
   if (owner) {
     config.owner = owner;
@@ -34,14 +31,6 @@ module.exports = ({ config: baseConfig }) => {
   config.runtimeVersion = 'dispatch-sdk54-rn081-v1';
 
   const plugins = [...(config.plugins || [])];
-  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-splash-screen')) {
-    plugins.push([
-      'expo-splash-screen',
-      {
-        backgroundColor: '#061229',
-      },
-    ]);
-  }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-web-browser')) {
     plugins.push('expo-web-browser');
   }
