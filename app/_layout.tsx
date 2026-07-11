@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Redirect, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -30,7 +30,7 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => voi
 }
 
 export const unstable_settings = {
-  initialRouteName: '(auth)/signin',
+  initialRouteName: 'index',
 };
 
 function RootLayout() {
@@ -103,10 +103,8 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
       {authUser && profile?.uid && !requiresEmailVerification ? <PushNotificationBridge /> : null}
-      {loading || !authUser ? <Redirect href="/(auth)/signin" /> : null}
-      {!loading && authUser && requiresEmailVerification ? <Redirect href="/(auth)/verify-email" /> : null}
-      {!loading && authUser && !requiresEmailVerification && needsProfile && !profile ? <Redirect href="/(auth)/setup" /> : null}
       <Stack>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signin" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signup" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/setup" options={{ title: 'Complete Profile' }} />
