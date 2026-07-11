@@ -105,23 +105,27 @@ function cleanDisplayName(displayName?: string | null, email?: string | null) {
   return displayNameFromEmail(email) || 'Dispatch User';
 }
 
+function getDispatchServices() {
+  return require('@/services/dispatch') as typeof import('@/services/dispatch');
+}
+
 async function syncInviteLinking(userId: string, email?: string | null, role?: AppRole | null) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return;
 
   if (role === 'worker') {
-    const { acceptPendingWorkerInvitesForUser } = await import('@/services/dispatch');
+    const { acceptPendingWorkerInvitesForUser } = getDispatchServices();
     await acceptPendingWorkerInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
     return;
   }
 
   if (role === 'manager') {
-    const { linkPendingManagerInvites } = await import('@/services/dispatch');
+    const { linkPendingManagerInvites } = getDispatchServices();
     await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
     return;
   }
 
-  const { acceptPendingInvitesForUser, linkPendingManagerInvites } = await import('@/services/dispatch');
+  const { acceptPendingInvitesForUser, linkPendingManagerInvites } = getDispatchServices();
   await acceptPendingInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
   await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
 }
@@ -366,7 +370,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     );
 
     if (params.role === 'worker') {
-      const { acceptPendingWorkerInvitesForUser } = await import('@/services/dispatch');
+      const { acceptPendingWorkerInvitesForUser } = getDispatchServices();
       await acceptPendingWorkerInvitesForUser({ userId: user.uid, email: user.email || '' }).catch(() => null);
     } else {
       await syncInviteLinking(user.uid, user.email);
