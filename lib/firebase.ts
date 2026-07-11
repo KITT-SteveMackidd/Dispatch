@@ -31,7 +31,7 @@ const missingFirebaseConfigKeys = Object.entries(firebaseConfig)
   .filter(([, value]) => !value)
   .map(([key]) => firebaseConfigKeys[key as keyof typeof firebaseConfigKeys]);
 
-export const firebaseConfigError = missingFirebaseConfigKeys.length
+const missingFirebaseConfigError = missingFirebaseConfigKeys.length
   ? `Missing Firebase configuration: ${missingFirebaseConfigKeys.join(', ')}`
   : null;
 
@@ -41,13 +41,42 @@ export const firebaseConfigWarnings = [
     : null,
 ].filter(Boolean) as string[];
 
-const app: FirebaseApp | null = firebaseConfigError
-  ? null
-  : getApps().length
-    ? getApps()[0]
-    : initializeApp(firebaseConfig);
+function describeFirebaseError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+let firebaseStartupError = missingFirebaseConfigError;
+let app: FirebaseApp | null = null;
+
+if (!firebaseStartupError) {
+  try {
+    app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+  } catch (error) {
+    firebaseStartupError = `Firebase initialization failed: ${describeFirebaseError(error)}`;
+  }
+}
+
 const storageBucketUrl = firebaseConfig.storageBucket ? `gs://${firebaseConfig.storageBucket}` : undefined;
 
-export const auth = app ? getAuth(app) : (null as unknown as Auth);
-export const db = app ? getFirestore(app) : (null as unknown as Firestore);
-export const storage = app ? getStorage(app, storageBucketUrl) : (null as unknown as FirebaseStorage);
+function initializeFirebaseService<T>(serviceName: string, factory: (firebaseApp: FirebaseApp) => T): T | null {
+  if (!app || firebaseStartupError) return null;
+
+  try {
+    return factory(app);
+  } catch (error) {
+    firebaseStartupError = `${serviceName} initialization failed: ${describeFirebaseError(error)}`;
+    return null;
+  }
+}
+
+const authInstance = initializeFirebaseService('Firebase Auth', (firebaseApp) => getAuth(firebaseApp));
+const dbInstance = initializeFirebaseService('Firestore', (firebaseApp) => getFirestore(firebaseApp));
+const storageInstance = initializeFirebaseService('Firebase Storage', (firebaseApp) =>
+  getStorage(firebaseApp, storageBucketUrl)
+);
+
+export const firebaseConfigError = firebaseStartupError;
+export const auth = authInstance as unknown as Auth;
+export const db = dbInstance as unknown as Firestore;
+export const storage = storageInstance as unknown as FirebaseStorage;

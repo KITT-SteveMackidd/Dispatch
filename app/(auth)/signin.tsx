@@ -59,6 +59,9 @@ export default function SignInScreen() {
   }, []);
 
   const onSignIn = async () => {
+    if (firebaseConfigError) {
+      return Alert.alert('Firebase setup error', firebaseConfigError);
+    }
     if (!email.trim() || !password) return Alert.alert('Missing fields', 'Enter email and password.');
     setLoading(true);
     try {
@@ -72,6 +75,9 @@ export default function SignInScreen() {
   };
 
   const onForgotPassword = async () => {
+    if (firebaseConfigError) {
+      return Alert.alert('Firebase setup error', firebaseConfigError);
+    }
     if (!email.trim()) {
       return Alert.alert('Email required', 'Enter your email first, then tap Forgot password.');
     }
@@ -163,11 +169,11 @@ export default function SignInScreen() {
               pressed && !loading ? authStyles.buttonPressed : null,
             ]}
             onPress={onSignIn}
-            disabled={loading}>
+            disabled={loading || Boolean(firebaseConfigError)}>
             <Text style={authStyles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
           </Pressable>
 
-          <Pressable onPress={onForgotPassword} disabled={resetting}>
+          <Pressable onPress={onForgotPassword} disabled={resetting || Boolean(firebaseConfigError)}>
             <Text style={authStyles.lightActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
         </View>
@@ -239,11 +245,11 @@ export default function SignInScreen() {
               pressed && !loading ? authStyles.buttonPressed : null,
             ]}
             onPress={onSignIn}
-            disabled={loading}>
+            disabled={loading || Boolean(firebaseConfigError)}>
             <Text style={authStyles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
           </Pressable>
 
-          <Pressable onPress={onForgotPassword} disabled={resetting}>
+          <Pressable onPress={onForgotPassword} disabled={resetting || Boolean(firebaseConfigError)}>
             <Text style={authStyles.darkActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
         </View>

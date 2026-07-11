@@ -17,6 +17,7 @@ import { AppRole } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
 import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
+import { firebaseConfigError, firebaseConfigWarnings } from '@/lib/firebase';
 
 const lightSignUpLogoSource = authLightLogoSource;
 const darkSignUpLogoSource = authDarkLogoSource;
@@ -61,6 +62,9 @@ export default function SignUpScreen() {
   }, []);
 
   const onSignUp = async () => {
+    if (firebaseConfigError) {
+      return Alert.alert('Firebase setup error', firebaseConfigError);
+    }
     if (!displayName.trim() || !email.trim() || !password) {
       return Alert.alert('Missing fields', 'Enter name, email, and password.');
     }
@@ -92,6 +96,16 @@ export default function SignUpScreen() {
         </View>
 
         <View style={authStyles.lightForm}>
+          {firebaseConfigError ? (
+            <Text style={{ color: '#b42318', fontSize: 13, fontWeight: '700' }}>
+              {firebaseConfigError}
+            </Text>
+          ) : null}
+          {firebaseConfigWarnings.map((warning) => (
+            <Text key={warning} style={{ color: '#b45309', fontSize: 13, fontWeight: '700' }}>
+              {warning}
+            </Text>
+          ))}
           <TextInput
             value={displayName}
             onChangeText={setDisplayName}
@@ -182,7 +196,7 @@ export default function SignUpScreen() {
               pressed && !loading ? authStyles.buttonPressed : null,
             ]}
             onPress={onSignUp}
-            disabled={loading}>
+            disabled={loading || Boolean(firebaseConfigError)}>
             <Text style={authStyles.buttonText}>{loading ? 'Creating account...' : 'Create Account'}</Text>
           </Pressable>
 
@@ -212,6 +226,16 @@ export default function SignUpScreen() {
         </View>
 
         <View style={authStyles.darkForm}>
+          {firebaseConfigError ? (
+            <Text style={{ color: '#fca5a5', fontSize: 13, fontWeight: '700' }}>
+              {firebaseConfigError}
+            </Text>
+          ) : null}
+          {firebaseConfigWarnings.map((warning) => (
+            <Text key={warning} style={{ color: '#fbbf24', fontSize: 13, fontWeight: '700' }}>
+              {warning}
+            </Text>
+          ))}
           <TextInput
             value={displayName}
             onChangeText={setDisplayName}
@@ -282,7 +306,7 @@ export default function SignUpScreen() {
               pressed && !loading ? authStyles.buttonPressed : null,
             ]}
             onPress={onSignUp}
-            disabled={loading}>
+            disabled={loading || Boolean(firebaseConfigError)}>
             <Text style={authStyles.buttonText}>{loading ? 'Creating account...' : 'Create Account'}</Text>
           </Pressable>
 
