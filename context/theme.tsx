@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { useColorScheme as useSystemColorScheme } from 'react-native';
 
@@ -12,9 +11,6 @@ type ThemeContextValue = {
   isLoaded: boolean;
 };
 
-const STORAGE_KEY = 'dispatch.theme.mode';
-const THEME_STARTUP_TIMEOUT_MS = 3000;
-
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -23,32 +19,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
-    const timeout = setTimeout(() => {
-      if (mounted) setIsLoaded(true);
-    }, THEME_STARTUP_TIMEOUT_MS);
-
-    const loadTheme = async () => {
-      try {
-        const storedTheme = await AsyncStorage.getItem(STORAGE_KEY);
-
-        if (!mounted) return;
-
-        if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system') {
-          setThemeModeState(storedTheme);
-        }
-      } finally {
-        clearTimeout(timeout);
-        if (mounted) setIsLoaded(true);
-      }
-    };
-
-    loadTheme();
-
-    return () => {
-      mounted = false;
-      clearTimeout(timeout);
-    };
+    setIsLoaded(true);
   }, []);
 
   const resolvedThemeMode: ResolvedThemeMode =
@@ -56,7 +27,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setThemeMode = async (mode: ThemeMode) => {
     setThemeModeState(mode);
-    await AsyncStorage.setItem(STORAGE_KEY, mode);
   };
 
   const value = useMemo(
