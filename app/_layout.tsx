@@ -1,16 +1,11 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { captureStartupIssue, markStartup, Sentry } from '@/lib/sentry';
-
-type SessionModule = typeof import('@/context/session');
-type ThemeModule = typeof import('@/context/theme');
-type StartupModules = {
-  session: SessionModule;
-  theme: ThemeModule;
-};
+import { SessionProvider, useSession } from '@/context/session';
+import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
+import { markStartup, Sentry } from '@/lib/sentry';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   return (
@@ -32,57 +27,20 @@ export const unstable_settings = {
 };
 
 function RootLayout() {
-  const [startupModules, setStartupModules] = useState<StartupModules | null>(null);
-  const [startupError, setStartupError] = useState<Error | null>(null);
-
   useEffect(() => {
     markStartup('root_layout_mounted');
-    try {
-      markStartup('loading_startup_modules');
-      setStartupModules({
-        session: require('@/context/session') as SessionModule,
-        theme: require('@/context/theme') as ThemeModule,
-      });
-      markStartup('startup_modules_loaded');
-    } catch (moduleError) {
-      captureStartupIssue('Dispatch startup module load failed', {
-        message: moduleError instanceof Error ? moduleError.message : String(moduleError),
-      });
-      setStartupError(moduleError instanceof Error ? moduleError : new Error('Unable to load startup modules.'));
-    }
-  }, []);
-
-  if (startupError) {
-    return <ErrorBoundary error={startupError} retry={() => undefined} />;
-  }
-
-  if (!startupModules) {
-    return <BootScreen />;
-  }
-
-  return <LoadedApp modules={startupModules} />;
-}
-
-function LoadedApp({ modules }: { modules: StartupModules }) {
-  const { SessionProvider } = modules.session;
-  const { ThemeProvider: AppThemeProvider } = modules.theme;
-
-  useEffect(() => {
-    markStartup('render_loaded_app');
   }, []);
 
   return (
     <SessionProvider>
       <AppThemeProvider>
-        <RootNavigator modules={modules} />
+        <RootNavigator />
       </AppThemeProvider>
     </SessionProvider>
   );
 }
 
-function RootNavigator({ modules }: { modules: StartupModules }) {
-  const { useSession } = modules.session;
-  const { useThemeMode } = modules.theme;
+function RootNavigator() {
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
 
@@ -123,34 +81,7 @@ function PushNotificationBridge() {
   return null;
 }
 
-function BootScreen() {
-  return (
-    <View style={styles.bootScreen}>
-      <Text style={styles.bootTitle}>Dispatch</Text>
-      <Text style={styles.bootText}>Starting...</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  bootScreen: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#061229',
-    padding: 24,
-  },
-  bootTitle: {
-    color: '#ffffff',
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  bootText: {
-    color: '#dbeafe',
-    fontSize: 16,
-    fontWeight: '700',
-  },
   errorScreen: {
     flex: 1,
     backgroundColor: '#061229',
