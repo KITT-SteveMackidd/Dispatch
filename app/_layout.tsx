@@ -3,8 +3,8 @@ import { Stack } from 'expo-router';
 import { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { SessionProvider, useSession } from '@/context/session';
-import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/context/theme';
+import { StartupShell } from '@/components/startup/StartupShell';
+import type { StartupModules } from '@/components/startup/StartupShell';
 import { markStartup, Sentry } from '@/lib/sentry';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
@@ -32,15 +32,14 @@ function RootLayout() {
   }, []);
 
   return (
-    <SessionProvider>
-      <AppThemeProvider>
-        <RootNavigator />
-      </AppThemeProvider>
-    </SessionProvider>
+    <StartupShell>
+      {(modules) => <RootNavigator modules={modules} />}
+    </StartupShell>
   );
 }
 
-function RootNavigator() {
+function RootNavigator({ modules }: { modules: StartupModules }) {
+  const { useSession, useThemeMode } = modules;
   const { resolvedThemeMode } = useThemeMode();
   const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
 
