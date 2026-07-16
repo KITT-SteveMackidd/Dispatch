@@ -66,6 +66,19 @@ module.exports = ({ config: baseConfig }) => {
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-apple-authentication')) {
     plugins.push('expo-apple-authentication');
   }
+  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-build-properties')) {
+    plugins.push([
+      'expo-build-properties',
+      {
+        ios: {
+          extraPods: [
+            { name: 'GoogleUtilities', modular_headers: true },
+            { name: 'RecaptchaInterop', modular_headers: true },
+          ],
+        },
+      },
+    ]);
+  }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-image-picker')) {
     plugins.push([
       'expo-image-picker',
