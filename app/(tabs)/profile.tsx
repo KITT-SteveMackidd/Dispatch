@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { Alert, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
-import { createOrganisationForManager, markUserNotificationsRead, UserNotification, watchUserNotifications } from '@/services/dispatch';
+import { createOrganisationForManager, loadRoleAssignmentExport, markUserNotificationsRead, UserNotification, watchUserNotifications } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { headerLogoSource } from '@/constants/branding';
+import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
 
 export default function ProfileScreen() {
-  const { profile, authUser, refreshProfile, signOut } = useSession();
+  const { profile, authUser, deleteAccount, refreshProfile, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -22,6 +25,12 @@ export default function ProfileScreen() {
   const [organisationModalOpen, setOrganisationModalOpen] = useState(false);
   const [organisationName, setOrganisationName] = useState('');
   const [creatingOrganisation, setCreatingOrganisation] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportStartDate, setExportStartDate] = useState(startOfCurrentMonth);
+  const [exportEndDate, setExportEndDate] = useState(() => new Date());
+  const [activeDateField, setActiveDateField] = useState<'start' | 'end' | null>(null);
+  const [exportingSpreadsheet, setExportingSpreadsheet] = useState(false);
   const organisationPromptShownRef = useRef<string | null>(null);
   const isManagerWithoutOrganisation = profile?.role === 'manager' && !profile.organizationId;
   const displayName = useMemo(
@@ -91,6 +100,84 @@ export default function ProfileScreen() {
     }
   };
 
+  const confirmDeleteAccount = () => {
+    if (!profile?.uid || deletingAccount) return;
+
+    const managerSoleOrgMessage = profile.role === 'manager' && profile.organizationId
+      ? ' If you are the only manager in this organization, the organization will also be deleted and workers will no longer belong to it.'
+      : '';
+
+    Alert.alert(
+      'Delete account?',
+      `This permanently deletes your Dispatch account.${managerSoleOrgMessage}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingAccount(true);
+              await deleteAccount();
+              router.replace('/(auth)/signin');
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Unable to delete account.';
+              const needsRecentLogin = /recent|requires-recent-login|auth\/requires-recent-login/i.test(message);
+              Alert.alert(
+                'Unable to delete account',
+                needsRecentLogin ? 'For your security, please sign out, sign back in, and try deleting your account again.' : message
+              );
+            } finally {
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const onExportDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') setActiveDateField(null);
+    if (event.type === 'dismissed' || !selectedDate || !activeDateField) return;
+
+    if (activeDateField === 'start') {
+      setExportStartDate(selectedDate);
+      if (selectedDate > exportEndDate) setExportEndDate(selectedDate);
+      return;
+    }
+
+    setExportEndDate(selectedDate);
+    if (selectedDate < exportStartDate) setExportStartDate(selectedDate);
+  };
+
+  const exportWorkerRoles = async () => {
+    if (!profile?.uid || profile.role !== 'manager') return;
+
+    try {
+      setExportingSpreadsheet(true);
+      const data = await loadRoleAssignmentExport({
+        managerId: profile.uid,
+        organizationId: profile.organizationId,
+        startDate: exportStartDate,
+        endDate: exportEndDate,
+      });
+      const report = buildWorkerRoleExport(data.events, data.workers);
+      await shareWorkerRoleSpreadsheet({ report, startDate: exportStartDate, endDate: exportEndDate });
+      setExportModalOpen(false);
+      setActiveDateField(null);
+    } catch (error) {
+      Alert.alert('Unable to export spreadsheet', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setExportingSpreadsheet(false);
+    }
+  };
+
+  const closeExportModal = () => {
+    if (exportingSpreadsheet) return;
+    setExportModalOpen(false);
+    setActiveDateField(null);
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
@@ -105,22 +192,23 @@ export default function ProfileScreen() {
         </Pressable>
       </View>
 
-      <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
-        <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}>
-          <Text style={styles.avatarText}>{displayName.slice(0, 1).toUpperCase()}</Text>
+      <ScrollView style={styles.profileScroll} contentContainerStyle={styles.profileContent} showsVerticalScrollIndicator={false}>
+        <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+          <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}>
+            <Text style={styles.avatarText}>{displayName.slice(0, 1).toUpperCase()}</Text>
+          </View>
+          <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>{displayName}</Text>
+          <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>{authUser?.email || 'No email found'}</Text>
+          <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
+            {profile?.organizationName || 'No organisation yet'}
+          </Text>
         </View>
-        <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>{displayName}</Text>
-        <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>{authUser?.email || 'No email found'}</Text>
-        <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
-          {profile?.organizationName || 'No organisation yet'}
-        </Text>
-      </View>
 
-      {isManagerWithoutOrganisation ? (
-        <Pressable style={[styles.row, styles.createOrganisationRow]} onPress={() => setOrganisationModalOpen(true)}>
-          <Text style={styles.createOrganisationText}>Create Organization</Text>
-        </Pressable>
-      ) : null}
+        {isManagerWithoutOrganisation ? (
+          <Pressable style={[styles.row, styles.createOrganisationRow]} onPress={() => setOrganisationModalOpen(true)}>
+            <Text style={styles.createOrganisationText}>Create Organization</Text>
+          </Pressable>
+        ) : null}
 
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Account Settings</Text>
@@ -132,6 +220,15 @@ export default function ProfileScreen() {
           <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Manage Event Templates</Text>
         </Pressable>
       ) : null}
+      {canManageTemplates ? (
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]}
+          onPress={() => setExportModalOpen(true)}>
+          <MaterialIcons name="file-download" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
+          <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Export Worker Roles</Text>
+        </Pressable>
+      ) : null}
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={openNotifications}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>
           Notifications {unreadIds.length ? `(${unreadIds.length} new)` : ''}
@@ -140,6 +237,15 @@ export default function ProfileScreen() {
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => stub('Help & Support')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Help & Support</Text>
       </Pressable>
+      <Pressable
+        style={[styles.row, isDarkMode ? styles.deleteRowDark : styles.deleteRowLight, deletingAccount && styles.disabled]}
+        onPress={confirmDeleteAccount}
+        disabled={deletingAccount}>
+        <Text style={[styles.rowText, isDarkMode ? styles.deleteRowTextDark : styles.deleteRowTextLight]}>
+          {deletingAccount ? 'Deleting account...' : 'Delete Account'}
+        </Text>
+      </Pressable>
+      </ScrollView>
 
       <Modal visible={notificationsOpen} animationType="slide" transparent onRequestClose={() => setNotificationsOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setNotificationsOpen(false)}>
@@ -183,6 +289,59 @@ export default function ProfileScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal visible={exportModalOpen} animationType="slide" transparent onRequestClose={closeExportModal}>
+        <Pressable style={styles.modalBackdrop} onPress={closeExportModal}>
+          <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
+            <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Export Worker Roles</Text>
+            <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
+              Choose the event date range to include in the spreadsheet.
+            </Text>
+
+            <View style={styles.dateFields}>
+              <DateField
+                label="Start date"
+                value={exportStartDate}
+                active={activeDateField === 'start'}
+                isDarkMode={isDarkMode}
+                onPress={() => setActiveDateField('start')}
+              />
+              <DateField
+                label="End date"
+                value={exportEndDate}
+                active={activeDateField === 'end'}
+                isDarkMode={isDarkMode}
+                onPress={() => setActiveDateField('end')}
+              />
+            </View>
+
+            {activeDateField ? (
+              <DateTimePicker
+                value={activeDateField === 'start' ? exportStartDate : exportEndDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                themeVariant={isDarkMode ? 'dark' : 'light'}
+                onChange={onExportDateChange}
+              />
+            ) : null}
+
+            <Pressable
+              style={[styles.closeBtn, exportingSpreadsheet && styles.disabled]}
+              onPress={exportWorkerRoles}
+              disabled={exportingSpreadsheet}>
+              <View style={styles.exportButtonContent}>
+                <MaterialIcons name="file-download" size={21} color="#061229" />
+                <Text style={styles.closeBtnText}>{exportingSpreadsheet ? 'Preparing...' : 'Export Spreadsheet'}</Text>
+              </View>
+            </Pressable>
+            <Pressable
+              style={[styles.secondaryBtn, isDarkMode ? styles.rowDark : styles.rowLight]}
+              onPress={closeExportModal}>
+              <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -202,6 +361,8 @@ const styles = StyleSheet.create({
   signOutButtonText: { fontWeight: '700', fontSize: 12 },
   signOutButtonTextLight: { color: '#334155' },
   signOutButtonTextDark: { color: '#F4F8FF' },
+  profileScroll: { flex: 1 },
+  profileContent: { paddingBottom: 8 },
   card: { borderWidth: 1, borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 16 },
   cardLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7' },
   cardDark: { backgroundColor: '#12274D', borderColor: '#12274D' },
@@ -218,9 +379,14 @@ const styles = StyleSheet.create({
   row: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16 },
   rowLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7' },
   rowDark: { backgroundColor: '#12274D', borderColor: '#12274D' },
+  iconRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rowText: { fontWeight: '600' },
   rowTextLight: { color: '#1e293b' },
   rowTextDark: { color: '#F4F8FF' },
+  deleteRowLight: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  deleteRowDark: { backgroundColor: '#2f1018', borderColor: '#7f1d1d' },
+  deleteRowTextLight: { color: '#b91c1c' },
+  deleteRowTextDark: { color: '#fecaca' },
   createOrganisationRow: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
   createOrganisationText: { color: '#061229', fontWeight: '700' },
   input: { marginTop: 14, padding: 13, borderRadius: 12, borderWidth: 1 },
@@ -229,12 +395,54 @@ const styles = StyleSheet.create({
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.35)' },
   modalCard: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
   modalScroll: { marginTop: 10 },
+  dateFields: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  dateField: { flex: 1, borderWidth: 1, borderRadius: 8, padding: 12 },
+  dateFieldLight: { backgroundColor: '#F8FAFC', borderColor: '#CBD5E1' },
+  dateFieldDark: { backgroundColor: '#1A2540', borderColor: '#38517E' },
+  dateFieldActive: { borderColor: '#0EC3C9', borderWidth: 2, padding: 11 },
+  dateLabel: { color: '#64748B', fontSize: 12, fontWeight: '600', marginBottom: 5 },
+  dateLabelDark: { color: '#CBD5E1' },
+  dateValue: { color: '#232832', fontWeight: '700' },
+  dateValueDark: { color: '#F4F8FF' },
   notificationRow: { borderBottomWidth: 1, borderBottomColor: '#334155', paddingVertical: 10 },
   closeBtn: { marginTop: 12, borderRadius: 10, paddingVertical: 12, alignItems: 'center', backgroundColor: '#0EC3C9' },
   closeBtnText: { color: '#061229', fontWeight: '700' },
+  exportButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   secondaryBtn: { marginTop: 10, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   disabled: { opacity: 0.65 },
 });
+
+function DateField(props: {
+  label: string;
+  value: Date;
+  active: boolean;
+  isDarkMode: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${props.label}: ${formatDisplayDate(props.value)}`}
+      onPress={props.onPress}
+      style={[
+        styles.dateField,
+        props.isDarkMode ? styles.dateFieldDark : styles.dateFieldLight,
+        props.active && styles.dateFieldActive,
+      ]}>
+      <Text style={[styles.dateLabel, props.isDarkMode && styles.dateLabelDark]}>{props.label}</Text>
+      <Text style={[styles.dateValue, props.isDarkMode && styles.dateValueDark]}>{formatDisplayDate(props.value)}</Text>
+    </Pressable>
+  );
+}
+
+function startOfCurrentMonth() {
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), 1);
+}
+
+function formatDisplayDate(value: Date) {
+  return value.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
 
 function getPreferredDisplayName(profileName?: string | null, authName?: string | null, email?: string | null) {
   const profileDisplayName = cleanName(profileName);

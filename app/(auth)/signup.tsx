@@ -16,6 +16,7 @@ import { useSession } from '@/context/session';
 import { AppRole } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
+import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
 import { firebaseConfigError, firebaseConfigWarnings } from '@/lib/firebase';
 
@@ -200,6 +201,14 @@ export default function SignUpScreen() {
             <Text style={authStyles.buttonText}>{loading ? 'Creating account...' : 'Create Account'}</Text>
           </Pressable>
 
+          <SocialAuthButtons
+            mode="signup"
+            displayName={displayName}
+            isDarkMode={false}
+            disabled={loading || Boolean(firebaseConfigError)}
+            onSuccess={() => router.replace('/(tabs)')}
+          />
+
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Already have an account?</Text>
             <Link href="/(auth)/signin" style={authStyles.lightFooterLink}>
@@ -309,6 +318,14 @@ export default function SignUpScreen() {
             disabled={loading || Boolean(firebaseConfigError)}>
             <Text style={authStyles.buttonText}>{loading ? 'Creating account...' : 'Create Account'}</Text>
           </Pressable>
+
+          <SocialAuthButtons
+            mode="signup"
+            displayName={displayName}
+            isDarkMode
+            disabled={loading || Boolean(firebaseConfigError)}
+            onSuccess={() => router.replace('/(tabs)')}
+          />
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Already have an account?</Text>

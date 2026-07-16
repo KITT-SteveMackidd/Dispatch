@@ -3,6 +3,9 @@ export type NotificationRouteData = {
   threadId?: string;
   senderId?: string;
   teamId?: string;
+  organizationId?: string;
+  threadTitle?: string;
+  participantIds?: string[];
   relatedEventId?: string;
   userNotificationId?: string;
 };
@@ -10,13 +13,37 @@ export type NotificationRouteData = {
 export function resolveChatRouteFromNotification(data: NotificationRouteData, currentUserId?: string) {
   const threadId = data.threadId || '';
 
+  if (threadId.startsWith('organization:')) {
+    const parts = threadId.split(':');
+    const organizationId = data.organizationId || parts[1];
+    const isManagersGroup = parts[2] === 'managers';
+    const workerId = isManagersGroup ? parts[3] : `organization:${organizationId}:all`;
+    const currentUserIsWorker = isManagersGroup && currentUserId === workerId;
+    const title = currentUserIsWorker ? 'Managers' : data.threadTitle || (isManagersGroup ? 'Worker' : 'Organization');
+
+    return {
+      workerId,
+      workerLabel: title,
+      teamName: title,
+      teamMemberIds: (data.participantIds || []).join(','),
+      isTeamAll: '1',
+      teamThreadId: threadId,
+      teamThreadPath: isManagersGroup ? 'Worker and all organization managers' : 'Everyone in the organization',
+    };
+  }
+
   if (threadId.startsWith('team:') && threadId.endsWith(':all')) {
     const teamId = data.teamId || threadId.split(':')[1];
+    const title = data.threadTitle || 'Team';
     return {
       workerId: `all:${teamId}`,
-      workerLabel: 'All',
+      workerLabel: title,
       teamId,
+      teamName: title,
+      teamMemberIds: (data.participantIds || []).join(','),
       isTeamAll: '1',
+      teamThreadId: threadId,
+      teamThreadPath: 'All Team workers and organization managers',
     };
   }
 

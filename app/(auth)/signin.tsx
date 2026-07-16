@@ -15,6 +15,7 @@ import { Link, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
+import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
 import { firebaseConfigError, firebaseConfigWarnings } from '@/lib/firebase';
 
@@ -158,10 +159,6 @@ export default function SignInScreen() {
         </View>
 
         <View style={authStyles.lightActionGroup}>
-          <Link href="/(auth)/signup" style={authStyles.lightActionLink}>
-            Create Account
-          </Link>
-
           <Pressable
             style={({ pressed }) => [
               authStyles.lightButton,
@@ -176,6 +173,20 @@ export default function SignInScreen() {
           <Pressable onPress={onForgotPassword} disabled={resetting || Boolean(firebaseConfigError)}>
             <Text style={authStyles.lightActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
+
+          <SocialAuthButtons
+            mode="signin"
+            isDarkMode={false}
+            disabled={loading || Boolean(firebaseConfigError)}
+            onSuccess={() => router.replace('/(tabs)')}
+          />
+
+          <View style={authStyles.lightFooterRow}>
+            <Text style={authStyles.lightFooterLabel}>Don't have an account?</Text>
+            <Link href="/(auth)/signup" style={authStyles.lightFooterLink}>
+              Create Account
+            </Link>
+          </View>
         </View>
       </View>
     </>
@@ -234,10 +245,6 @@ export default function SignInScreen() {
         </View>
 
         <View style={authStyles.lightActionGroup}>
-          <Link href="/(auth)/signup" style={authStyles.darkActionLink}>
-            Create Account
-          </Link>
-
           <Pressable
             style={({ pressed }) => [
               authStyles.lightButton,
@@ -252,6 +259,20 @@ export default function SignInScreen() {
           <Pressable onPress={onForgotPassword} disabled={resetting || Boolean(firebaseConfigError)}>
             <Text style={authStyles.darkActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
+
+          <SocialAuthButtons
+            mode="signin"
+            isDarkMode
+            disabled={loading || Boolean(firebaseConfigError)}
+            onSuccess={() => router.replace('/(tabs)')}
+          />
+
+          <View style={authStyles.darkFooterRow}>
+            <Text style={authStyles.darkFooterLabel}>Don't have an account?</Text>
+            <Link href="/(auth)/signup" style={authStyles.darkFooterLink}>
+              Create Account
+            </Link>
+          </View>
         </View>
       </View>
     </>

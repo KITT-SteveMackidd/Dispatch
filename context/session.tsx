@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   GoogleAuthProvider,
   OAuthProvider,
   createUserWithEmailAndPassword,
-  getAdditionalUserInfo,
+  deleteUser,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -25,8 +25,8 @@ type SessionContextType = {
   needsProfile: boolean;
   requiresEmailVerification: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: (params: { idToken: string; accessToken?: string; role?: AppRole }) => Promise<void>;
-  signInWithApple: (params: { idToken: string; displayName?: string; role?: AppRole }) => Promise<void>;
+  signInWithGoogle: (params: { idToken: string; accessToken?: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
+  signInWithApple: (params: { idToken: string; rawNonce: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
   signUp: (params: { email: string; password: string; displayName: string; role: AppRole }) => Promise<void>;
   saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string }) => Promise<void>;
   refreshProfile: () => Promise<UserProfile | null>;
@@ -34,7 +34,15 @@ type SessionContextType = {
   sendVerificationEmail: () => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
   revokeSession: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   signOut: () => Promise<void>;
+};
+
+type SocialAuthMode = 'signin' | 'signup';
+
+export type SocialAuthResult = {
+  needsRoleSelection: boolean;
+  displayName: string;
 };
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
@@ -68,6 +76,7 @@ async function loadProfile(uid: string): Promise<UserProfile | null> {
     email: data.email || null,
     canonicalEmail: data.canonicalEmail || null,
     phoneNumber: data.phoneNumber,
+    scheduledEventReminderKeys: data.scheduledEventReminderKeys || [],
   };
 }
 
@@ -222,6 +231,46 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (firebaseConfigError || !authUser) return undefined;
+
+    return onSnapshot(
+      doc(db, 'users', authUser.uid),
+      (snap) => {
+        if (!snap.exists()) {
+          setProfile(null);
+          setNeedsProfile(true);
+          return;
+        }
+
+        const data = snap.data() as Partial<UserProfile>;
+        const role = normalizeRole(data.role);
+        if (!role) {
+          setProfile(null);
+          setNeedsProfile(true);
+          return;
+        }
+
+        setProfile({
+          uid: authUser.uid,
+          displayName: data.displayName || 'Dispatch User',
+          role,
+          organizationId: data.organizationId || null,
+          organizationName: data.organizationName || null,
+          email: data.email || null,
+          canonicalEmail: data.canonicalEmail || null,
+          phoneNumber: data.phoneNumber,
+          scheduledEventReminderKeys: data.scheduledEventReminderKeys || [],
+        });
+        setNeedsProfile(false);
+      },
+      () => {
+        setProfile(null);
+        setNeedsProfile(true);
+      }
+    );
+  }, [authUser]);
+
   const signIn = async (email: string, password: string) => {
     assertFirebaseConfigured();
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -266,22 +315,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setProfile(nextProfile || { uid: params.uid, displayName, role: params.role, organizationId: null, organizationName: null, email: normalizedEmail || null, canonicalEmail: canonicalizeEmail(normalizedEmail) || null, phoneNumber: params.phoneNumber?.trim() || undefined });
   };
 
-  const signInWithGoogle = async (params: { idToken: string; accessToken?: string; role?: AppRole }) => {
+  const signInWithGoogle = async (params: { idToken: string; accessToken?: string; displayName?: string; mode: SocialAuthMode }): Promise<SocialAuthResult> => {
     assertFirebaseConfigured();
     const credential = GoogleAuthProvider.credential(params.idToken, params.accessToken);
     const cred = await signInWithCredential(auth, credential);
-    const additional = getAdditionalUserInfo(cred);
+    const displayName = cleanDisplayName(params.displayName || cred.user.displayName, cred.user.email);
 
     const existing = await loadProfile(cred.user.uid);
-    if (!existing && params.role) {
-      await upsertProfile({
-        uid: cred.user.uid,
-        displayName: cleanDisplayName(cred.user.displayName, cred.user.email),
-        role: params.role,
-        email: cred.user.email,
-        merge: false,
-      });
-      return;
+    if (!existing && params.mode === 'signup') {
+      setProfile(null);
+      setNeedsProfile(true);
+      return { needsRoleSelection: true, displayName };
     }
 
     await syncInviteLinking(cred.user.uid, cred.user.email, existing?.role);
@@ -290,34 +334,32 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (nextProfile) {
       setProfile(nextProfile);
       setNeedsProfile(false);
+      return { needsRoleSelection: false, displayName: nextProfile.displayName };
     } else {
-      setNeedsProfile(true);
-      if (additional?.isNewUser && !params.role) {
-        setProfile(null);
-      }
+      await firebaseSignOut(auth);
+      setProfile(null);
+      setNeedsProfile(false);
+      throw new Error('No Dispatch profile was found for this Google account. Use Create Account first.');
     }
   };
 
-  const signInWithApple = async (params: { idToken: string; displayName?: string; role?: AppRole }) => {
+  const signInWithApple = async (params: { idToken: string; rawNonce: string; displayName?: string; mode: SocialAuthMode }): Promise<SocialAuthResult> => {
     assertFirebaseConfigured();
     const provider = new OAuthProvider('apple.com');
-    const credential = provider.credential({ idToken: params.idToken });
+    const credential = provider.credential({ idToken: params.idToken, rawNonce: params.rawNonce });
     const cred = await signInWithCredential(auth, credential);
 
     if (params.displayName) {
       await updateProfile(cred.user, { displayName: params.displayName });
     }
 
+    const displayName = cleanDisplayName(params.displayName || cred.user.displayName, cred.user.email);
+
     const existing = await loadProfile(cred.user.uid);
-    if (!existing && params.role) {
-      await upsertProfile({
-        uid: cred.user.uid,
-        displayName: cleanDisplayName(params.displayName || cred.user.displayName, cred.user.email),
-        role: params.role,
-        email: cred.user.email,
-        merge: false,
-      });
-      return;
+    if (!existing && params.mode === 'signup') {
+      setProfile(null);
+      setNeedsProfile(true);
+      return { needsRoleSelection: true, displayName };
     }
 
     await syncInviteLinking(cred.user.uid, cred.user.email, existing?.role);
@@ -326,9 +368,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (nextProfile) {
       setProfile(nextProfile);
       setNeedsProfile(false);
+      return { needsRoleSelection: false, displayName: nextProfile.displayName };
     } else {
-      setNeedsProfile(true);
+      await firebaseSignOut(auth);
       setProfile(null);
+      setNeedsProfile(false);
+      throw new Error('No Dispatch profile was found for this Apple account. Use Create Account first.');
     }
   };
 
@@ -425,6 +470,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNeedsProfile(false);
   };
 
+  const deleteAccount = async () => {
+    assertFirebaseConfigured();
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not authenticated');
+
+    const { deleteDispatchAccount } = getDispatchServices();
+    await deleteDispatchAccount({ userId: user.uid });
+    await deleteUser(user);
+    setAuthUser(null);
+    setProfile(null);
+    setNeedsProfile(false);
+  };
+
   const signOut = async () => {
     assertFirebaseConfigured();
     await firebaseSignOut(auth);
@@ -449,6 +507,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       sendVerificationEmail,
       refreshAuthUser,
       revokeSession,
+      deleteAccount,
       signOut,
     }),
     [profile, authUser, loading, needsProfile, requiresEmailVerification]

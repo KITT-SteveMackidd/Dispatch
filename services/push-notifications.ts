@@ -4,7 +4,18 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { saveUserPushToken, watchIncomingChatThreadHeads, watchUserNotifications, watchWorkerRoleAssignmentNotifications } from '@/services/dispatch';
+import {
+  markChatNotificationSeen,
+  markEventReminderScheduled,
+  markRoleAssignmentNotificationPushSeen,
+  markUserNotificationPushSeen,
+  markUserNotificationsRead,
+  saveUserPushToken,
+  watchIncomingChatThreadHeads,
+  watchUserNotifications,
+  watchWorkerEvents,
+  watchWorkerRoleAssignmentNotifications,
+} from '@/services/dispatch';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
 
 let notificationHandlerConfigured = false;
@@ -78,6 +89,11 @@ export function usePushNotificationBridge() {
   const seenUserNotificationIdsRef = useRef<Set<string>>(new Set());
   const scheduledUserNotificationIdsRef = useRef<Record<string, string>>({});
   const seenRoleNotificationIdsRef = useRef<Set<string>>(new Set());
+  const scheduledEventReminderKeysRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    scheduledEventReminderKeysRef.current = new Set(profile?.scheduledEventReminderKeys || []);
+  }, [profile?.uid, profile?.scheduledEventReminderKeys]);
 
   useNotificationRouting(profile?.uid);
 
@@ -113,10 +129,12 @@ export function usePushNotificationBridge() {
       }).catch(() => undefined);
     }
 
+    Notifications.setBadgeCountAsync(0).catch(() => undefined);
+
     const unsubChats = watchIncomingChatThreadHeads(profile.uid, (threads) => {
       threads.forEach((thread) => {
         const updatedAtMs = parseDate(thread.updatedAt);
-        if (!updatedAtMs || thread.lastMessageSenderId === profile.uid) return;
+        if (!updatedAtMs || thread.lastMessageSenderId === profile.uid || thread.pushSeenBy?.includes(profile.uid)) return;
 
         const prevSeen = seenChatUpdateRef.current[thread.id] || 0;
         if (updatedAtMs <= prevSeen) return;
@@ -128,13 +146,17 @@ export function usePushNotificationBridge() {
             body: thread.lastMessageText || 'You have a new message.',
             data: {
               kind: 'chat',
-              threadId: thread.id,
-              senderId: thread.lastMessageSenderId,
-              teamId: thread.teamId || undefined,
-            } satisfies NotificationRouteData,
+               threadId: thread.id,
+               senderId: thread.lastMessageSenderId,
+               teamId: thread.teamId || undefined,
+               organizationId: thread.organizationId || undefined,
+               threadTitle: thread.title || undefined,
+               participantIds: thread.participants || [],
+             } satisfies NotificationRouteData,
           },
           trigger: null,
-        }).catch(() => undefined);
+        }).then(() => markChatNotificationSeen({ threadId: thread.id, userId: profile.uid }))
+          .catch(() => undefined);
       });
     });
 
@@ -150,7 +172,7 @@ export function usePushNotificationBridge() {
           return;
         }
 
-        if (seenUserNotificationIdsRef.current.has(item.id)) return;
+        if (seenUserNotificationIdsRef.current.has(item.id) || item.pushSeenBy?.includes(profile.uid)) return;
 
         seenUserNotificationIdsRef.current.add(item.id);
         Notifications.scheduleNotificationAsync({
@@ -165,14 +187,23 @@ export function usePushNotificationBridge() {
           },
           trigger: null,
         }).then((scheduledNotificationId) => {
-          scheduledUserNotificationIdsRef.current[item.id] = scheduledNotificationId;
+          if (item.kind === 'worker_team_invite') {
+            scheduledUserNotificationIdsRef.current[item.id] = scheduledNotificationId;
+            return markUserNotificationPushSeen({ notificationId: item.id, userId: profile.uid });
+          }
+
+          return Promise.all([
+            markUserNotificationPushSeen({ notificationId: item.id, userId: profile.uid }),
+            markUserNotificationsRead({ userId: profile.uid, notificationIds: [item.id] }),
+            Notifications.setBadgeCountAsync(0),
+          ]).then(() => undefined);
         }).catch(() => undefined);
       });
     });
 
     const unsubRoleAssignmentNotifications = watchWorkerRoleAssignmentNotifications(profile.uid, (items) => {
       items.forEach((item) => {
-        if (seenRoleNotificationIdsRef.current.has(item.id)) return;
+        if (seenRoleNotificationIdsRef.current.has(item.id) || item.pushSeenBy?.includes(profile.uid)) return;
         seenRoleNotificationIdsRef.current.add(item.id);
 
         const roleLabel = item.roleName?.trim() || 'assigned role';
@@ -190,14 +221,68 @@ export function usePushNotificationBridge() {
             } satisfies NotificationRouteData,
           },
           trigger: null,
-        }).catch(() => undefined);
+        }).then(() => markRoleAssignmentNotificationPushSeen({ notificationId: item.id, userId: profile.uid }))
+          .catch(() => undefined);
       });
     });
+
+    let reminderQueue = Promise.resolve();
+    const unsubEventReminders = profile.role === 'worker'
+      ? watchWorkerEvents(profile.uid, (events) => {
+          reminderQueue = reminderQueue.then(async () => {
+            const now = Date.now();
+            const desired = events.flatMap((event) => {
+              const roleNames = (event.roles || [])
+                .filter((role) => (role.assignedWorkerIds || []).includes(profile.uid))
+                .map((role) => role.name);
+              const startsAtMs = new Date(event.startsAt).getTime();
+              if (!roleNames.length || !Number.isFinite(startsAtMs) || startsAtMs <= now) return [];
+              const reminderKey = `event-two-hour:${event.id}:${event.startsAt}`;
+              return [{ event, roleNames, startsAtMs, reminderKey }];
+            });
+            const desiredKeys = new Set(desired.map((item) => item.reminderKey));
+            const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+
+            await Promise.all(scheduled.map((notification) => {
+              const data = notification.content.data as { dispatchReminderKey?: string } | undefined;
+              if (!data?.dispatchReminderKey || desiredKeys.has(data.dispatchReminderKey)) return Promise.resolve();
+              return Notifications.cancelScheduledNotificationAsync(notification.identifier).catch(() => undefined);
+            }));
+
+            for (const item of desired) {
+              const alreadyScheduled = scheduled.some((notification) => {
+                const data = notification.content.data as { dispatchReminderKey?: string } | undefined;
+                return data?.dispatchReminderKey === item.reminderKey;
+              });
+              if (alreadyScheduled || scheduledEventReminderKeysRef.current.has(item.reminderKey)) continue;
+
+              const reminderAtMs = item.startsAtMs - 2 * 60 * 60 * 1000;
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: `${item.event.name} starts in 2 hours`,
+                  body: `${item.roleNames.join(', ')} at ${item.event.location || 'the event location'}.`,
+                  data: {
+                    kind: 'user_notification',
+                    relatedEventId: item.event.id,
+                    dispatchReminderKey: item.reminderKey,
+                  } as NotificationRouteData & { dispatchReminderKey: string },
+                },
+                trigger: reminderAtMs > now
+                  ? { type: Notifications.SchedulableTriggerInputTypes.DATE, date: reminderAtMs }
+                  : null,
+              });
+              scheduledEventReminderKeysRef.current.add(item.reminderKey);
+              await markEventReminderScheduled({ userId: profile.uid, reminderKey: item.reminderKey });
+            }
+          }).catch(() => undefined);
+        })
+      : () => undefined;
 
     return () => {
       unsubChats();
       unsubUserNotifications();
       unsubRoleAssignmentNotifications();
+      unsubEventReminders();
     };
-  }, [profile?.uid]);
+  }, [profile?.role, profile?.uid]);
 }

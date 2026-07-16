@@ -1,13 +1,14 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { buildChatThreadId, ChatAttachment, markTeamChatRead, sendChatMessage, uploadChatAttachment, watchChatMessages } from '@/services/dispatch';
+import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, renameCustomChat, sendChatMessage, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
+import type { UserProfile } from '@/types/dispatch';
 
 type ChatMessage = {
   id: string;
@@ -43,22 +44,53 @@ export default function WorkerChatScreen() {
     isTeamAll?: string;
     teamThreadId?: string;
     teamThreadPath?: string;
+    chatKind?: string;
   }>();
 
   const workerId = params.workerId ?? 'worker';
   const workerLabel = params.workerLabel ?? workerId;
   const teamId = params.teamId;
   const isTeamBroadcast = !!params.teamThreadId || params.isTeamAll === '1' || workerId.startsWith('all:') || workerId.startsWith('team:') || workerLabel.toLowerCase() === 'all';
-  const memberIds = (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean);
+  const initialMemberIds = useMemo(
+    () => (params.teamMemberIds || '').split(',').map((id) => id.trim()).filter(Boolean),
+    [params.teamMemberIds]
+  );
+  const isCustomChat = params.chatKind === 'custom' || params.teamThreadId?.includes(':group:') === true;
+  const [chatThread, setChatThread] = useState<ChatThreadHead | null>(null);
+  const memberIds = useMemo(
+    () => [...new Set((isCustomChat && chatThread?.participants?.length ? chatThread.participants : initialMemberIds).filter(Boolean))],
+    [chatThread?.participants, initialMemberIds, isCustomChat]
+  );
   const broadcastCount = memberIds.length;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sending, setSending] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [organizationMembers, setOrganizationMembers] = useState<UserProfile[]>([]);
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [addingMembers, setAddingMembers] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [chatNameDraft, setChatNameDraft] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
 
-  const headerTitle = isTeamBroadcast ? (params.teamName || workerLabel) : workerLabel;
+  const organizationMemberById = useMemo(
+    () => new Map(organizationMembers.map((member) => [member.uid, member])),
+    [organizationMembers]
+  );
+
+  const headerTitle = isCustomChat
+    ? chatThread?.title?.trim() || params.teamName || workerLabel
+    : isTeamBroadcast ? (params.teamName || workerLabel) : workerLabel;
   const headerSubtitle = useMemo(() => {
+    if (isCustomChat) {
+      return memberIds
+        .map((memberId) => memberId === profile?.uid ? profile.displayName : organizationMemberById.get(memberId)?.displayName || 'Member')
+        .join(', ');
+    }
     if (isTeamBroadcast) {
       if (params.teamThreadPath?.trim()) return params.teamThreadPath.trim();
       if (broadcastCount) return `${broadcastCount} member${broadcastCount === 1 ? '' : 's'}`;
@@ -68,7 +100,7 @@ export default function WorkerChatScreen() {
     if (params.teamName?.trim()) return params.teamName.trim();
     if (params.eventName?.trim()) return params.eventName.trim();
     return '';
-  }, [broadcastCount, isTeamBroadcast, params.eventName, params.teamName, params.teamThreadPath]);
+  }, [broadcastCount, isCustomChat, isTeamBroadcast, memberIds, organizationMemberById, params.eventName, params.teamName, params.teamThreadPath, profile]);
 
   const headerInitial = headerTitle.trim().slice(0, 1).toUpperCase() || 'C';
 
@@ -84,30 +116,62 @@ export default function WorkerChatScreen() {
   }, [isTeamBroadcast, params.teamThreadId, profile, teamId, workerId]);
 
   useEffect(() => {
+    if (!isCustomChat || !threadId) {
+      setChatThread(null);
+      return;
+    }
+    return watchChatThread(threadId, setChatThread);
+  }, [isCustomChat, threadId]);
+
+  useEffect(() => {
+    if (!profile?.organizationId) {
+      setOrganizationMembers([]);
+      return;
+    }
+
+    let active = true;
+    loadOrganizationMembers(profile.organizationId)
+      .then((result) => {
+        if (active) setOrganizationMembers(result.members);
+      })
+      .catch(() => {
+        if (active) setOrganizationMembers(profile ? [profile] : []);
+      });
+    return () => {
+      active = false;
+    };
+  }, [profile]);
+
+  useEffect(() => {
     if (!threadId) {
       setMessages([]);
       return;
     }
 
-    return watchChatMessages(threadId, (items) => {
-      const mapped = items.map((item) => {
-        const date = item.createdAt instanceof Date
-          ? item.createdAt
-          : typeof item.createdAt === 'object' && item.createdAt && 'toDate' in item.createdAt && typeof item.createdAt.toDate === 'function'
-            ? item.createdAt.toDate()
-            : new Date();
+    return watchChatMessages(
+      threadId,
+      (items) => {
+        const mapped = items.map((item) => {
+          const date = item.createdAt instanceof Date
+            ? item.createdAt
+            : typeof item.createdAt === 'object' && item.createdAt && 'toDate' in item.createdAt && typeof item.createdAt.toDate === 'function'
+              ? item.createdAt.toDate()
+              : new Date();
 
-        return {
-          id: item.id,
-          senderId: item.senderId,
-          senderName: item.senderName,
-          text: item.text,
-          attachments: item.attachments || [],
-          at: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase(),
-        };
-      });
-      setMessages(mapped);
-    });
+          return {
+            id: item.id,
+            senderId: item.senderId,
+            senderName: item.senderName,
+            text: item.text,
+            attachments: item.attachments || [],
+            at: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase(),
+          };
+        });
+        setMessages(mapped);
+        setLoadError(null);
+      },
+      () => setLoadError('Unable to load this chat. Please go back and try again.')
+    );
   }, [threadId]);
 
   useEffect(() => {
@@ -115,9 +179,9 @@ export default function WorkerChatScreen() {
   }, [messages.length]);
 
   useEffect(() => {
-    if (!profile || !teamId) return;
-    markTeamChatRead({ userId: profile.uid, teamId }).catch(() => undefined);
-  }, [profile, teamId, threadId]);
+    if (!profile || !threadId) return;
+    markChatThreadRead({ userId: profile.uid, threadId, teamId }).catch(() => undefined);
+  }, [messages.length, profile, teamId, threadId]);
 
   const emojiOptions = ['😀', '😂', '😍', '🙏', '👍', '🔥', '✅', '🎉', '📍', '⏰'];
   const attachmentOptions = [
@@ -202,6 +266,115 @@ export default function WorkerChatScreen() {
     router.replace('/(tabs)/teams');
   };
 
+  const selectableOrganizationMembers = useMemo(() => {
+    const search = memberSearch.trim().toLowerCase();
+    return organizationMembers
+      .filter((member) => !search || `${member.displayName} ${member.email || ''}`.toLowerCase().includes(search))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [memberSearch, organizationMembers]);
+
+  const openMemberPicker = () => {
+    setSelectedMemberIds(memberIds);
+    setMemberSearch('');
+    setMemberPickerOpen(true);
+  };
+
+  const closeMemberPicker = () => {
+    if (addingMembers) return;
+    setMemberPickerOpen(false);
+    setMemberSearch('');
+    setSelectedMemberIds([]);
+  };
+
+  const toggleMemberSelection = (memberId: string) => {
+    if (!isCustomChat || memberIds.includes(memberId)) return;
+    setSelectedMemberIds((current) => current.includes(memberId)
+      ? current.filter((id) => id !== memberId)
+      : [...current, memberId]);
+  };
+
+  const toggleSelectAllMembers = () => {
+    if (!isCustomChat) return;
+    const visibleIds = selectableOrganizationMembers.map((member) => member.uid);
+    const selectableIds = visibleIds.filter((id) => !memberIds.includes(id));
+    const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedMemberIds.includes(id));
+    setSelectedMemberIds((current) => allSelected
+      ? current.filter((id) => !selectableIds.includes(id))
+      : [...new Set([...current, ...visibleIds])]);
+  };
+
+  const handleAddMembers = async () => {
+    if (!isCustomChat || !threadId || addingMembers) return;
+    const newMemberIds = selectedMemberIds.filter((memberId) => !memberIds.includes(memberId));
+    if (!newMemberIds.length) {
+      closeMemberPicker();
+      return;
+    }
+
+    try {
+      setAddingMembers(true);
+      await addChatParticipants({ threadId, participantIds: newMemberIds });
+      setMemberPickerOpen(false);
+      setMemberSearch('');
+      setSelectedMemberIds([]);
+    } catch (error) {
+      Alert.alert('Unable to add people', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setAddingMembers(false);
+    }
+  };
+
+  const openSettings = () => {
+    if (!isCustomChat) return;
+    setChatNameDraft(headerTitle);
+    setSettingsOpen(true);
+  };
+
+  const closeSettings = () => {
+    if (savingSettings) return;
+    setSettingsOpen(false);
+  };
+
+  const handleRenameChat = async () => {
+    if (!profile || !threadId || savingSettings) return;
+    try {
+      setSavingSettings(true);
+      await renameCustomChat({ threadId, userId: profile.uid, title: chatNameDraft });
+      setSettingsOpen(false);
+    } catch (error) {
+      Alert.alert('Unable to rename chat', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const confirmLeaveChat = () => {
+    if (!profile || !threadId || savingSettings) return;
+    Alert.alert(
+      'Leave chat?',
+      `You will no longer receive messages from ${headerTitle}.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave Chat',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setSavingSettings(true);
+              await leaveCustomChat({ threadId, userId: profile.uid });
+              setSettingsOpen(false);
+              router.replace('/(tabs)/teams');
+            } catch (error) {
+              Alert.alert('Unable to leave chat', error instanceof Error ? error.message : 'Please try again.');
+            } finally {
+              setSavingSettings(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const sendMessage = async () => {
     const text = draft.trim();
     if ((!text && !pendingAttachments.length) || !profile || !threadId || sending) return;
@@ -269,16 +442,34 @@ export default function WorkerChatScreen() {
                 {headerTitle}
               </Text>
               {headerSubtitle ? (
-                <Text style={[styles.headerSubtitle, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]} numberOfLines={1}>
-                  {headerSubtitle}
-                </Text>
+                <View style={styles.headerSubtitleRow}>
+                  <Pressable accessibilityLabel={isCustomChat ? 'Add people to chat' : 'View people in chat'} hitSlop={8} onPress={openMemberPicker}>
+                    <MaterialIcons name="add-circle" size={15} color="#0EC3C9" />
+                  </Pressable>
+                  <Text style={[styles.headerSubtitle, styles.headerSubtitleNames, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]} numberOfLines={1}>
+                    {headerSubtitle}
+                  </Text>
+                </View>
               ) : null}
             </View>
           </View>
 
-          <View style={styles.headerSpacer} />
+          {isCustomChat ? (
+            <Pressable accessibilityLabel="Chat settings" style={styles.headerMenuButton} hitSlop={8} onPress={openSettings}>
+              <MaterialIcons name="more-vert" size={24} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+            </Pressable>
+          ) : (
+            <View style={styles.headerSpacer} />
+          )}
         </View>
       </View>
+
+      {loadError ? (
+        <View style={styles.loadErrorBanner}>
+          <MaterialIcons name="error-outline" size={18} color="#991b1b" />
+          <Text style={styles.loadErrorText}>{loadError}</Text>
+        </View>
+      ) : null}
 
       <FlatList
         ref={listRef}
@@ -324,6 +515,98 @@ export default function WorkerChatScreen() {
           );
         }}
       />
+
+      <Modal visible={memberPickerOpen} transparent animationType="slide" onRequestClose={closeMemberPicker}>
+        <Pressable style={styles.memberPickerBackdrop} onPress={closeMemberPicker}>
+          <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.memberPickerKeyboardView}>
+            <Pressable style={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
+              <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>
+                {isCustomChat ? 'Add People' : 'People in Chat'}
+              </Text>
+              <TextInput
+                value={memberSearch}
+                onChangeText={setMemberSearch}
+                placeholder="Search organization members"
+                placeholderTextColor={isDarkMode ? '#9fb0cf' : '#64748b'}
+                style={[styles.memberSearchInput, isDarkMode ? styles.memberSearchInputDark : styles.memberSearchInputLight]}
+              />
+              <Pressable style={[styles.selectAllRow, !isCustomChat && styles.disabledControl]} disabled={!isCustomChat} onPress={toggleSelectAllMembers}>
+                <MaterialIcons
+                  name={selectableOrganizationMembers.length > 0 && selectableOrganizationMembers.every((member) => selectedMemberIds.includes(member.uid)) ? 'check-box' : 'check-box-outline-blank'}
+                  size={23}
+                  color="#0EC3C9"
+                />
+                <Text style={[styles.selectAllText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Select all</Text>
+              </Pressable>
+              <ScrollView style={styles.memberPickerList} keyboardShouldPersistTaps="handled">
+                {selectableOrganizationMembers.map((member) => {
+                  const alreadyInChat = memberIds.includes(member.uid);
+                  return (
+                    <Pressable
+                      key={member.uid}
+                      style={[styles.memberPickerRow, (alreadyInChat || !isCustomChat) && styles.memberPickerRowLocked]}
+                      disabled={!isCustomChat || alreadyInChat}
+                      onPress={() => toggleMemberSelection(member.uid)}>
+                      <MaterialIcons
+                        name={selectedMemberIds.includes(member.uid) ? 'check-box' : 'check-box-outline-blank'}
+                        size={23}
+                        color="#0EC3C9"
+                      />
+                      <View style={styles.memberPickerCopy}>
+                        <Text style={[styles.memberPickerName, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>{member.displayName}</Text>
+                        <Text style={[styles.memberPickerMeta, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]}>
+                          {alreadyInChat ? 'Already in chat' : member.email || (member.role === 'manager' ? 'Manager' : 'Worker')}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Pressable
+                style={[styles.memberPickerButton, (!isCustomChat || addingMembers) && styles.sendButtonDisabled]}
+                disabled={!isCustomChat || addingMembers}
+                onPress={handleAddMembers}>
+                <Text style={styles.memberPickerButtonText}>{addingMembers ? 'Adding...' : 'Chat'}</Text>
+              </Pressable>
+              <Pressable style={styles.memberPickerCloseButton} disabled={addingMembers} onPress={closeMemberPicker}>
+                <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
+              </Pressable>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={isCustomChat && settingsOpen} transparent animationType="slide" onRequestClose={closeSettings}>
+        <Pressable style={styles.memberPickerBackdrop} onPress={closeSettings}>
+          <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.settingsKeyboardView}>
+            <Pressable style={[styles.settingsDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
+              <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat Settings</Text>
+              <Text style={[styles.settingsLabel, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat name</Text>
+              <TextInput
+                value={chatNameDraft}
+                onChangeText={setChatNameDraft}
+                editable={!savingSettings}
+                placeholder="Chat name"
+                placeholderTextColor={isDarkMode ? '#9fb0cf' : '#64748b'}
+                style={[styles.memberSearchInput, isDarkMode ? styles.memberSearchInputDark : styles.memberSearchInputLight]}
+              />
+              <Pressable
+                style={[styles.memberPickerButton, (!chatNameDraft.trim() || savingSettings) && styles.sendButtonDisabled]}
+                disabled={!chatNameDraft.trim() || savingSettings}
+                onPress={handleRenameChat}>
+                <Text style={styles.memberPickerButtonText}>{savingSettings ? 'Saving...' : 'Rename Chat'}</Text>
+              </Pressable>
+              <Pressable style={[styles.leaveChatButton, savingSettings && styles.sendButtonDisabled]} disabled={savingSettings} onPress={confirmLeaveChat}>
+                <MaterialIcons name="logout" size={19} color="#b91c1c" />
+                <Text style={styles.leaveChatText}>Leave Chat</Text>
+              </Pressable>
+              <Pressable style={styles.memberPickerCloseButton} disabled={savingSettings} onPress={closeSettings}>
+                <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
+              </Pressable>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
 
       <View style={[styles.composer, isDarkMode ? styles.composerDark : styles.composerLight, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         {showAttachmentPicker ? (
@@ -425,15 +708,47 @@ const styles = StyleSheet.create({
   headerAvatarText: { fontSize: 16, fontWeight: '700' },
   headerAvatarTextLight: { color: 'rgba(249,141,47,0.25)' },
   headerAvatarTextDark: { color: '#F98D2F' },
-  headerCopy: { minWidth: 0, justifyContent: 'center' },
+  headerCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
   headerTitle: { fontSize: 16, lineHeight: 19, fontWeight: '700' },
   headerTitleLight: { color: '#121212' },
   headerTitleDark: { color: '#F7F7F7' },
   headerSubtitle: { marginTop: 2, fontSize: 10, lineHeight: 12 },
+  headerSubtitleRow: { marginTop: 2, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerSubtitleNames: { flex: 1, marginTop: 0 },
   headerSubtitleLight: { color: '#121212', opacity: 0.75 },
   headerSubtitleDark: { color: '#F7F7F7', opacity: 0.75 },
   headerSpacer: { width: 36, height: 29 },
+  headerMenuButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  memberPickerBackdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
+  memberPickerKeyboardView: { height: '75%', justifyContent: 'flex-end' },
+  memberPickerDrawer: { flex: 1, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
+  memberPickerDrawerLight: { backgroundColor: '#F7F7F7' },
+  memberPickerDrawerDark: { backgroundColor: '#12274D' },
+  memberPickerTitle: { marginBottom: 12, fontSize: 19, fontWeight: '700' },
+  memberSearchInput: { minHeight: 46, borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, fontSize: 14 },
+  memberSearchInputLight: { backgroundColor: '#EDF0FC', borderColor: 'rgba(6,18,41,0.12)', color: '#121212' },
+  memberSearchInputDark: { backgroundColor: '#203E75', borderColor: 'rgba(247,247,247,0.15)', color: '#F7F7F7' },
+  selectAllRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.25)' },
+  selectAllText: { fontSize: 14, fontWeight: '700' },
+  memberPickerList: { flex: 1 },
+  memberPickerRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.2)' },
+  memberPickerRowLocked: { opacity: 0.65 },
+  disabledControl: { opacity: 0.5 },
+  memberPickerCopy: { flex: 1, minWidth: 0 },
+  memberPickerName: { fontSize: 14, fontWeight: '700' },
+  memberPickerMeta: { marginTop: 2, fontSize: 12 },
+  memberPickerButton: { minHeight: 52, marginTop: 14, borderRadius: 8, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
+  memberPickerButtonText: { color: '#061229', fontSize: 16, fontWeight: '700' },
+  memberPickerCloseButton: { minHeight: 46, marginTop: 6, alignItems: 'center', justifyContent: 'center' },
+  memberPickerCloseText: { fontSize: 15, fontWeight: '700' },
+  settingsKeyboardView: { justifyContent: 'flex-end' },
+  settingsDrawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18, paddingBottom: 12 },
+  settingsLabel: { marginBottom: 6, fontSize: 13, fontWeight: '700' },
+  leaveChatButton: { minHeight: 48, marginTop: 12, borderWidth: 1, borderColor: '#fecaca', borderRadius: 8, backgroundColor: '#fef2f2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  leaveChatText: { color: '#b91c1c', fontSize: 15, fontWeight: '700' },
   thread: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 8, gap: 8 },
+  loadErrorBanner: { minHeight: 48, marginHorizontal: 16, marginTop: 10, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fecaca' },
+  loadErrorText: { flex: 1, color: '#991b1b', fontSize: 13, fontWeight: '600' },
   messageRow: { width: '100%', paddingVertical: 4 },
   messageRowSelf: { alignItems: 'flex-end' },
   messageRowOther: { alignItems: 'flex-start' },

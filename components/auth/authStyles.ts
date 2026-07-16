@@ -161,18 +161,18 @@ export const authStyles = StyleSheet.create<{
   },
   lightScrollContent: {
     flexGrow: 1,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingTop: 32,
+    paddingTop: 24,
     paddingBottom: 24,
   },
   darkScrollContent: {
     flexGrow: 1,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingTop: 32,
+    paddingTop: 24,
     paddingBottom: 24,
   },
   backgroundGlowTop: {
@@ -271,8 +271,11 @@ export const authStyles = StyleSheet.create<{
   lightLogoWrap: {
     width: '100%',
     maxWidth: 402,
+    height: 200,
     alignItems: 'center',
-    marginBottom: 10,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginBottom: 8,
   },
   lightHeroGraphic: {
     width: 465,
@@ -371,8 +374,11 @@ export const authStyles = StyleSheet.create<{
   darkLogoWrap: {
     width: '100%',
     maxWidth: 402,
+    height: 200,
     alignItems: 'center',
-    marginBottom: 10,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginBottom: 8,
   },
   darkHeroGraphic: {
     width: 465,

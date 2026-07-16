@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -10,6 +10,7 @@ import { useSession } from '@/context/session';
 import {
   cancelWorkerEventRole,
   acceptEventRoleWaitlistInvite,
+  buildOrganizationManagersThreadId,
   createDispatchEvent,
   createEventTemplate,
   deleteDispatchEvent,
@@ -25,6 +26,7 @@ import {
   updateEventRoleDetails,
   updateEventTemplate,
   uploadTemplateTaskAttachment,
+  withdrawPendingEventRoleInvite,
   watchManagerEvents,
   watchManagerEventTemplates,
   watchManagerPendingRoleInvites,
@@ -62,6 +64,8 @@ const INITIAL_DRAWER: DrawerState = {
 
 type EventRoleEditorState = DrawerState & {
   name: string;
+  editingTasks: boolean;
+  tasks: EventTask[];
 };
 
 const INITIAL_EVENT_ROLE_EDITOR: EventRoleEditorState = {
@@ -69,6 +73,8 @@ const INITIAL_EVENT_ROLE_EDITOR: EventRoleEditorState = {
   eventId: null,
   roleId: null,
   name: '',
+  editingTasks: false,
+  tasks: [],
 };
 
 type TemplateTaskPreview = {
@@ -76,7 +82,7 @@ type TemplateTaskPreview = {
   name: string;
   description?: string;
   attachments?: Array<{ id: string; name: string; url: string; kind: 'photo' | 'document' }>;
-  expectedOffsetMinutes: number;
+  expectedOffsetMinutes?: number;
 };
 
 type TemplateRolePreview = {
@@ -121,6 +127,7 @@ type TemplateTaskEditorState = {
   taskId: string | null;
   name: string;
   description: string;
+  includeCountdownTimer: boolean;
   expectedOffsetText: string;
   attachments: Array<{ id: string; name: string; url: string; kind: 'photo' | 'document' }>;
 };
@@ -132,6 +139,7 @@ const INITIAL_TEMPLATE_TASK_EDITOR: TemplateTaskEditorState = {
   taskId: null,
   name: '',
   description: '',
+  includeCountdownTimer: false,
   expectedOffsetText: '00:00:00',
   attachments: [],
 };
@@ -146,12 +154,14 @@ function LocationAutocompleteField({
   onChangeText,
   placeholder,
   isDarkMode,
+  onFocus,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder: string;
   isDarkMode: boolean;
+  onFocus?: () => void;
 }) {
   const [suggestions, setSuggestions] = useState<PlaceAutocompleteSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -206,6 +216,7 @@ function LocationAutocompleteField({
         placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : '#94a3b8'}
         returnKeyType="next"
         blurOnSubmit={false}
+        onFocus={onFocus}
         style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
       />
       {loading ? (
@@ -260,6 +271,7 @@ export default function EventsScreen() {
   const [replaceDrawer, setReplaceDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [inviteDrawer, setInviteDrawer] = useState<DrawerState>(INITIAL_DRAWER);
   const [eventRoleEditor, setEventRoleEditor] = useState<EventRoleEditorState>(INITIAL_EVENT_ROLE_EDITOR);
+  const [eventRoleTaskEditor, setEventRoleTaskEditor] = useState<TemplateTaskEditorState>(INITIAL_TEMPLATE_TASK_EDITOR);
   const [roleMutationBusyKey, setRoleMutationBusyKey] = useState<string | null>(null);
   const [roleCancellationBusyKey, setRoleCancellationBusyKey] = useState<string | null>(null);
   const [inviteSelectedWorkerIds, setInviteSelectedWorkerIds] = useState<string[]>([]);
@@ -310,7 +322,7 @@ export default function EventsScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showEventsWeekPicker, setShowEventsWeekPicker] = useState(false);
-  const drawerKeyboardOffset = Platform.select({ ios: 44, android: 24 }) ?? 0;
+  const drawerKeyboardOffset = 16;
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
@@ -326,9 +338,13 @@ export default function EventsScreen() {
     return base;
   });
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
+  const createEventScrollRef = useRef<ScrollView | null>(null);
   const createTemplateScrollRef = useRef<ScrollView | null>(null);
   const templateTaskDescriptionYRef = useRef(0);
+  const templateDefaultLocationYRef = useRef(0);
   const templateDefaultDescriptionYRef = useRef(0);
+  const eventLocationYRef = useRef(0);
+  const eventDescriptionYRef = useRef(0);
   const knownEventIdsRef = useRef<Set<string>>(new Set());
   const eventListInitializedRef = useRef(false);
   const calendarPromptedEventIdsRef = useRef<Set<string>>(new Set());
@@ -383,14 +399,22 @@ export default function EventsScreen() {
     return Math.max(0, Math.round((hours * 3600 + minutes * 60 + seconds) / 60));
   };
 
-  const scrollCreateTemplateFieldAboveKeyboard = (fieldY: number) => {
+  const scrollFieldAboveKeyboard = (scrollRef: RefObject<ScrollView | null>, fieldY: number) => {
     const delay = Platform.OS === 'ios' ? 220 : 320;
     setTimeout(() => {
-      createTemplateScrollRef.current?.scrollTo({
-        y: Math.max(0, fieldY - 24),
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, fieldY - 120),
         animated: true,
       });
     }, delay);
+  };
+
+  const scrollCreateEventFieldAboveKeyboard = (fieldY: number) => {
+    scrollFieldAboveKeyboard(createEventScrollRef, fieldY);
+  };
+
+  const scrollCreateTemplateFieldAboveKeyboard = (fieldY: number) => {
+    scrollFieldAboveKeyboard(createTemplateScrollRef, fieldY);
   };
 
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
@@ -902,9 +926,9 @@ export default function EventsScreen() {
               name: task.name.trim(),
               ...(description ? { description } : {}),
               attachments: (task.attachments || []).filter((attachment) => attachment.url.trim().length > 0),
-              expectedOffsetMinutes: Number.isFinite(task.expectedOffsetMinutes)
-                ? Math.max(0, Math.round(task.expectedOffsetMinutes))
-                : 0,
+              ...(Number.isFinite(task.expectedOffsetMinutes)
+                ? { expectedOffsetMinutes: Math.max(0, Math.round(task.expectedOffsetMinutes as number)) }
+                : {}),
             };
           })
           .filter((task) => task.name.length > 0);
@@ -979,6 +1003,7 @@ export default function EventsScreen() {
       taskId: `task-${Date.now()}-${(role?.tasks.length || 0) + 1}`,
       name: '',
       description: '',
+      includeCountdownTimer: false,
       expectedOffsetText: '00:00:00',
       attachments: [],
     });
@@ -993,7 +1018,8 @@ export default function EventsScreen() {
       taskId: task.id,
       name: task.name || '',
       description: task.description || '',
-      expectedOffsetText: formatOffsetHhMmSs(task.expectedOffsetMinutes),
+      includeCountdownTimer: Number.isFinite(task.expectedOffsetMinutes),
+      expectedOffsetText: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0),
       attachments: [...(task.attachments || [])],
     });
     setTemplateTaskOffsetSelectorPart(null);
@@ -1015,8 +1041,10 @@ export default function EventsScreen() {
       return;
     }
 
-    const parsedOffsetMinutes = parseOffsetHhMmSsToMinutes(templateTaskEditor.expectedOffsetText);
-    if (parsedOffsetMinutes === null) {
+    const parsedOffsetMinutes = templateTaskEditor.includeCountdownTimer
+      ? parseOffsetHhMmSsToMinutes(templateTaskEditor.expectedOffsetText)
+      : undefined;
+    if (templateTaskEditor.includeCountdownTimer && parsedOffsetMinutes === null) {
       Alert.alert('Invalid task time', 'Use the format HH:MM:SS for the total time.');
       return;
     }
@@ -1028,13 +1056,16 @@ export default function EventsScreen() {
             tasks: templateTaskEditor.mode === 'edit'
               ? role.tasks.map((task) => (
                   task.id === taskId
-                    ? {
-                        ...task,
+                    ? (() => {
+                        const { expectedOffsetMinutes: _offset, ...taskWithoutCountdown } = task;
+                        return {
+                        ...taskWithoutCountdown,
                         name: taskName,
                         description: templateTaskEditor.description.trim(),
                         attachments: templateTaskEditor.attachments,
-                        expectedOffsetMinutes: parsedOffsetMinutes,
-                      }
+                        ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+                      };
+                    })()
                     : task
                 ))
               : [
@@ -1044,7 +1075,7 @@ export default function EventsScreen() {
                     name: taskName,
                     description: templateTaskEditor.description.trim(),
                     attachments: templateTaskEditor.attachments,
-                    expectedOffsetMinutes: parsedOffsetMinutes,
+                    ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
                   },
                 ],
           }
@@ -1074,6 +1105,32 @@ export default function EventsScreen() {
                 ? task.expectedOffsetMinutes
                 : Math.max(0, Math.round(nextOffset)),
           };
+        }),
+      };
+    }));
+  };
+
+  const setTemplateTaskCountdownEnabled = (roleId: string, taskId: string, enabled: boolean) => {
+    setTemplateTaskOffsetDrafts((prev) => {
+      const next = { ...prev };
+      delete next[`${roleId}:${taskId}`];
+      return next;
+    });
+    setTemplateRolesDraft((prev) => prev.map((role) => {
+      if (role.id !== roleId) return role;
+      return {
+        ...role,
+        tasks: role.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          if (enabled) {
+            return {
+              ...task,
+              expectedOffsetMinutes: Number.isFinite(task.expectedOffsetMinutes) ? task.expectedOffsetMinutes : 0,
+            };
+          }
+
+          const { expectedOffsetMinutes: _offset, ...taskWithoutCountdown } = task;
+          return taskWithoutCountdown;
         }),
       };
     }));
@@ -1259,49 +1316,112 @@ export default function EventsScreen() {
 
   const allEvents = useMemo(
     () => {
-      const activeEventIds = new Set(events.map((event) => event.id));
+      const buildPendingInviteRole = (notification: (typeof pendingRoleNotifications)[number]): EventRole => ({
+        id: notification.roleId,
+        name: notification.roleName?.trim() || 'Invited role',
+        assignedWorkerIds: notification.roleAssignedWorkerIds || [],
+        waitlistWorkerIds: notification.roleWaitlistWorkerIds || [],
+        openSlots: Math.max(0, notification.roleOpenSlots ?? 0),
+        tasks: (notification.roleTaskNames || []).map((taskName, index) => ({
+          id: `pending-task-${notification.id}-${index}`,
+          name: taskName,
+          completedBy: [],
+        })),
+      });
+
+      const baseEvents = [...events, ...optimisticCreatedEvents];
+      const activeEventIds = new Set(baseEvents.map((event) => event.id));
+      const pendingNotificationsByEvent = new Map<string, typeof pendingRoleNotifications>();
+
+      if (profile?.role === 'worker') {
+        pendingRoleNotifications
+          .filter((notification) => notification.action === 'assign')
+          .filter((notification) => notification.status === 'pending' || notification.status === 'declined' || notification.status === 'waitlisted')
+          .filter((notification) => Number.isFinite(new Date(notification.eventStartsAt || '').getTime()))
+          .forEach((notification) => {
+            const current = pendingNotificationsByEvent.get(notification.eventId) || [];
+            current.push(notification);
+            pendingNotificationsByEvent.set(notification.eventId, current);
+          });
+      }
+
+      const activeEventsWithPendingInvites = baseEvents.map((event) => {
+        if (profile?.role !== 'worker') return event;
+        const hasAcceptedRole = event.roles.some((role) => role.assignedWorkerIds.includes(profile.uid));
+        if (hasAcceptedRole) return event;
+
+        const notifications = pendingNotificationsByEvent.get(event.id) || [];
+        if (!notifications.length) return event;
+
+        const existingRoleIds = new Set(event.roles.map((role) => role.id));
+        const pendingRoles = notifications
+          .filter((notification) => !existingRoleIds.has(notification.roleId))
+          .map(buildPendingInviteRole);
+
+        return {
+          ...event,
+          pendingInviteNotificationIds: {
+            ...(event.pendingInviteNotificationIds || {}),
+            ...Object.fromEntries(notifications.map((notification) => [notification.roleId, notification.id])),
+          },
+          roles: [...event.roles, ...pendingRoles],
+        };
+      });
+
       const pendingInviteEvents: DispatchEvent[] = profile?.role === 'worker'
         ? pendingRoleNotifications
             .filter((notification) => notification.action === 'assign')
-            .filter((notification) => notification.status === 'pending' || notification.status === 'declined')
+            .filter((notification) => notification.status === 'pending' || notification.status === 'declined' || notification.status === 'waitlisted')
             .filter((notification) => !activeEventIds.has(notification.eventId))
             .filter((notification) => Number.isFinite(new Date(notification.eventStartsAt || '').getTime()))
-            .map((notification) => ({
-              id: notification.eventId,
-              managerId: notification.managerId,
-              name: notification.eventName?.trim() || 'Event invite',
-              location: notification.eventLocation?.trim() || 'TBD',
-              startsAt: notification.eventStartsAt || new Date().toISOString(),
-              teamIds: [],
-              pendingInviteNotificationId: notification.id,
-              pendingInviteRoleId: notification.roleId,
-              roles: [
-                {
-                  id: notification.roleId,
-                  name: notification.roleName?.trim() || 'Invited role',
-                  assignedWorkerIds: notification.roleAssignedWorkerIds || [],
-                  waitlistWorkerIds: notification.roleWaitlistWorkerIds || [],
-                  openSlots: Math.max(0, notification.roleOpenSlots ?? 0),
-                  tasks: (notification.roleTaskNames || []).map((taskName, index) => ({
-                    id: `pending-task-${index}`,
-                    name: taskName,
-                    completedBy: [],
-                  })),
-                },
-              ],
-            }))
+            .reduce<DispatchEvent[]>((acc, notification) => {
+              const existing = acc.find((event) => event.id === notification.eventId);
+              if (existing) {
+                existing.roles.push(buildPendingInviteRole(notification));
+                existing.pendingInviteNotificationIds = {
+                  ...(existing.pendingInviteNotificationIds || {}),
+                  [notification.roleId]: notification.id,
+                };
+                return acc;
+              }
+
+              acc.push({
+                id: notification.eventId,
+                managerId: notification.managerId,
+                name: notification.eventName?.trim() || 'Event invite',
+                location: notification.eventLocation?.trim() || 'TBD',
+                startsAt: notification.eventStartsAt || new Date().toISOString(),
+                teamIds: [],
+                pendingInviteNotificationId: notification.id,
+                pendingInviteRoleId: notification.roleId,
+                pendingInviteNotificationIds: { [notification.roleId]: notification.id },
+                roles: [buildPendingInviteRole(notification)],
+              });
+              return acc;
+            }, [])
         : [];
-      const combined = [...events, ...optimisticCreatedEvents, ...pendingInviteEvents];
+      const combined = [...activeEventsWithPendingInvites, ...pendingInviteEvents];
       const unique = combined.filter((event, index, list) => list.findIndex((item) => item.id === event.id) === index);
       const validEvents = unique.filter((event) => Number.isFinite(new Date(event.startsAt).getTime()));
       return sortDispatchEvents(validEvents);
     },
-    [events, optimisticCreatedEvents, pendingRoleNotifications, profile?.role]
+    [events, optimisticCreatedEvents, pendingRoleNotifications, profile?.role, profile?.uid]
   );
 
+  const acceptedWorkerEventIds = useMemo(() => {
+    if (profile?.role !== 'worker' || !profile.uid) return new Set<string>();
+    return new Set(
+      allEvents
+        .filter((event) => event.roles.some((role) => (role.assignedWorkerIds || []).includes(profile.uid)))
+        .map((event) => event.id)
+    );
+  }, [allEvents, profile?.role, profile?.uid]);
+
   const actionableRoleNotifications = useMemo(
-    () => pendingRoleNotifications.filter((notification) => notification.status === 'pending'),
-    [pendingRoleNotifications]
+    () => pendingRoleNotifications
+      .filter((notification) => notification.status === 'pending')
+      .filter((notification) => !acceptedWorkerEventIds.has(notification.eventId)),
+    [acceptedWorkerEventIds, pendingRoleNotifications]
   );
 
   const visibleEvents = useMemo(() => {
@@ -1403,15 +1523,26 @@ export default function EventsScreen() {
     setExpandedRoleTaskIds((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const getWorkerSignupRatio = (event: DispatchEvent) => {
-    const assignedCount = event.roles.reduce((total, role) => total + role.assignedWorkerIds.length, 0);
-    const requiredCount = event.roles.reduce((total, role) => total + role.assignedWorkerIds.length + role.openSlots, 0);
+  const getWorkerRoleSubtitle = (event: DispatchEvent) => {
+    if (!profile?.uid || profile.role !== 'worker') return '';
+    const assignedRoleNames = event.roles
+      .filter((role) => (role.assignedWorkerIds || []).includes(profile.uid))
+      .map((role) => role.name)
+      .filter(Boolean);
+    if (assignedRoleNames.length) return assignedRoleNames.join(', ');
 
-    return {
-      assignedCount,
-      requiredCount,
-      label: `${assignedCount}/${requiredCount} workers signed up`,
-    };
+    const waitlistedRoleNames = event.roles
+      .filter((role) => (role.waitlistWorkerIds || []).includes(profile.uid))
+      .map((role) => `${role.name} - Waitlisted`)
+      .filter(Boolean);
+    if (waitlistedRoleNames.length) return waitlistedRoleNames.join(', ');
+
+    const pendingRoleIds = new Set(Object.keys(event.pendingInviteNotificationIds || {}));
+    const pendingRoleNames = event.roles
+      .filter((role) => pendingRoleIds.has(role.id))
+      .map((role) => role.name)
+      .filter(Boolean);
+    return pendingRoleNames.join(', ');
   };
 
   const findRoleForDrawer = (drawer: DrawerState): { event: DispatchEvent; role: EventRole } | null => {
@@ -1455,6 +1586,10 @@ export default function EventsScreen() {
     );
   };
 
+  const openTaskDescription = (task: EventTask) => {
+    Alert.alert(task.name || 'Task description', task.description?.trim() || 'No description has been added for this task.');
+  };
+
   const confirmCancelWorkerRole = (event: DispatchEvent, role: EventRole) => {
     if (!profile?.uid) return;
 
@@ -1476,57 +1611,63 @@ export default function EventsScreen() {
   const renderWorkerTaskList = (event: DispatchEvent) => {
     if (!profile) return null;
 
-    const pendingInviteRole = event.pendingInviteRoleId
-      ? event.roles.find((role) => role.id === event.pendingInviteRoleId)
-      : null;
+    const assignedRoles = event.roles.filter((role) => role.assignedWorkerIds.includes(profile.uid));
+    const pendingInviteRoleCards = Object.entries(event.pendingInviteNotificationIds || {})
+      .map(([roleId, notificationId]) => ({
+        notificationId,
+        role: event.roles.find((role) => role.id === roleId),
+      }))
+      .filter((item): item is { notificationId: string; role: EventRole } => Boolean(item.role));
 
-    if (event.pendingInviteNotificationId && pendingInviteRole) {
-      const busy = notificationBusyId === event.pendingInviteNotificationId;
-      const alreadyWaitlisted = (pendingInviteRole.waitlistWorkerIds || []).includes(profile.uid);
-
+    if (!assignedRoles.length && pendingInviteRoleCards.length) {
       return (
         <View style={styles.taskList}>
-          <View style={[styles.pendingInviteRoleCard, isDarkMode ? styles.pendingInviteRoleCardDark : styles.pendingInviteRoleCardLight]}>
-            <View style={styles.pendingInviteRoleInfo}>
-              <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>Invited role</Text>
-              <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{pendingInviteRole.name}</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Join waitlist for ${pendingInviteRole.name}`}
-              disabled={busy || alreadyWaitlisted}
-              style={[
-                styles.pendingInviteWaitlistButton,
-                isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight,
-                (busy || alreadyWaitlisted) && styles.drawerCloseDisabled,
-              ]}
-              onPress={() => handleJoinRoleWaitlist(event.pendingInviteNotificationId as string)}>
-              <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight]}>
-                {busy ? 'Joining...' : alreadyWaitlisted ? 'Waitlisted' : 'Join Waitlist'}
-              </Text>
-            </Pressable>
-          </View>
-          {pendingInviteRole.tasks.length ? (
-            pendingInviteRole.tasks.map((task) => (
-              <Text key={task.id} style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>
-                {'\u2022'} {task.name}
-              </Text>
-            ))
-          ) : (
-            <Text style={[styles.taskEmpty, isDarkMode ? styles.taskEmptyDark : styles.taskEmptyLight]}>
-              Accept or join the waitlist to see assigned tasks.
-            </Text>
-          )}
+          {pendingInviteRoleCards.map(({ notificationId, role }) => {
+            const busy = notificationBusyId === notificationId;
+            const alreadyWaitlisted = (role.waitlistWorkerIds || []).includes(profile.uid);
+
+            return (
+              <View key={`pending-invite-role-${notificationId}`} style={[styles.pendingInviteRoleCard, isDarkMode ? styles.pendingInviteRoleCardDark : styles.pendingInviteRoleCardLight]}>
+                <View style={styles.pendingInviteRoleInfo}>
+                  <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>Invited role</Text>
+                  <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{role.name}</Text>
+                  {role.tasks.length ? (
+                    <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>
+                      {role.tasks.length} task{role.tasks.length === 1 ? '' : 's'}
+                    </Text>
+                  ) : null}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Join waitlist for ${role.name}`}
+                  disabled={busy || alreadyWaitlisted}
+                  style={[
+                    styles.pendingInviteWaitlistButton,
+                    isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight,
+                    (busy || alreadyWaitlisted) && styles.drawerCloseDisabled,
+                  ]}
+                  onPress={() => handleJoinRoleWaitlist(notificationId)}>
+                  <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight]}>
+                    {busy ? 'Joining...' : alreadyWaitlisted ? 'Waitlisted' : 'Join Waitlist'}
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })}
+          <Text style={[styles.taskEmpty, isDarkMode ? styles.taskEmptyDark : styles.taskEmptyLight]}>
+            Accept a role invite to see assigned tasks.
+          </Text>
         </View>
       );
     }
 
-    const assignedRoles = event.roles.filter((role) => role.assignedWorkerIds.includes(profile.uid));
-    const waitlistEligibleRoles = event.roles.filter((role) =>
-      (role.eligibleWaitlistWorkerIds || []).includes(profile.uid)
-      || (role.waitlistWorkerIds || []).includes(profile.uid)
-      || (role.waitlistInviteWorkerIds || []).includes(profile.uid)
-    );
+    const waitlistEligibleRoles = assignedRoles.length
+      ? []
+      : event.roles.filter((role) =>
+          (role.eligibleWaitlistWorkerIds || []).includes(profile.uid)
+          || (role.waitlistWorkerIds || []).includes(profile.uid)
+          || (role.waitlistInviteWorkerIds || []).includes(profile.uid)
+        );
     const workerTasks = event.roles
       .filter((role) => role.assignedWorkerIds.includes(profile.uid))
       .flatMap((role) =>
@@ -1688,17 +1829,24 @@ export default function EventsScreen() {
   );
 
   const openWorkerTeamChat = (event: DispatchEvent, workerId: string) => {
-    const workerTeam = managerTeams.find((team) => (team.workerIds || []).includes(workerId));
+    if (!profile?.organizationId) return;
+    const managerIds = [...new Set([
+      profile.uid,
+      ...managerTeams.flatMap((team) => team.managerIds || [team.managerId]),
+    ].filter(Boolean))];
+    const title = workerLabel(workerId);
 
     router.navigate({
       pathname: '/chat/[workerId]',
       params: {
         workerId,
-        workerLabel: workerLabel(workerId),
+        workerLabel: title,
         eventName: event.name,
-        teamId: workerTeam?.id,
-        teamName: workerTeam?.name,
-        teamMemberIds: workerTeam?.workerIds?.join(',') || '',
+        teamName: title,
+        teamMemberIds: [...new Set([workerId, ...managerIds])].join(','),
+        isTeamAll: '1',
+        teamThreadId: buildOrganizationManagersThreadId(profile.organizationId, workerId),
+        teamThreadPath: 'Worker and all organization managers',
       },
     });
   };
@@ -1709,11 +1857,174 @@ export default function EventsScreen() {
       eventId: event.id,
       roleId: role.id,
       name: role.name,
+      editingTasks: false,
+      tasks: (role.tasks || []).map((task) => ({ ...task })),
     });
   };
 
   const closeEventRoleEditor = () => {
+    setEventRoleTaskEditor(INITIAL_TEMPLATE_TASK_EDITOR);
+    setTemplateTaskOffsetSelectorPart(null);
     setEventRoleEditor(INITIAL_EVENT_ROLE_EDITOR);
+  };
+
+  const openEventRoleTaskEditor = () => {
+    setEventRoleTaskEditor({
+      open: true,
+      mode: 'add',
+      roleId: eventRoleEditor.roleId,
+      taskId: `task-${Date.now()}-${eventRoleEditor.tasks.length + 1}`,
+      name: '',
+      description: '',
+      includeCountdownTimer: false,
+      expectedOffsetText: '00:00:00',
+      attachments: [],
+    });
+    setTemplateTaskOffsetSelectorPart(null);
+  };
+
+  const editEventRoleTaskEditor = (task: EventTask) => {
+    setEventRoleTaskEditor({
+      open: true,
+      mode: 'edit',
+      roleId: eventRoleEditor.roleId,
+      taskId: task.id,
+      name: task.name || '',
+      description: task.description || '',
+      includeCountdownTimer: Number.isFinite(task.expectedOffsetMinutes),
+      expectedOffsetText: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0),
+      attachments: [...(task.attachments || [])],
+    });
+    setTemplateTaskOffsetSelectorPart(null);
+  };
+
+  const closeEventRoleTaskEditor = () => {
+    setEventRoleTaskEditor(INITIAL_TEMPLATE_TASK_EDITOR);
+    setTemplateTaskOffsetSelectorPart(null);
+  };
+
+  const setEventRoleTaskOffsetPart = (part: 'hours' | 'minutes' | 'seconds', value: number) => {
+    const parts = parseTemplateTaskOffsetParts(eventRoleTaskEditor.expectedOffsetText);
+    const nextParts = { ...parts, [part]: value };
+    setEventRoleTaskEditor((prev) => ({
+      ...prev,
+      expectedOffsetText: `${String(nextParts.hours).padStart(2, '0')}:${String(nextParts.minutes).padStart(2, '0')}:${String(nextParts.seconds).padStart(2, '0')}`,
+    }));
+  };
+
+  const addEventRoleTaskEditorAttachment = async (kind: 'photo' | 'document') => {
+    if (!profile?.uid || !eventRoleTaskEditor.taskId) return;
+    const busyKey = `event-role-task-editor:${kind}`;
+    if (templateAttachmentBusyKey) return;
+
+    try {
+      let selected: { uri: string; name: string; mimeType?: string } | null = null;
+
+      if (kind === 'photo') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permission required', 'Photo library permission is required to attach images.');
+          return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: false, quality: 0.85 });
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        selected = {
+          uri: asset.uri,
+          name: asset.fileName || `photo-${Date.now()}.jpg`,
+          mimeType: asset.mimeType,
+        };
+      } else {
+        const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        selected = {
+          uri: asset.uri,
+          name: asset.name || `document-${Date.now()}`,
+          mimeType: asset.mimeType,
+        };
+      }
+
+      if (!selected) return;
+      setTemplateAttachmentBusyKey(busyKey);
+      const uploaded = await uploadTemplateTaskAttachment({
+        managerId: profile.uid,
+        taskId: eventRoleTaskEditor.taskId,
+        uri: selected.uri,
+        kind,
+        name: selected.name,
+        mimeType: selected.mimeType,
+      });
+
+      setEventRoleTaskEditor((prev) => ({
+        ...prev,
+        attachments: [...prev.attachments, uploaded],
+      }));
+    } catch (error) {
+      Alert.alert('Attachment error', error instanceof Error ? error.message : 'Unable to attach file.');
+    } finally {
+      setTemplateAttachmentBusyKey(null);
+    }
+  };
+
+  const removeEventRoleTaskEditorAttachment = (attachmentId: string) => {
+    setEventRoleTaskEditor((prev) => ({
+      ...prev,
+      attachments: prev.attachments.filter((attachment) => attachment.id !== attachmentId),
+    }));
+  };
+
+  const saveEventRoleTaskEditor = () => {
+    const taskId = eventRoleTaskEditor.taskId;
+    const taskName = eventRoleTaskEditor.name.trim();
+
+    if (!taskId) return;
+    if (!taskName.length) {
+      Alert.alert('Task name required', 'Please add a task name before confirming.');
+      return;
+    }
+
+    const parsedOffsetMinutes = eventRoleTaskEditor.includeCountdownTimer
+      ? parseOffsetHhMmSsToMinutes(eventRoleTaskEditor.expectedOffsetText)
+      : undefined;
+    if (eventRoleTaskEditor.includeCountdownTimer && parsedOffsetMinutes === null) {
+      Alert.alert('Invalid task time', 'Use the format HH:MM:SS for the total time.');
+      return;
+    }
+
+    setEventRoleEditor((prev) => ({
+      ...prev,
+      tasks: eventRoleTaskEditor.mode === 'edit'
+        ? prev.tasks.map((task) => (
+            task.id === taskId
+              ? (() => {
+                  const { expectedOffsetMinutes: _offset, dueAt: _dueAt, ...taskWithoutCountdown } = task;
+                  const description = eventRoleTaskEditor.description.trim();
+                  return {
+                    ...taskWithoutCountdown,
+                    name: taskName,
+                    ...(description ? { description } : {}),
+                    attachments: eventRoleTaskEditor.attachments,
+                    ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+                  };
+              })()
+              : task
+          ))
+        : [
+            ...prev.tasks,
+            {
+              id: taskId,
+              name: taskName,
+              ...(eventRoleTaskEditor.description.trim() ? { description: eventRoleTaskEditor.description.trim() } : {}),
+              attachments: eventRoleTaskEditor.attachments,
+              ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+              completedBy: [],
+            },
+          ],
+    }));
+
+    closeEventRoleTaskEditor();
   };
 
   const saveEventRoleEditor = async () => {
@@ -1735,6 +2046,15 @@ export default function EventsScreen() {
         roleId: eventRoleEditor.roleId,
         managerId: profile.uid,
         name: nextName,
+        tasks: eventRoleEditor.tasks.map((task, index) => {
+          const { description: _description, ...taskWithoutDescription } = task;
+          const description = task.description?.trim() || '';
+          return {
+            ...taskWithoutDescription,
+            name: task.name.trim() || `Task ${index + 1}`,
+            ...(description ? { description } : {}),
+          };
+        }),
       });
       closeEventRoleEditor();
     } catch (error) {
@@ -1782,10 +2102,67 @@ export default function EventsScreen() {
 
   const renderManagerRole = (event: DispatchEvent, role: EventRole) => {
     const assignedIds = role.assignedWorkerIds || [];
-    const openSlots = Math.max(0, role.openSlots || 0);
+    const waitlistedCount = new Set([
+      ...(role.waitlistWorkerIds || []),
+      ...(role.waitlistInviteWorkerIds || []),
+    ]).size;
+    const countLines = (
+      <View style={styles.roleCountStack}>
+        <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>{assignedIds.length} assigned</Text>
+        <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>{waitlistedCount} waitlist</Text>
+      </View>
+    );
     const roleExpandKey = `${event.id}:${role.id}`;
     const roleTasksExpanded = !!expandedRoleTaskIds[roleExpandKey];
     const pendingInviteWorkerIds = pendingInviteWorkerIdsByRoleKey[roleExpandKey] || [];
+    const renderTaskDetail = (task: EventTask, darkMode: boolean) => {
+      const photoAttachments = (task.attachments || []).filter((attachment) => attachment.kind === 'photo' && attachment.url?.trim());
+      const documentAttachments = (task.attachments || []).filter((attachment) => attachment.kind === 'document' && attachment.url?.trim());
+
+      return (
+        <View key={task.id} style={styles.managerTaskDetailRow}>
+          <Text style={[styles.taskName, darkMode ? styles.taskNameDark : styles.taskNameLight]}>
+            {'\u2022'} {task.name} - due {formatTaskDueTime(event, task)}{task.optional ? ' (optional)' : ''}
+          </Text>
+          <View style={styles.managerTaskActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open description for ${task.name}`}
+              hitSlop={6}
+              onPress={(pressEvent) => {
+                pressEvent.stopPropagation();
+                openTaskDescription(task);
+              }}>
+              <Text style={styles.managerTaskDescriptionLink}>Description</Text>
+            </Pressable>
+            {photoAttachments.length ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open photos for ${task.name}`}
+                hitSlop={6}
+                onPress={(pressEvent) => {
+                  pressEvent.stopPropagation();
+                  openTaskAttachment(task.name, photoAttachments);
+                }}>
+                <MaterialIcons name="photo" size={17} color="#F98D2F" />
+              </Pressable>
+            ) : null}
+            {documentAttachments.length ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open attachments for ${task.name}`}
+                hitSlop={6}
+                onPress={(pressEvent) => {
+                  pressEvent.stopPropagation();
+                  openTaskAttachment(task.name, documentAttachments);
+                }}>
+                <MaterialIcons name="attach-file" size={17} color="#F98D2F" />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      );
+    };
 
     if (!isDarkMode) {
       return (
@@ -1793,13 +2170,16 @@ export default function EventsScreen() {
           <View style={styles.roleHeader}>
             <Text style={[styles.roleTitle, styles.roleTitleLight]}>{role.name}</Text>
             <View style={styles.roleHeaderActions}>
-              <Text style={[styles.roleMeta, styles.roleMetaLight]}>{assignedIds.length} assigned - {openSlots} open</Text>
+              {countLines}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Edit ${role.name} role`}
                 hitSlop={8}
                 style={[styles.roleIconButton, styles.roleIconButtonLight]}
-                onPress={() => openEventRoleEditor(event, role)}>
+                onPress={(pressEvent) => {
+                  pressEvent.stopPropagation();
+                  openEventRoleEditor(event, role);
+                }}>
                 <MaterialIcons name="edit" size={16} color="#0EC3C9" />
               </Pressable>
               <Pressable
@@ -1807,7 +2187,10 @@ export default function EventsScreen() {
                 accessibilityLabel={`Delete ${role.name} role`}
                 hitSlop={8}
                 style={[styles.roleIconButton, styles.roleIconButtonLight]}
-                onPress={() => confirmDeleteEventRole(event, role)}
+                onPress={(pressEvent) => {
+                  pressEvent.stopPropagation();
+                  confirmDeleteEventRole(event, role);
+                }}
                 disabled={roleMutationBusyKey === `${event.id}:${role.id}:delete`}>
                 <MaterialIcons name="delete-outline" size={17} color="#dc2626" />
               </Pressable>
@@ -1823,7 +2206,10 @@ export default function EventsScreen() {
                   <Pressable
                     key={`${event.id}-${role.id}-${workerId}`}
                     style={styles.avatarChipLightFigma}
-                    onPress={() => openWorkerTeamChat(event, workerId)}
+                    onPress={(pressEvent) => {
+                      pressEvent.stopPropagation();
+                      openWorkerTeamChat(event, workerId);
+                    }}
                     hitSlop={6}>
                     <View style={[styles.avatarCircle, styles.avatarCircleAssignedLightFigma]}>
                       <Text style={styles.avatarTextAssignedLightFigma}>{initial}</Text>
@@ -1840,7 +2226,10 @@ export default function EventsScreen() {
                   <Pressable
                     key={`${event.id}-${role.id}-invite-${workerId}`}
                     style={styles.avatarChipLightFigma}
-                    onPress={() => openWorkerTeamChat(event, workerId)}
+                    onPress={(pressEvent) => {
+                      pressEvent.stopPropagation();
+                      openWorkerTeamChat(event, workerId);
+                    }}
                     hitSlop={6}>
                     <View style={[styles.avatarCircle, styles.avatarCircleLightFigma, getAvatarStatusRingStyle(inviteStatus)]}>
                       <Text style={styles.avatarTextLightFigma}>{initial}</Text>
@@ -1858,7 +2247,10 @@ export default function EventsScreen() {
             accessibilityRole="button"
             accessibilityLabel={`${roleTasksExpanded ? 'Hide' : 'Show'} tasks for ${role.name}`}
             style={styles.roleTaskToggle}
-            onPress={() => toggleRoleTaskExpanded(event.id, role.id)}>
+            onPress={(pressEvent) => {
+              pressEvent.stopPropagation();
+              toggleRoleTaskExpanded(event.id, role.id);
+            }}>
             <Text style={styles.expandHintLightFigma}>
               {roleTasksExpanded ? 'Hide Tasks ▲' : `Show Tasks (${role.tasks.length}) ▼`}
             </Text>
@@ -1866,17 +2258,16 @@ export default function EventsScreen() {
 
           {roleTasksExpanded ? (
             <View style={styles.taskListLightFigma}>
-              {role.tasks.map((task) => (
-                <Text key={task.id} style={[styles.taskName, styles.taskNameLight]}>
-                  {'\u2022'} {task.name} - due {formatTaskDueTime(event, task)}{task.optional ? ' (optional)' : ''}
-                </Text>
-              ))}
+              {role.tasks.map((task) => renderTaskDetail(task, false))}
             </View>
           ) : null}
 
           <Pressable
             style={[styles.drawerButton, styles.drawerButtonLightFigma]}
-            onPress={() => setInviteDrawer({ open: true, eventId: event.id, roleId: role.id })}>
+            onPress={(pressEvent) => {
+              pressEvent.stopPropagation();
+              setInviteDrawer({ open: true, eventId: event.id, roleId: role.id });
+            }}>
             <Text style={styles.drawerButtonTextLightFigma}>Edit Invites</Text>
           </Pressable>
         </View>
@@ -1888,13 +2279,16 @@ export default function EventsScreen() {
         <View style={styles.roleHeader}>
           <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{role.name}</Text>
           <View style={styles.roleHeaderActions}>
-            <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>{assignedIds.length} assigned · {openSlots} open</Text>
+            {countLines}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Edit ${role.name} role`}
               hitSlop={8}
               style={[styles.roleIconButton, styles.roleIconButtonDark]}
-              onPress={() => openEventRoleEditor(event, role)}>
+              onPress={(pressEvent) => {
+                pressEvent.stopPropagation();
+                openEventRoleEditor(event, role);
+              }}>
               <MaterialIcons name="edit" size={16} color="#0EC3C9" />
             </Pressable>
             <Pressable
@@ -1902,7 +2296,10 @@ export default function EventsScreen() {
               accessibilityLabel={`Delete ${role.name} role`}
               hitSlop={8}
               style={[styles.roleIconButton, styles.roleIconButtonDark]}
-              onPress={() => confirmDeleteEventRole(event, role)}
+              onPress={(pressEvent) => {
+                pressEvent.stopPropagation();
+                confirmDeleteEventRole(event, role);
+              }}
               disabled={roleMutationBusyKey === `${event.id}:${role.id}:delete`}>
               <MaterialIcons name="delete-outline" size={17} color="#fb7185" />
             </Pressable>
@@ -1917,7 +2314,10 @@ export default function EventsScreen() {
                 <Pressable
                   key={`${event.id}-${role.id}-${workerId}`}
                   style={styles.avatarChipLightFigma}
-                  onPress={() => openWorkerTeamChat(event, workerId)}
+                  onPress={(pressEvent) => {
+                    pressEvent.stopPropagation();
+                    openWorkerTeamChat(event, workerId);
+                  }}
                   hitSlop={6}
                 >
                   <View style={[styles.avatarCircle, styles.avatarCircleAssignedDarkFigma]}>
@@ -1935,7 +2335,10 @@ export default function EventsScreen() {
                 <Pressable
                   key={`${event.id}-${role.id}-invite-${workerId}`}
                   style={styles.avatarChipLightFigma}
-                  onPress={() => openWorkerTeamChat(event, workerId)}
+                  onPress={(pressEvent) => {
+                    pressEvent.stopPropagation();
+                    openWorkerTeamChat(event, workerId);
+                  }}
                   hitSlop={6}
                 >
                   <View style={[styles.avatarCircle, styles.avatarCircleDarkFigma, getAvatarStatusRingStyle(inviteStatus)]}>
@@ -1954,7 +2357,10 @@ export default function EventsScreen() {
           accessibilityRole="button"
           accessibilityLabel={`${roleTasksExpanded ? 'Hide' : 'Show'} tasks for ${role.name}`}
           style={styles.roleTaskToggle}
-          onPress={() => toggleRoleTaskExpanded(event.id, role.id)}>
+          onPress={(pressEvent) => {
+            pressEvent.stopPropagation();
+            toggleRoleTaskExpanded(event.id, role.id);
+          }}>
           <Text style={styles.expandHintDarkFigma}>
             {roleTasksExpanded ? 'Hide tasks ▲' : `Show tasks (${role.tasks.length}) ▼`}
           </Text>
@@ -1962,22 +2368,16 @@ export default function EventsScreen() {
 
         {roleTasksExpanded ? (
           <View style={styles.taskListDarkFigma}>
-            {role.tasks.map((task) => (
-              <View key={task.id} style={styles.taskRow}>
-                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>• {task.name} · due {formatTaskDueTime(event, task)}{task.optional ? ' (optional)' : ''}</Text>
-                {task.attachments?.length ? (
-                  <Pressable onPress={() => openTaskAttachment(task.name, task.attachments)} hitSlop={6}>
-                    <Text style={styles.taskAttachmentIcon}>📎</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ))}
+            {role.tasks.map((task) => renderTaskDetail(task, true))}
           </View>
         ) : null}
 
         <Pressable
           style={[styles.drawerButton, styles.drawerButtonDarkFigma]}
-          onPress={() => setInviteDrawer({ open: true, eventId: event.id, roleId: role.id })}>
+          onPress={(pressEvent) => {
+            pressEvent.stopPropagation();
+            setInviteDrawer({ open: true, eventId: event.id, roleId: role.id });
+          }}>
           <Text style={styles.drawerButtonTextDarkFigma}>Edit Invites</Text>
         </Pressable>
       </View>
@@ -2114,19 +2514,36 @@ export default function EventsScreen() {
       return;
     }
 
-    setInviteSelectedWorkerIds(inviteTarget.role.assignedWorkerIds || []);
+    const roleKey = `${inviteTarget.event.id}:${inviteTarget.role.id}`;
+    setInviteSelectedWorkerIds([
+      ...new Set([
+        ...(inviteTarget.role.assignedWorkerIds || []),
+        ...(pendingInviteWorkerIdsByRoleKey[roleKey] || []),
+      ]),
+    ]);
     setExpandedInviteTeamIds({});
-  }, [inviteDrawer.open, inviteTarget?.event.id, inviteTarget?.role.id, inviteTarget?.role.assignedWorkerIds?.join(','), managerTeams]);
+  }, [
+    inviteDrawer.open,
+    inviteTarget?.event.id,
+    inviteTarget?.role.id,
+    inviteTarget?.role.assignedWorkerIds?.join(','),
+    inviteTarget ? pendingInviteWorkerIdsByRoleKey[`${inviteTarget.event.id}:${inviteTarget.role.id}`]?.join(',') : '',
+    managerTeams,
+  ]);
 
   const handleSendRoleInvites = async () => {
     if (!profile?.uid || !inviteTarget || inviteSubmitBusy) return;
 
     const currentlyAssigned = new Set(inviteTarget.role.assignedWorkerIds || []);
+    const roleKey = `${inviteTarget.event.id}:${inviteTarget.role.id}`;
+    const currentlyPending = new Set(pendingInviteWorkerIdsByRoleKey[roleKey] || []);
+    const currentlyInvited = new Set([...currentlyAssigned, ...currentlyPending]);
     const selected = new Set(inviteSelectedWorkerIds);
-    const toAssign = inviteSelectedWorkerIds.filter((workerId) => !currentlyAssigned.has(workerId));
-    const toRemove = [...currentlyAssigned].filter((workerId) => !selected.has(workerId));
+    const toAssign = inviteSelectedWorkerIds.filter((workerId) => !currentlyInvited.has(workerId));
+    const toRemoveAssigned = [...currentlyAssigned].filter((workerId) => !selected.has(workerId));
+    const toWithdrawPending = [...currentlyPending].filter((workerId) => !selected.has(workerId));
 
-    if (!toAssign.length && !toRemove.length) {
+    if (!toAssign.length && !toRemoveAssigned.length && !toWithdrawPending.length) {
       Alert.alert('No changes', 'Select different workers to send invites.');
       return;
     }
@@ -2144,7 +2561,7 @@ export default function EventsScreen() {
         });
       }
 
-      for (const workerId of toRemove) {
+      for (const workerId of toRemoveAssigned) {
         await updateEventRoleAssignment({
           eventId: inviteTarget.event.id,
           roleId: inviteTarget.role.id,
@@ -2154,7 +2571,17 @@ export default function EventsScreen() {
         });
       }
 
-      Alert.alert('Invites sent', `Sent ${toAssign.length} assignment invite${toAssign.length === 1 ? '' : 's'}${toRemove.length ? ` and ${toRemove.length} removal update${toRemove.length === 1 ? '' : 's'}` : ''}.`);
+      for (const workerId of toWithdrawPending) {
+        await withdrawPendingEventRoleInvite({
+          eventId: inviteTarget.event.id,
+          roleId: inviteTarget.role.id,
+          managerId: profile.uid,
+          workerId,
+        });
+      }
+
+      const removedCount = toRemoveAssigned.length + toWithdrawPending.length;
+      Alert.alert('Invites updated', `Sent ${toAssign.length} new invite${toAssign.length === 1 ? '' : 's'}${removedCount ? ` and removed ${removedCount} worker${removedCount === 1 ? '' : 's'}` : ''}.`);
       setInviteDrawer(INITIAL_DRAWER);
     } catch (error) {
       Alert.alert('Unable to send invites', error instanceof Error ? error.message : 'Please try again.');
@@ -2382,6 +2809,11 @@ export default function EventsScreen() {
           <Text style={[styles.pendingNotificationsTitle, isDarkMode ? styles.pendingNotificationsTitleDark : styles.pendingNotificationsTitleLight]}>
             Role updates need your response
           </Text>
+          <ScrollView
+            style={styles.pendingNotificationsList}
+            contentContainerStyle={styles.pendingNotificationsListContent}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={actionableRoleNotifications.length > 2}>
           {actionableRoleNotifications.map((notification) => {
             const busy = notificationBusyId === notification.id;
             const expanded = !!expandedPendingNotificationIds[notification.id];
@@ -2391,9 +2823,17 @@ export default function EventsScreen() {
             return (
               <View key={notification.id} style={styles.pendingNotificationRow}>
                 <View style={styles.pendingNotificationHeader}>
-                  <Text style={[styles.pendingNotificationText, styles.pendingNotificationTitleText, isDarkMode ? styles.titleDark : styles.titleLight]}>
-                    {notification.eventName || 'Event'}
-                  </Text>
+                  <View style={styles.pendingNotificationTitleText}>
+                    <Text style={[styles.pendingNotificationText, styles.pendingNotificationEventText, isDarkMode ? styles.titleDark : styles.titleLight]}>
+                      {notification.eventName || 'Event'}
+                    </Text>
+                    <Text style={[styles.pendingNotificationDateTimeText, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                      {formatNotificationStartsAt(notification.eventStartsAt)}
+                    </Text>
+                    <Text style={[styles.pendingNotificationRoleText, isDarkMode ? styles.metaDark : styles.metaLight]}>
+                      Role: {notification.roleName?.trim() || 'TBD'}
+                    </Text>
+                  </View>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`${expanded ? 'Hide' : 'Show'} invite details`}
@@ -2457,6 +2897,7 @@ export default function EventsScreen() {
               </View>
             );
           })}
+          </ScrollView>
         </View>
       ) : null}
 
@@ -2482,7 +2923,7 @@ export default function EventsScreen() {
           const startsAtDate = new Date(event.startsAt);
           const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
           const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-          const signupRatio = getWorkerSignupRatio(event);
+          const workerRoleSubtitle = getWorkerRoleSubtitle(event);
           const eventStatus = isCompletedEvent(event) ? 'Completed' : 'Upcoming';
 
           const card = (
@@ -2521,6 +2962,11 @@ export default function EventsScreen() {
               <Text style={[styles.eventDateTimeSubtitle, isDarkMode ? styles.eventDateTimeSubtitleDark : styles.eventDateTimeSubtitleLight]}>
                 {eventDate} - {eventTime}
               </Text>
+              {profile?.role === 'worker' && workerRoleSubtitle ? (
+                <Text style={[styles.workerRoleSubtitle, isDarkMode ? styles.eventDateTimeSubtitleDark : styles.eventDateTimeSubtitleLight]}>
+                  {workerRoleSubtitle}
+                </Text>
+              ) : null}
 
               {renderLocationMeta(item.location, eventDate, eventTime)}
 
@@ -2532,7 +2978,6 @@ export default function EventsScreen() {
                 </>
               ) : (
                 <>
-                  <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{signupRatio.label}</Text>
                   <Text style={[styles.expandHint, isDarkMode ? styles.expandHintDark : styles.expandHintLight]}>{expanded ? 'Hide role details ▲' : 'Show role details ▼'}</Text>
                   {expanded ? (
                     <View style={styles.managerExpanded}>
@@ -2693,44 +3138,236 @@ export default function EventsScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={eventRoleEditor.open} animationType="slide" transparent onRequestClose={closeEventRoleEditor}>
-        <Pressable style={styles.drawerBackdrop} onPress={closeEventRoleEditor}>
+      <Modal visible={eventRoleEditor.open} animationType="slide" transparent onRequestClose={eventRoleTaskEditor.open ? closeEventRoleTaskEditor : closeEventRoleEditor}>
+        <Pressable style={styles.drawerBackdrop} onPress={eventRoleTaskEditor.open ? closeEventRoleTaskEditor : closeEventRoleEditor}>
           <KeyboardAvoidingView
             style={styles.keyboardAvoidingFill}
             behavior={Platform.select({ ios: 'padding', android: 'height' })}
             keyboardVerticalOffset={drawerKeyboardOffset}>
             <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={() => null}>
-              <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Edit Role</Text>
-              <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
-                {eventRoleEditorTarget?.event.name || 'Event role'}
+              <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>
+                {eventRoleTaskEditor.open ? (eventRoleTaskEditor.mode === 'edit' ? 'Edit Task' : 'Add Task') : 'Edit Role'}
               </Text>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Role Name</Text>
-              <TextInput
-                value={eventRoleEditor.name}
-                onChangeText={(value) => setEventRoleEditor((current) => ({ ...current, name: value }))}
-                placeholder="Role name"
-                placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.45)' : '#64748b'}
-                style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
-              />
-              <View style={styles.roleEditorSummary}>
-                <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
-                  {eventRoleEditorTarget
-                    ? `${eventRoleEditorTarget.role.assignedWorkerIds.length} assigned · ${Math.max(0, eventRoleEditorTarget.role.openSlots || 0)} open`
-                    : 'Role details unavailable'}
-                </Text>
-                <Text style={[styles.drawerMeta, isDarkMode ? styles.drawerMetaDark : styles.drawerMetaLight]}>
-                  {eventRoleEditorTarget ? `${eventRoleEditorTarget.role.tasks.length} tasks` : ''}
-                </Text>
-              </View>
-              <Pressable
-                style={[styles.drawerClose, roleMutationBusyKey?.endsWith(':edit') && styles.drawerCloseDisabled]}
-                onPress={saveEventRoleEditor}
-                disabled={roleMutationBusyKey?.endsWith(':edit')}>
-                <Text style={styles.drawerCloseText}>{roleMutationBusyKey?.endsWith(':edit') ? 'Saving...' : 'Save Role'}</Text>
-              </Pressable>
-              <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeEventRoleEditor}>
-                <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
-              </Pressable>
+              <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
+                {eventRoleTaskEditor.open
+                  ? (eventRoleTaskEditor.mode === 'edit' ? 'Update the task details, then save your changes.' : 'Add the task details, then confirm it for this role.')
+                  : eventRoleEditorTarget?.event.name || 'Event role'}
+              </Text>
+              {eventRoleTaskEditor.open ? (
+                <ScrollView style={styles.createEventScroll} contentContainerStyle={styles.createEventScrollContent} keyboardShouldPersistTaps="handled">
+                  <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+                    <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task name</Text>
+                    <TextInput
+                      value={eventRoleTaskEditor.name}
+                      onChangeText={(value) => setEventRoleTaskEditor((prev) => ({ ...prev, name: value }))}
+                      placeholder="Task name"
+                      placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
+                      autoFocus
+                      style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+                    />
+                  </View>
+
+                  <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+                    <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task description</Text>
+                    <TextInput
+                      value={eventRoleTaskEditor.description}
+                      onChangeText={(value) => setEventRoleTaskEditor((prev) => ({ ...prev, description: value }))}
+                      placeholder="Task description"
+                      placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
+                      multiline
+                      style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
+                    />
+                  </View>
+
+                  <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: eventRoleTaskEditor.includeCountdownTimer }}
+                      style={styles.countdownToggleRow}
+                      onPress={() => {
+                        setTemplateTaskOffsetSelectorPart(null);
+                        setEventRoleTaskEditor((current) => ({ ...current, includeCountdownTimer: !current.includeCountdownTimer }));
+                      }}>
+                      <MaterialIcons
+                        name={eventRoleTaskEditor.includeCountdownTimer ? 'check-box' : 'check-box-outline-blank'}
+                        size={24}
+                        color={eventRoleTaskEditor.includeCountdownTimer ? '#0EC3C9' : isDarkMode ? '#CBD5E1' : '#475569'}
+                      />
+                      <Text style={[styles.countdownToggleLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>
+                        Include Countdown Timer
+                      </Text>
+                    </Pressable>
+                    {eventRoleTaskEditor.includeCountdownTimer ? (
+                      <>
+                        <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Offset From Event Start</Text>
+                        <View style={styles.templateDurationPickerRow}>
+                      {(['hours', 'minutes', 'seconds'] as const).map((part) => {
+                        const parts = parseTemplateTaskOffsetParts(eventRoleTaskEditor.expectedOffsetText);
+                        const value = parts[part];
+                        const label = part === 'hours' ? 'Hours' : part === 'minutes' ? 'Min' : 'Sec';
+                        const isOpen = templateTaskOffsetSelectorPart === part;
+                        return (
+                          <View key={part} style={styles.templateDurationSelectorWrap}>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Choose ${label.toLowerCase()} offset`}
+                              style={[
+                                styles.templateDurationSelector,
+                                isDarkMode ? styles.createEventFieldInputDark : styles.createEventFieldInputLight,
+                                isOpen && styles.templateDurationSelectorActive,
+                              ]}
+                              onPress={() => setTemplateTaskOffsetSelectorPart((prev) => prev === part ? null : part)}>
+                              <Text style={[styles.templateDurationValue, isDarkMode ? styles.createEventInputValueDark : styles.createEventInputValueLight]}>{value}</Text>
+                              <Text style={[styles.templateDurationLabel, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>{label}</Text>
+                              <MaterialIcons name={isOpen ? 'keyboard-arrow-up' : 'keyboard-arrow-down'} size={18} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+                            </Pressable>
+                            {isOpen ? (
+                              <View style={[styles.templateDurationDropdown, isDarkMode ? styles.templateTaskRowDark : styles.templateTaskRowLight]}>
+                                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                                  {Array.from({ length: part === 'hours' ? 24 : 60 }, (_, option) => (
+                                    <Pressable
+                                      key={`event-role-${part}-${option}`}
+                                      style={[
+                                        styles.templateDurationOption,
+                                        value === option && (isDarkMode ? styles.templateDurationOptionActiveDark : styles.templateDurationOptionActiveLight),
+                                      ]}
+                                      onPress={() => {
+                                        setEventRoleTaskOffsetPart(part, option);
+                                        setTemplateTaskOffsetSelectorPart(null);
+                                      }}>
+                                      <Text style={[styles.templateDurationOptionText, isDarkMode ? styles.createEventInputValueDark : styles.createEventInputValueLight]}>{option}</Text>
+                                    </Pressable>
+                                  ))}
+                                </ScrollView>
+                              </View>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                        </View>
+                      </>
+                    ) : null}
+                  </View>
+
+                  <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+                    <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Attachments</Text>
+                    <View style={styles.templateTaskAttachmentButtons}>
+                      <Pressable
+                        style={[styles.templateActionButton, isDarkMode ? styles.createEventAddPillDark : styles.createEventAddPillLight, templateAttachmentBusyKey && styles.templateActionButtonDisabled]}
+                        disabled={!!templateAttachmentBusyKey}
+                        onPress={() => addEventRoleTaskEditorAttachment('photo')}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.createEventAddPillTextDark : styles.createEventAddPillTextLight]}>+ Photo</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.templateActionButton, isDarkMode ? styles.createEventAddPillDark : styles.createEventAddPillLight, templateAttachmentBusyKey && styles.templateActionButtonDisabled]}
+                        disabled={!!templateAttachmentBusyKey}
+                        onPress={() => addEventRoleTaskEditorAttachment('document')}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.createEventAddPillTextDark : styles.createEventAddPillTextLight]}>+ Document</Text>
+                      </Pressable>
+                    </View>
+                    {eventRoleTaskEditor.attachments.length ? (
+                      <View style={styles.templateAttachmentList}>
+                        {eventRoleTaskEditor.attachments.map((attachment) => (
+                          <View key={attachment.id} style={[styles.templateAttachmentItem, isDarkMode ? styles.templateTaskRowDark : styles.templateTaskRowLight]}>
+                            <Text style={[styles.templateAttachmentName, isDarkMode ? styles.createEventInputValueDark : styles.createEventInputValueLight]} numberOfLines={1}>
+                              {attachment.kind === 'photo' ? 'Photo' : 'Document'} {attachment.name}
+                            </Text>
+                            <Pressable onPress={() => removeEventRoleTaskEditorAttachment(attachment.id)}>
+                              <Text style={isDarkMode ? styles.createEventDeleteButtonTextDark : styles.createEventDeleteButtonTextLight}>Remove</Text>
+                            </Pressable>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No attachments yet.</Text>
+                    )}
+                  </View>
+
+                  <Pressable
+                    style={[isDarkMode ? styles.createEventPrimaryButtonDark : styles.createEventPrimaryButtonLight, (!eventRoleTaskEditor.name.trim().length) && styles.drawerCloseDisabled]}
+                    onPress={saveEventRoleTaskEditor}
+                    disabled={!eventRoleTaskEditor.name.trim().length}>
+                    <Text style={styles.drawerCloseText}>{eventRoleTaskEditor.mode === 'edit' ? 'Save Task' : 'Confirm Task'}</Text>
+                  </Pressable>
+                  <Pressable style={isDarkMode ? styles.createEventCancelButtonDark : styles.createEventCancelButtonLight} onPress={closeEventRoleTaskEditor}>
+                    <Text style={isDarkMode ? styles.createEventCancelButtonTextDark : styles.createEventCancelButtonTextLight}>Cancel</Text>
+                  </Pressable>
+                </ScrollView>
+              ) : (
+                <>
+                  <View style={[styles.templateRoleEditor, isDarkMode ? styles.templateRoleEditorDark : styles.templateRoleEditorLight]}>
+                    <View style={styles.templateRoleHeader}>
+                      <Text style={[styles.rolePreviewName, isDarkMode ? styles.createEventRoleNameDark : styles.createEventRoleNameLight]}>Role</Text>
+                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>
+                        {eventRoleEditor.tasks.length} tasks
+                      </Text>
+                    </View>
+
+                    <TextInput
+                      value={eventRoleEditor.name}
+                      onChangeText={(value) => setEventRoleEditor((current) => ({ ...current, name: value }))}
+                      placeholder="Role name"
+                      placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.45)' : '#64748b'}
+                      style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+                    />
+
+                    {eventRoleEditor.tasks.length ? (
+                      <View style={[styles.taskList, isDarkMode ? styles.taskListDarkFigma : styles.taskListLightFigma]}>
+                        {eventRoleEditor.tasks.map((task, taskIndex) => (
+                          <View key={`${eventRoleEditor.roleId}-summary-${task.id}`} style={styles.templateTaskSummaryCard}>
+                            <View style={styles.taskRow}>
+                              <View style={styles.templateTaskSummaryMain}>
+                                <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>
+                                  • {task.name || `Task ${taskIndex + 1}`} · {Number.isFinite(task.expectedOffsetMinutes) ? formatOffsetHhMmSs(task.expectedOffsetMinutes || 0) : 'No countdown'}
+                                </Text>
+                                {task.description?.trim() ? (
+                                  <Pressable onPress={() => showTemplateTaskDescription(task.name || `Task ${taskIndex + 1}`, task.description)} hitSlop={6}>
+                                    <Text style={[styles.templateTaskSummaryLink, isDarkMode ? styles.createEventEditButtonTextDark : styles.createEventEditButtonTextLight]}>
+                                      Description
+                                    </Text>
+                                  </Pressable>
+                                ) : null}
+                              </View>
+                              <View style={styles.templateTaskSummaryRight}>
+                                <Pressable
+                                  style={[styles.templateActionButton, isDarkMode ? styles.createEventEditButtonDark : styles.createEventEditButtonLight]}
+                                  onPress={() => editEventRoleTaskEditor(task)}>
+                                  <Text style={[styles.templateActionButtonText, isDarkMode ? styles.createEventEditButtonTextDark : styles.createEventEditButtonTextLight]}>Edit</Text>
+                                </Pressable>
+                                {task.attachments?.length ? (
+                                  <Pressable onPress={() => openTaskAttachment(task.name || `Task ${taskIndex + 1}`, task.attachments || [])} hitSlop={6}>
+                                    <Text style={styles.taskAttachmentIcon}>Attachment</Text>
+                                  </Pressable>
+                                ) : null}
+                              </View>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+
+                    <View style={styles.templateRoleTaskHeader}>
+                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>{eventRoleEditor.tasks.length} tasks configured</Text>
+                      <Pressable
+                        accessibilityLabel={`Add task to ${eventRoleEditor.name || 'role'}`}
+                        style={[styles.templateActionButton, isDarkMode ? styles.createEventAddPillDark : styles.createEventAddPillLight]}
+                        onPress={openEventRoleTaskEditor}>
+                        <Text style={[styles.templateActionButtonText, isDarkMode ? styles.createEventAddPillTextDark : styles.createEventAddPillTextLight]}>+ Add Task</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  <Pressable
+                    style={[styles.drawerClose, roleMutationBusyKey?.endsWith(':edit') && styles.drawerCloseDisabled]}
+                    onPress={saveEventRoleEditor}
+                    disabled={roleMutationBusyKey?.endsWith(':edit')}>
+                    <Text style={styles.drawerCloseText}>{roleMutationBusyKey?.endsWith(':edit') ? 'Saving...' : 'Save Role'}</Text>
+                  </Pressable>
+                  <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeEventRoleEditor}>
+                    <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
+                  </Pressable>
+                </>
+              )}
             </Pressable>
           </KeyboardAvoidingView>
         </Pressable>
@@ -2747,9 +3384,9 @@ export default function EventsScreen() {
             <Text style={[styles.drawerSub, isDarkMode ? styles.createEventDrawerSubDark : styles.createEventDrawerSubLight]}>Choose a template to start your event setup</Text>
 
             <ScrollView
-              ref={createTemplateScrollRef}
+              ref={createEventScrollRef}
               style={styles.createEventScroll}
-              contentContainerStyle={[styles.createEventScrollContent, styles.createTemplateScrollContent]}
+              contentContainerStyle={styles.createEventScrollContent}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator>
@@ -2962,17 +3599,26 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
+            <View
+              style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}
+              onLayout={(event) => {
+                eventLocationYRef.current = event.nativeEvent.layout.y;
+              }}>
               <LocationAutocompleteField
                 label="Location"
                 value={eventLocationDraft}
                 onChangeText={setEventLocationDraft}
                 placeholder="Location"
                 isDarkMode={isDarkMode}
+                onFocus={() => scrollCreateEventFieldAboveKeyboard(eventLocationYRef.current)}
               />
             </View>
 
-            <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
+            <View
+              style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}
+              onLayout={(event) => {
+                eventDescriptionYRef.current = event.nativeEvent.layout.y;
+              }}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Description</Text>
               <TextInput
                 value={eventDescriptionDraft}
@@ -2983,6 +3629,7 @@ export default function EventsScreen() {
                 returnKeyType="done"
                 onSubmitEditing={Keyboard.dismiss}
                 blurOnSubmit
+                onFocus={() => scrollCreateEventFieldAboveKeyboard(eventDescriptionYRef.current)}
                 style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
               />
             </View>
@@ -3121,6 +3768,7 @@ export default function EventsScreen() {
             </Text>
 
             <ScrollView
+              ref={createTemplateScrollRef}
               style={styles.createEventScroll}
               contentContainerStyle={styles.createEventScrollContent}
               keyboardShouldPersistTaps="handled"
@@ -3158,8 +3806,27 @@ export default function EventsScreen() {
                 </View>
 
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
-                  <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Offset From Event Start</Text>
-                  <View style={styles.templateDurationPickerRow}>
+                  <Pressable
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: templateTaskEditor.includeCountdownTimer }}
+                    style={styles.countdownToggleRow}
+                    onPress={() => {
+                      setTemplateTaskOffsetSelectorPart(null);
+                      setTemplateTaskEditor((current) => ({ ...current, includeCountdownTimer: !current.includeCountdownTimer }));
+                    }}>
+                    <MaterialIcons
+                      name={templateTaskEditor.includeCountdownTimer ? 'check-box' : 'check-box-outline-blank'}
+                      size={24}
+                      color={templateTaskEditor.includeCountdownTimer ? '#0EC3C9' : isDarkMode ? '#CBD5E1' : '#475569'}
+                    />
+                    <Text style={[styles.countdownToggleLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>
+                      Include Countdown Timer
+                    </Text>
+                  </Pressable>
+                  {templateTaskEditor.includeCountdownTimer ? (
+                    <>
+                      <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Offset From Event Start</Text>
+                      <View style={styles.templateDurationPickerRow}>
                     {(['hours', 'minutes', 'seconds'] as const).map((part) => {
                       const parts = parseTemplateTaskOffsetParts(templateTaskEditor.expectedOffsetText);
                       const value = parts[part];
@@ -3209,7 +3876,9 @@ export default function EventsScreen() {
                         </View>
                       );
                     })}
-                  </View>
+                      </View>
+                    </>
+                  ) : null}
                 </View>
 
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
@@ -3305,13 +3974,18 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
+            <View
+              style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}
+              onLayout={(event) => {
+                templateDefaultLocationYRef.current = event.nativeEvent.layout.y;
+              }}>
               <LocationAutocompleteField
                 label="Default location (optional)"
                 value={templateDefaultLocationDraft}
                 onChangeText={setTemplateDefaultLocationDraft}
                 placeholder="Downtown"
                 isDarkMode={isDarkMode}
+                onFocus={() => scrollCreateTemplateFieldAboveKeyboard(templateDefaultLocationYRef.current)}
               />
             </View>
 
@@ -3369,7 +4043,7 @@ export default function EventsScreen() {
                             <View style={styles.taskRow}>
                               <View style={styles.templateTaskSummaryMain}>
                                 <Text style={[styles.taskName, isDarkMode ? styles.taskNameDark : styles.taskNameLight]}>
-                                  • {task.name || `Task ${taskIndex + 1}`} · {formatOffsetHhMmSs(task.expectedOffsetMinutes)}
+                                  • {task.name || `Task ${taskIndex + 1}`} · {Number.isFinite(task.expectedOffsetMinutes) ? formatOffsetHhMmSs(task.expectedOffsetMinutes || 0) : 'No countdown'}
                                 </Text>
                                 {task.description?.trim() ? (
                                   <Pressable onPress={() => showTemplateTaskDescription(task.name || `Task ${taskIndex + 1}`, task.description)} hitSlop={6}>
@@ -3460,28 +4134,44 @@ export default function EventsScreen() {
                             </View>
                           ) : null}
                         </View>
-                        <TextInput
-                          value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes)}
-                          onChangeText={(value) => {
-                            const key = `${role.id}:${task.id}`;
-                            setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: value }));
-                            const parsedMinutes = parseOffsetHhMmSsToMinutes(value);
-                            if (parsedMinutes !== null) {
-                              updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: parsedMinutes });
-                            }
-                          }}
-                          onBlur={() => {
-                            const key = `${role.id}:${task.id}`;
-                            setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: formatOffsetHhMmSs(task.expectedOffsetMinutes) }));
-                          }}
-                          keyboardType="numbers-and-punctuation"
-                          returnKeyType="done"
-                          onSubmitEditing={Keyboard.dismiss}
-                          blurOnSubmit
-                          placeholder="HH:MM:SS"
-                          placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
-                          style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
-                        />
+                        <Pressable
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: Number.isFinite(task.expectedOffsetMinutes) }}
+                          style={styles.countdownToggleRow}
+                          onPress={() => setTemplateTaskCountdownEnabled(role.id, task.id, !Number.isFinite(task.expectedOffsetMinutes))}>
+                          <MaterialIcons
+                            name={Number.isFinite(task.expectedOffsetMinutes) ? 'check-box' : 'check-box-outline-blank'}
+                            size={24}
+                            color={Number.isFinite(task.expectedOffsetMinutes) ? '#0EC3C9' : isDarkMode ? '#CBD5E1' : '#475569'}
+                          />
+                          <Text style={[styles.countdownToggleLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>
+                            Include Countdown Timer
+                          </Text>
+                        </Pressable>
+                        {Number.isFinite(task.expectedOffsetMinutes) ? (
+                          <TextInput
+                            value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes || 0)}
+                            onChangeText={(value) => {
+                              const key = `${role.id}:${task.id}`;
+                              setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: value }));
+                              const parsedMinutes = parseOffsetHhMmSsToMinutes(value);
+                              if (parsedMinutes !== null) {
+                                updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: parsedMinutes });
+                              }
+                            }}
+                            onBlur={() => {
+                              const key = `${role.id}:${task.id}`;
+                              setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0) }));
+                            }}
+                            keyboardType="numbers-and-punctuation"
+                            returnKeyType="done"
+                            onSubmitEditing={Keyboard.dismiss}
+                            blurOnSubmit
+                            placeholder="HH:MM:SS"
+                            placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
+                            style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+                          />
+                        ) : null}
                         <Pressable
                           accessibilityLabel={`Delete task ${task.name || taskIndex + 1} from ${role.name || `role ${index + 1}`}`}
                           style={[styles.templateActionButton, isDarkMode ? styles.createEventDeleteButtonDark : styles.createEventDeleteButtonLight]}
@@ -3621,10 +4311,15 @@ const styles = StyleSheet.create({
   pendingNotificationsTitle: { fontWeight: '700', fontSize: 13 },
   pendingNotificationsTitleLight: { color: '#232832' },
   pendingNotificationsTitleDark: { color: '#F4F8FF' },
+  pendingNotificationsList: { maxHeight: 360 },
+  pendingNotificationsListContent: { gap: 8 },
   pendingNotificationRow: { gap: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#334155' },
   pendingNotificationHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   pendingNotificationText: { fontSize: 12, fontWeight: '600' },
   pendingNotificationTitleText: { flex: 1 },
+  pendingNotificationDateTimeText: { marginTop: 2, fontSize: 12, fontWeight: '700' },
+  pendingNotificationEventText: { fontSize: 13, fontWeight: '800' },
+  pendingNotificationRoleText: { marginTop: 3, fontSize: 12, fontWeight: '700' },
   pendingNotificationDetails: { gap: 8 },
   pendingNotificationDetail: { fontSize: 12 },
   pendingNotificationExpandText: { fontSize: 12, fontWeight: '700' },
@@ -3680,6 +4375,7 @@ const styles = StyleSheet.create({
   eventDateTimeSubtitle: { fontSize: 14, fontWeight: '700', marginTop: -2, marginBottom: 2 },
   eventDateTimeSubtitleLight: { color: '#232832' },
   eventDateTimeSubtitleDark: { color: '#F4F8FF' },
+  workerRoleSubtitle: { fontSize: 13, fontWeight: '800', marginBottom: 2 },
   statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
   statusPillLight: { backgroundColor: '#e2e8f0' },
   statusPillCompletedLight: { backgroundColor: '#F7F7F7', borderWidth: 1, borderColor: '#F98D2F' },
@@ -3713,12 +4409,13 @@ const styles = StyleSheet.create({
   roleCardLightFigma: { borderColor: '#DBE2F9', backgroundColor: '#EDF0FC', borderRadius: 8, padding: 8, gap: 12 },
   roleCardDark: { borderColor: '#001A4D', backgroundColor: '#1A2540' },
   roleCardDarkFigma: { borderColor: '#061229', backgroundColor: '#203E75', borderRadius: 8, padding: 8, gap: 12 },
-  roleHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  roleHeaderActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexShrink: 0 },
+  roleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  roleHeaderActions: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'flex-end', gap: 6, flexShrink: 0 },
+  roleCountStack: { alignItems: 'flex-end', gap: 2, minWidth: 72 },
   roleIconButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   roleIconButtonLight: { backgroundColor: '#F7F7F7' },
   roleIconButtonDark: { backgroundColor: '#12274D' },
-  roleTitle: { fontWeight: '700', fontSize: 14 },
+  roleTitle: { flex: 1, flexShrink: 1, fontWeight: '700', fontSize: 14, lineHeight: 18 },
   roleTitleLight: { color: '#232832' },
   roleTitleDark: { color: '#F4F8FF' },
   roleMeta: { fontSize: 12, fontWeight: '600' },
@@ -3769,6 +4466,9 @@ const styles = StyleSheet.create({
   taskList: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 8, gap: 8 },
   taskListLightFigma: { marginTop: 0, borderTopWidth: 1, borderTopColor: 'rgba(18,18,18,0.2)', paddingTop: 10, gap: 6, width: '100%' },
   taskListDarkFigma: { marginTop: 0, borderTopWidth: 1, borderTopColor: 'rgba(247,247,247,0.2)', paddingTop: 10, gap: 6, width: '100%' },
+  managerTaskDetailRow: { gap: 5 },
+  managerTaskActions: { minHeight: 26, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  managerTaskDescriptionLink: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
   taskRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   taskName: { flex: 1, fontSize: 13 },
   taskNameLight: { color: '#232832' },
@@ -3836,6 +4536,8 @@ const styles = StyleSheet.create({
   templateTaskRowLight: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#F7F7F7' },
   templateTaskRowDark: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#12274D' },
   templateTaskLabel: { fontSize: 12, fontWeight: '700' },
+  countdownToggleRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  countdownToggleLabel: { flex: 1, fontSize: 13, fontWeight: '700' },
   templateDurationPickerRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   templateDurationSelectorWrap: { flex: 1 },
   templateDurationSelector: { minHeight: 72, borderWidth: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center', gap: 2, paddingVertical: 10, paddingHorizontal: 8 },
@@ -3862,7 +4564,7 @@ const styles = StyleSheet.create({
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
   createEventScroll: { marginTop: 8 },
   createEventScrollContent: { paddingBottom: 16 },
-  createTemplateScrollContent: { paddingBottom: 260 },
+  createTemplateScrollContent: { paddingBottom: 16 },
   drawerLight: { backgroundColor: '#fff' },
   drawerDark: { backgroundColor: '#1A2540' },
   createEventDrawerLight: { backgroundColor: '#F7F7F7', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
@@ -3886,6 +4588,7 @@ const styles = StyleSheet.create({
   drawerMetaLight: { color: '#64748b' },
   drawerMetaDark: { color: '#F4F8FF' },
   roleEditorSummary: { marginTop: 10, marginBottom: 12, gap: 2 },
+  roleTaskEditorList: { maxHeight: 280, marginBottom: 10 },
   inviteTeamCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 10 },
   inviteTeamCardLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc' },
   inviteTeamCardDark: { borderColor: '#061229', backgroundColor: '#203E75' },

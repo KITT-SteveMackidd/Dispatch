@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { StartupModules, StartupShellProps } from './StartupShell';
 
@@ -74,9 +74,12 @@ export function StartupShell({ children }: StartupShellProps) {
 
   if (!modules) {
     return (
-      <View style={styles.screen}>
-        <Text style={styles.brand}>Dispatch</Text>
-        <Text style={styles.loading}>Starting...</Text>
+      <View style={styles.splashScreen}>
+        <Image
+          source={require('../../assets/images/dispatch-splash-full.png')}
+          style={styles.splashImage}
+          resizeMode="contain"
+        />
       </View>
     );
   }
@@ -95,24 +98,24 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#061229',
+    backgroundColor: '#06132a',
     padding: 24,
+  },
+  splashScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#06132a',
+  },
+  splashImage: {
+    width: '100%',
+    maxWidth: 402,
+    aspectRatio: 402 / 310,
   },
   content: {
     flexGrow: 1,
     justifyContent: 'center',
     padding: 24,
-  },
-  brand: {
-    color: '#ffffff',
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  loading: {
-    color: '#dbeafe',
-    fontSize: 16,
-    fontWeight: '700',
   },
   title: {
     color: '#ffffff',

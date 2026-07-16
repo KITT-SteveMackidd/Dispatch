@@ -1,9 +1,11 @@
 import {
   addDoc,
+  arrayRemove,
   arrayUnion,
   collection,
   deleteDoc,
   doc,
+  DocumentReference,
   documentId,
   getDoc,
   getDocs,
@@ -19,14 +21,15 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { sendSignInLinkToEmail } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
+import { buildEventTaskFromTemplate, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 export type { InviteToken, InviteTokenStatus, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 
-export type TeamUnreadCount = {
-  teamId: string;
+export type ChatUnreadCount = {
+  threadId?: string;
+  teamId?: string;
   unreadCount: number;
 };
 
@@ -51,6 +54,11 @@ export type PersistedChatMessage = {
 export type ChatThreadHead = {
   id: string;
   teamId?: string | null;
+  organizationId?: string | null;
+  title?: string | null;
+  kind?: 'organization' | 'team' | 'manager' | 'direct' | 'custom';
+  participants?: string[];
+  pushSeenBy?: string[];
   lastMessageText?: string;
   lastMessageSenderId?: string;
   updatedAt?: { toDate?: () => Date } | Date | null;
@@ -73,6 +81,7 @@ export type RoleAssignmentNotification = {
   roleOpenSlots?: number;
   roleAssignedWorkerIds?: string[];
   roleWaitlistWorkerIds?: string[];
+  pushSeenBy?: string[];
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
@@ -86,6 +95,7 @@ export type UserNotification = {
   relatedRoleId?: string;
   relatedTaskId?: string;
   read: boolean;
+  pushSeenBy?: string[];
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
@@ -93,7 +103,7 @@ export type CreateEventRoleInput = {
   id: string;
   name: string;
   assignedWorkerId?: string | null;
-  tasks?: Array<{ id: string; name: string; expectedOffsetMinutes?: number; optional?: boolean }>;
+  tasks?: EventTaskTemplateInput[];
 };
 
 export type UpsertEventTemplateInput = {
@@ -131,30 +141,77 @@ export function buildChatThreadId(params: {
   return teamId ? `team:${teamId}:dm:${participants}` : `dm:${participants}`;
 }
 
-export function watchChatMessages(threadId: string, cb: (items: PersistedChatMessage[]) => void) {
-  const q = query(collection(db, 'chatThreads', threadId, 'messages'), orderBy('createdAt', 'asc'));
-  return onSnapshot(q, (snap) => {
-    const messages = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PersistedChatMessage, 'id'>) }));
-    cb(messages);
-  });
+export function buildOrganizationChatThreadId(organizationId: string) {
+  return `organization:${organizationId}:all`;
 }
 
-export function watchIncomingChatThreadHeads(userId: string, cb: (items: ChatThreadHead[]) => void) {
+export function buildOrganizationManagersThreadId(organizationId: string, workerId: string) {
+  return `organization:${organizationId}:managers:${workerId}`;
+}
+
+export function watchChatMessages(
+  threadId: string,
+  cb: (items: PersistedChatMessage[]) => void,
+  onError?: (error: Error) => void
+) {
+  const q = query(collection(db, 'chatThreads', threadId, 'messages'), orderBy('createdAt', 'asc'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const messages = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PersistedChatMessage, 'id'>) }));
+      cb(messages);
+    },
+    (error) => {
+      console.warn(`Unable to watch messages for chat thread ${threadId}.`, error);
+      cb([]);
+      onError?.(error);
+    }
+  );
+}
+
+export function watchChatThread(
+  threadId: string,
+  cb: (thread: ChatThreadHead | null) => void,
+  onError?: (error: Error) => void
+) {
+  return onSnapshot(
+    doc(db, 'chatThreads', threadId),
+    (snap) => cb(snap.exists() ? { id: snap.id, ...(snap.data() as Omit<ChatThreadHead, 'id'>) } : null),
+    (error) => {
+      console.warn(`Unable to watch chat thread ${threadId}.`, error);
+      onError?.(error);
+    }
+  );
+}
+
+export function watchIncomingChatThreadHeads(
+  userId: string,
+  cb: (items: ChatThreadHead[]) => void,
+  onError?: (error: Error) => void
+) {
   const withOrderQuery = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), orderBy('updatedAt', 'desc'), limit(30));
 
   const subscribeWithoutOrder = () => {
     const fallbackQuery = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), limit(100));
-    return onSnapshot(fallbackQuery, (snap) => {
-      const items = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as Omit<ChatThreadHead, 'id'>) }))
-        .sort((a, b) => {
-          const aMs = toDateMs(a.updatedAt);
-          const bMs = toDateMs(b.updatedAt);
-          return bMs - aMs;
-        })
-        .slice(0, 30);
-      cb(items);
-    });
+    return onSnapshot(
+      fallbackQuery,
+      (snap) => {
+        const items = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<ChatThreadHead, 'id'>) }))
+          .sort((a, b) => {
+            const aMs = toDateMs(a.updatedAt);
+            const bMs = toDateMs(b.updatedAt);
+            return bMs - aMs;
+          })
+          .slice(0, 30);
+        cb(items);
+      },
+      (error) => {
+        console.warn('Unable to watch chat threads without ordering.', error);
+        cb([]);
+        onError?.(error);
+      }
+    );
   };
 
   let unsubscribe = () => {};
@@ -172,8 +229,9 @@ export function watchIncomingChatThreadHeads(userId: string, cb: (items: ChatThr
         unsubscribe = subscribeWithoutOrder();
         return;
       }
-      console.error('watchIncomingChatThreadHeads failed', error);
+      console.warn('Unable to watch chat threads.', error);
       cb([]);
+      onError?.(error);
     }
   );
 
@@ -264,7 +322,8 @@ export async function sendChatMessage(params: {
     {
       id: params.threadId,
       teamId: params.teamId || null,
-      participants: [params.senderId, ...params.recipientIds],
+      participants: [...new Set([params.senderId, ...params.recipientIds].filter(Boolean))],
+      pushSeenBy: [params.senderId],
       lastMessageText: text || (attachments.length ? `Sent ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` : ''),
       lastMessageSenderId: params.senderId,
       updatedAt: serverTimestamp(),
@@ -272,36 +331,53 @@ export async function sendChatMessage(params: {
     { merge: true }
   );
 
-  if (params.teamId) {
-    const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
-    await Promise.all(
-      recipientIds.map((userId) =>
-        setDoc(
-          doc(db, 'chatUnread', `${userId}__${params.teamId}`),
-          {
-            userId,
-            teamId: params.teamId || null,
-            unreadCount: increment(1),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        )
+  const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
+  await Promise.all(
+    recipientIds.map((userId) =>
+      setDoc(
+        doc(db, 'chatUnread', `${userId}__${params.threadId}`),
+        {
+          userId,
+          threadId: params.threadId,
+          teamId: params.teamId || null,
+          unreadCount: increment(1),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
       )
-    );
-  }
+    )
+  );
 }
 
-export async function markTeamChatRead(params: { userId: string; teamId: string }) {
-  await setDoc(
-    doc(db, 'chatUnread', `${params.userId}__${params.teamId}`),
-    {
-      userId: params.userId,
-      teamId: params.teamId,
-      unreadCount: 0,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+export async function markChatThreadRead(params: { userId: string; threadId: string; teamId?: string }) {
+  const writes = [
+    setDoc(
+      doc(db, 'chatUnread', `${params.userId}__${params.threadId}`),
+      {
+        userId: params.userId,
+        threadId: params.threadId,
+        teamId: params.teamId || null,
+        unreadCount: 0,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    ),
+  ];
+
+  if (params.teamId) {
+    writes.push(setDoc(
+      doc(db, 'chatUnread', `${params.userId}__${params.teamId}`),
+      {
+        userId: params.userId,
+        teamId: params.teamId,
+        unreadCount: 0,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    ));
+  }
+
+  await Promise.all(writes);
 }
 
 function mapEvents(snap: { docs: Array<{ id: string; data: () => unknown }> }): DispatchEvent[] {
@@ -317,6 +393,16 @@ function mapTeams(snap: { docs: Array<{ id: string; data: () => unknown }> }): T
       managerIds: [...new Set([data.managerId, ...(data.managerIds || [])].filter(Boolean))],
     };
   });
+}
+
+function removeWorkerFromOtherRoleWaitlists(role: EventRole, acceptedRoleId: string, workerId: string): EventRole {
+  if (role.id === acceptedRoleId) return role;
+  return {
+    ...role,
+    waitlistWorkerIds: (role.waitlistWorkerIds || []).filter((id) => id !== workerId),
+    waitlistInviteWorkerIds: (role.waitlistInviteWorkerIds || []).filter((id) => id !== workerId),
+    eligibleWaitlistWorkerIds: (role.eligibleWaitlistWorkerIds || []).filter((id) => id !== workerId),
+  };
 }
 
 function parseEventDateTime(value?: string) {
@@ -417,33 +503,39 @@ function getInviteAppLink() {
   return process.env.EXPO_PUBLIC_APP_INVITE_URL?.trim() || 'https://dispatchapp.ca/download';
 }
 
-async function ensureManagerWorkerThread(params: { managerId: string; workerId: string; teamId?: string }) {
-  const threadId = buildChatThreadId({
-    teamId: params.teamId,
-    selfId: params.managerId,
-    otherUserId: params.workerId,
-  });
-  await setDoc(
-    doc(db, 'chatThreads', threadId),
-    {
-      id: threadId,
-      managerId: params.managerId,
-      workerId: params.workerId,
-      teamId: params.teamId,
-      participants: [params.managerId, params.workerId],
-      updatedAt: serverTimestamp(),
-      createdByInvite: true,
-    },
-    { merge: true }
-  );
-}
-
 async function loadOrganisationManagerIds(organizationId?: string | null) {
   if (!organizationId) return [];
   const organisationSnap = await getDoc(doc(db, 'organizations', organizationId)).catch(() => null);
   if (!organisationSnap?.exists()) return [];
   const organisation = organisationSnap.data() as Partial<Organisation>;
   return organisation.managerIds || [];
+}
+
+async function ensureOrganisationManagersOnTeam(
+  teamRef: DocumentReference,
+  team: Omit<Team, 'id'>,
+  activeManagerId?: string
+) {
+  const organisationManagerIds = await loadOrganisationManagerIds(team.organizationId);
+  const managerIds = [
+    ...new Set([
+      team.managerId,
+      ...(team.managerIds || []),
+      activeManagerId,
+      ...organisationManagerIds,
+    ].filter(Boolean)),
+  ] as string[];
+
+  const existingManagerIds = team.managerIds || [];
+  const hasAllManagers = managerIds.every((managerId) => existingManagerIds.includes(managerId));
+  if (!hasAllManagers) {
+    await updateDoc(teamRef, {
+      managerIds,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  return managerIds;
 }
 
 async function ensureTeamChatThreads(params: {
@@ -463,19 +555,16 @@ async function ensureTeamChatThreads(params: {
     {
       id: buildChatThreadId({ teamId: params.teamId, selfId: managerIds[0] || participantIds[0], isTeamBroadcast: true }),
       teamId: params.teamId,
+      organizationId: params.organizationId || null,
       teamName: params.teamName || null,
+      title: params.teamName || 'Team',
+      kind: 'team',
       participants: participantIds,
-      updatedAt: serverTimestamp(),
       createdByTeamSync: true,
     },
     { merge: true }
   );
 
-  await Promise.all(
-    managerIds.flatMap((managerId) =>
-      workerIds.map((workerId) => ensureManagerWorkerThread({ managerId, workerId, teamId: params.teamId }))
-    )
-  );
 }
 
 async function syncOrganisationTeamsForManager(params: { organizationId: string; managerId: string }) {
@@ -512,28 +601,170 @@ export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[
   return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
 }
 
+export async function markChatNotificationSeen(params: { threadId: string; userId: string }) {
+  await updateDoc(doc(db, 'chatThreads', params.threadId), {
+    pushSeenBy: arrayUnion(params.userId),
+  });
+}
+
+export async function markRoleAssignmentNotificationPushSeen(params: { notificationId: string; userId: string }) {
+  await updateDoc(doc(db, 'roleAssignmentNotifications', params.notificationId), {
+    pushSeenBy: arrayUnion(params.userId),
+  });
+}
+
+export async function markUserNotificationPushSeen(params: { notificationId: string; userId: string }) {
+  await updateDoc(doc(db, 'userNotifications', params.notificationId), {
+    pushSeenBy: arrayUnion(params.userId),
+  });
+}
+
+export async function markEventReminderScheduled(params: { userId: string; reminderKey: string }) {
+  await updateDoc(doc(db, 'users', params.userId), {
+    scheduledEventReminderKeys: arrayUnion(params.reminderKey),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function createChatGroup(params: {
+  threadId: string;
+  organizationId: string;
+  title: string;
+  creatorId: string;
+  participantIds: string[];
+}) {
+  const participants = [...new Set([params.creatorId, ...params.participantIds].filter(Boolean))];
+  if (participants.length < 2) throw new Error('Select at least one person to start a chat.');
+
+  await setDoc(
+    doc(db, 'chatThreads', params.threadId),
+    {
+      id: params.threadId,
+      organizationId: params.organizationId,
+      title: params.title.trim() || 'Group chat',
+      kind: 'custom',
+      participants,
+      createdBy: params.creatorId,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function addChatParticipants(params: { threadId: string; participantIds: string[] }) {
+  const participantIds = [...new Set(params.participantIds.filter(Boolean))];
+  if (!participantIds.length) return;
+
+  await setDoc(
+    doc(db, 'chatThreads', params.threadId),
+    { participants: arrayUnion(...participantIds) },
+    { merge: true }
+  );
+}
+
+export async function renameCustomChat(params: { threadId: string; userId: string; title: string }) {
+  const title = params.title.trim();
+  if (!title) throw new Error('Enter a chat name.');
+
+  const threadRef = doc(db, 'chatThreads', params.threadId);
+  const threadSnapshot = await getDoc(threadRef);
+  if (!threadSnapshot.exists()) throw new Error('Chat not found.');
+  const thread = threadSnapshot.data() as Partial<ChatThreadHead>;
+  if (thread.kind !== 'custom') throw new Error('Only custom chats can be renamed.');
+  if (!(thread.participants || []).includes(params.userId)) throw new Error('You are not a member of this chat.');
+
+  await updateDoc(threadRef, { title });
+}
+
+export async function leaveCustomChat(params: { threadId: string; userId: string }) {
+  const threadRef = doc(db, 'chatThreads', params.threadId);
+  const threadSnapshot = await getDoc(threadRef);
+  if (!threadSnapshot.exists()) throw new Error('Chat not found.');
+  const thread = threadSnapshot.data() as Partial<ChatThreadHead>;
+  if (thread.kind !== 'custom') throw new Error('Only custom chats can be left.');
+  if (!(thread.participants || []).includes(params.userId)) return;
+
+  await updateDoc(threadRef, { participants: arrayRemove(params.userId) });
+  await deleteDoc(doc(db, 'chatUnread', `${params.userId}__${params.threadId}`)).catch(() => undefined);
+}
+
+export async function loadRoleAssignmentExport(params: {
+  managerId: string;
+  organizationId?: string | null;
+  startDate: Date;
+  endDate: Date;
+}) {
+  const eventsQuery = params.organizationId
+    ? query(collection(db, 'events'), where('organizationId', '==', params.organizationId))
+    : query(collection(db, 'events'), where('managerId', '==', params.managerId));
+  const eventsSnapshot = await getDocs(eventsQuery);
+  const startTime = startOfLocalDay(params.startDate).getTime();
+  const endTime = endOfLocalDay(params.endDate).getTime();
+  const events = sortDispatchEvents(mapEvents(eventsSnapshot)).filter((event) => {
+    const startsAt = new Date(event.startsAt).getTime();
+    return Number.isFinite(startsAt) && startsAt >= startTime && startsAt <= endTime;
+  });
+  const workerIds = events.flatMap((event) =>
+    event.roles.flatMap((role) => role.assignedWorkerIds || [])
+  );
+  const workers = await loadUserProfilesByIds(workerIds);
+
+  return { events, workers };
+}
+
+function startOfLocalDay(value: Date) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function endOfLocalDay(value: Date) {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
 export function watchWorkerEvents(workerId: string, cb: (items: DispatchEvent[]) => void) {
   const q = query(collection(db, 'events'), where('workerIds', 'array-contains', workerId));
   return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
 }
 
-export function watchManagerTeams(managerId: string, cb: (items: Team[]) => void, organizationId?: string | null) {
+export function watchManagerTeams(
+  managerId: string,
+  cb: (items: Team[]) => void,
+  organizationId?: string | null,
+  onError?: (error: Error) => void
+) {
   const q = organizationId
     ? query(collection(db, 'teams'), where('organizationId', '==', organizationId))
     : query(collection(db, 'teams'), where('managerId', '==', managerId));
-  return onSnapshot(q, async (snap) => {
-    const teams = mapTeams(snap);
-    if (!organizationId) {
-      cb(teams);
-      return;
-    }
+  return onSnapshot(
+    q,
+    async (snap) => {
+      try {
+        const teams = mapTeams(snap);
+        if (!organizationId) {
+          cb(teams);
+          return;
+        }
 
-    const organisationManagerIds = await loadOrganisationManagerIds(organizationId);
-    cb(teams.map((team) => ({
-      ...team,
-      managerIds: [...new Set([...(team.managerIds || []), ...organisationManagerIds].filter(Boolean))],
-    })));
-  });
+        const organisationManagerIds = await loadOrganisationManagerIds(organizationId);
+        cb(teams.map((team) => ({
+          ...team,
+          managerIds: [...new Set([...(team.managerIds || []), ...organisationManagerIds].filter(Boolean))],
+        })));
+      } catch (error) {
+        console.warn('Unable to prepare manager teams.', error);
+        cb([]);
+        onError?.(error instanceof Error ? error : new Error('Unable to prepare manager teams.'));
+      }
+    },
+    (error) => {
+      console.warn('Unable to watch manager teams.', error);
+      cb([]);
+      onError?.(error);
+    }
+  );
 }
 
 function mapEventTemplates(snap: { docs: Array<{ id: string; data: () => unknown }> }): EventTemplate[] {
@@ -629,7 +860,7 @@ export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (it
   return onSnapshot(q, (snap) => {
     const notifications = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as Omit<RoleAssignmentNotification, 'id'>) }))
-      .filter((item) => item.status === 'pending' || item.status === 'declined')
+      .filter((item) => item.status === 'pending' || item.status === 'declined' || item.status === 'waitlisted')
       .sort((a, b) => {
         const aTime = a.createdAt && 'toDate' in a.createdAt && typeof a.createdAt.toDate === 'function'
           ? a.createdAt.toDate().getTime()
@@ -706,14 +937,7 @@ export async function createDispatchEvent(params: {
       name: role.name,
       assignedWorkerIds,
       openSlots: assignedWorkerIds.length ? 0 : 1,
-      tasks: (role.tasks || []).map((task) => ({
-        id: task.id,
-        name: task.name,
-        expectedOffsetMinutes: Math.max(0, Math.round(task.expectedOffsetMinutes || 0)),
-        dueAt: new Date(startsAt.getTime() + Math.max(0, Math.round(task.expectedOffsetMinutes || 0)) * 60 * 1000).toISOString(),
-        optional: !!task.optional,
-        completedBy: [],
-      })),
+      tasks: (role.tasks || []).map((task, index) => buildEventTaskFromTemplate(task, startsAt.getTime(), index)),
     } satisfies EventRole;
   });
 
@@ -737,6 +961,15 @@ export async function createDispatchEvent(params: {
   };
 
   const docRef = await addDoc(collection(db, 'events'), eventPayload);
+  await Promise.all(
+    roles.flatMap((role) =>
+      (role.assignedWorkerIds || []).map((workerId) =>
+        queueEventRoleReminderEmail({ eventId: docRef.id, roleId: role.id, workerId }).catch((error) => {
+          console.warn('Dispatch event reminder email queue failed', error);
+        })
+      )
+    )
+  );
 
   return {
     id: docRef.id,
@@ -762,38 +995,79 @@ export async function deleteDispatchEvent(params: { eventId: string; managerId: 
   await deleteDoc(ref);
 }
 
-export async function loadWorkerTeams(workerId: string): Promise<Team[]> {
-  const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
+export async function loadWorkerTeams(workerId: string, organizationId?: string | null): Promise<Team[]> {
+  const q = organizationId
+    ? query(collection(db, 'teams'), where('organizationId', '==', organizationId))
+    : query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
   const snap = await getDocs(q);
-  return mapTeams(snap);
+  const teams = mapTeams(snap).filter((team) => (team.workerIds || []).includes(workerId));
+  if (!organizationId) return teams;
+
+  const organizationManagerIds = await loadOrganisationManagerIds(organizationId);
+  return teams.map((team) => ({
+    ...team,
+    managerIds: [...new Set([...(team.managerIds || [team.managerId]), ...organizationManagerIds])],
+  }));
 }
 
-export function watchWorkerTeams(workerId: string, cb: (items: Team[]) => void) {
-  const q = query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
-  return onSnapshot(q, (snap) => cb(mapTeams(snap)));
-}
-
-export function watchUserTeamUnreadCounts(userId: string, cb: (items: TeamUnreadCount[]) => void) {
-  const q = query(collection(db, 'chatUnread'), where('userId', '==', userId));
-  return onSnapshot(q, (snap) => {
-    const items = snap.docs
-      .map((d) => {
-        const data = d.data() as Partial<{ teamId: string; unreadCount: number }>;
-        if (!data.teamId) return null;
-        return {
-          teamId: data.teamId,
-          unreadCount: Math.max(0, Number(data.unreadCount ?? 0)),
-        } satisfies TeamUnreadCount;
-      })
-      .filter((item): item is TeamUnreadCount => !!item);
-
-    cb(items);
+export function watchWorkerTeams(
+  workerId: string,
+  cb: (items: Team[]) => void,
+  onError?: (error: Error) => void,
+  organizationId?: string | null
+) {
+  const q = organizationId
+    ? query(collection(db, 'teams'), where('organizationId', '==', organizationId))
+    : query(collection(db, 'teams'), where('workerIds', 'array-contains', workerId));
+  return onSnapshot(q, (snap) => cb(mapTeams(snap)), (error) => {
+    console.warn('Unable to watch worker teams.', error);
+    cb([]);
+    onError?.(error);
   });
 }
 
-export function watchUserUnreadNotificationCount(userId: string, cb: (count: number) => void) {
+export function watchUserTeamUnreadCounts(
+  userId: string,
+  cb: (items: ChatUnreadCount[]) => void,
+  onError?: (error: Error) => void
+) {
+  const q = query(collection(db, 'chatUnread'), where('userId', '==', userId));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs
+        .map((d): ChatUnreadCount | null => {
+          const data = d.data() as Partial<{ threadId: string; teamId: string; unreadCount: number }>;
+          if (!data.threadId && !data.teamId) return null;
+          return {
+            threadId: data.threadId,
+            teamId: data.teamId,
+            unreadCount: Math.max(0, Number(data.unreadCount ?? 0)),
+          } satisfies ChatUnreadCount;
+        })
+        .filter((item): item is ChatUnreadCount => !!item);
+
+      cb(items);
+    },
+    (error) => {
+      console.warn('Unable to watch team unread counts.', error);
+      cb([]);
+      onError?.(error);
+    }
+  );
+}
+
+export function watchUserUnreadNotificationCount(
+  userId: string,
+  cb: (count: number) => void,
+  onError?: (error: Error) => void
+) {
   const q = query(collection(db, 'userNotifications'), where('userId', '==', userId), where('read', '==', false));
-  return onSnapshot(q, (snap) => cb(snap.docs.length));
+  return onSnapshot(q, (snap) => cb(snap.docs.length), (error) => {
+    console.warn('Unable to watch unread notifications.', error);
+    cb(0);
+    onError?.(error);
+  });
 }
 
 export function watchManagerWorkerInvites(managerId: string, cb: (items: WorkerInvite[]) => void) {
@@ -835,12 +1109,19 @@ export function watchUserNotifications(userId: string, cb: (items: UserNotificat
 
   const subscribeWithoutOrder = () => {
     const fallbackQuery = query(collection(db, 'userNotifications'), where('userId', '==', userId), limit(100));
-    return onSnapshot(fallbackQuery, (snap) => {
-      const items = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as Omit<UserNotification, 'id'>) }))
-        .sort((a, b) => toDateMs(b.createdAt) - toDateMs(a.createdAt));
-      cb(items);
-    });
+    return onSnapshot(
+      fallbackQuery,
+      (snap) => {
+        const items = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<UserNotification, 'id'>) }))
+          .sort((a, b) => toDateMs(b.createdAt) - toDateMs(a.createdAt));
+        cb(items);
+      },
+      (error) => {
+        console.warn('Unable to watch notifications without ordering.', error);
+        cb([]);
+      }
+    );
   };
 
   let unsubscribe = () => {};
@@ -858,7 +1139,7 @@ export function watchUserNotifications(userId: string, cb: (items: UserNotificat
         unsubscribe = subscribeWithoutOrder();
         return;
       }
-      console.error('watchUserNotifications failed', error);
+      console.warn('Unable to watch notifications.', error);
       cb([]);
     }
   );
@@ -962,17 +1243,134 @@ export async function createOrganisationForManager(params: { managerId: string; 
   return { id: organisationRef.id, ...organisation };
 }
 
+export async function deleteDispatchAccount(params: { userId: string }): Promise<{ deletedOrganization: boolean }> {
+  const userRef = doc(db, 'users', params.userId);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) return { deletedOrganization: false };
+
+  const user = userSnap.data() as Partial<UserProfile>;
+  const organizationId = user.organizationId || null;
+  const normalizedUserRole = user.role?.toLowerCase();
+  let deletedOrganization = false;
+
+  if (organizationId) {
+    const organisationRef = doc(db, 'organizations', organizationId);
+    const organisationSnap = await getDoc(organisationRef);
+    const organisation = organisationSnap.exists() ? organisationSnap.data() as Partial<Organisation> : null;
+
+    if (normalizedUserRole === 'manager' && organisation) {
+      const [organizationUsersSnap, organizationTeamsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'users'), where('organizationId', '==', organizationId))),
+        getDocs(query(collection(db, 'teams'), where('organizationId', '==', organizationId))),
+      ]);
+      const nextManagerIds = organizationUsersSnap.docs
+        .filter((memberDoc) => {
+          const member = memberDoc.data() as Partial<UserProfile>;
+          return memberDoc.id !== params.userId && member.role?.toLowerCase() === 'manager';
+        })
+        .map((memberDoc) => memberDoc.id);
+
+      if (!nextManagerIds.length) {
+        const currentManagerIds = organisation.managerIds || [];
+        if (currentManagerIds.length !== 1 || currentManagerIds[0] !== params.userId) {
+          await updateDoc(organisationRef, {
+            managerIds: [params.userId],
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        const cleanupBatch = writeBatch(db);
+        organizationUsersSnap.docs.forEach((memberDoc) => {
+          if (memberDoc.id === params.userId) return;
+          cleanupBatch.update(memberDoc.ref, {
+            organizationId: null,
+            organizationName: null,
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        organizationTeamsSnap.docs.forEach((teamDoc) => {
+          cleanupBatch.delete(teamDoc.ref);
+        });
+
+        cleanupBatch.delete(organisationRef);
+        await cleanupBatch.commit();
+        deletedOrganization = true;
+      } else {
+        const cleanupBatch = writeBatch(db);
+        cleanupBatch.update(organisationRef, {
+          managerIds: nextManagerIds,
+          updatedAt: serverTimestamp(),
+        });
+
+        organizationTeamsSnap.docs.forEach((teamDoc) => {
+          const team = teamDoc.data() as Partial<Team>;
+          const nextPrimaryManagerId = team.managerId && nextManagerIds.includes(team.managerId)
+            ? team.managerId
+            : nextManagerIds[0];
+          cleanupBatch.update(teamDoc.ref, {
+            managerId: nextPrimaryManagerId,
+            managerIds: nextManagerIds,
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        await cleanupBatch.commit();
+      }
+    }
+
+    if (normalizedUserRole === 'worker' && organisation) {
+      const workerIds = organisation.workerIds || [];
+      const workerTeamsSnap = await getDocs(query(collection(db, 'teams'), where('workerIds', 'array-contains', params.userId)));
+      const cleanupBatch = writeBatch(db);
+      let hasCleanupWrites = false;
+
+      if (workerIds.includes(params.userId)) {
+        cleanupBatch.update(organisationRef, {
+          workerIds: workerIds.filter((workerId) => workerId !== params.userId),
+          updatedAt: serverTimestamp(),
+        });
+        hasCleanupWrites = true;
+      }
+
+      workerTeamsSnap.docs.forEach((teamDoc) => {
+        const team = teamDoc.data() as Partial<Team>;
+        cleanupBatch.update(teamDoc.ref, {
+          workerIds: (team.workerIds || []).filter((workerId) => workerId !== params.userId),
+          updatedAt: serverTimestamp(),
+        });
+        hasCleanupWrites = true;
+      });
+
+      if (hasCleanupWrites) {
+        await cleanupBatch.commit();
+      }
+    }
+  }
+
+  await deleteDoc(userRef);
+
+  return { deletedOrganization };
+}
+
 export async function createTeam(managerId: string, name: string) {
   const trimmed = name.trim();
   if (!trimmed) throw new Error('Team name is required');
 
   const managerSnap = await getDoc(doc(db, 'users', managerId));
   const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+  const organizationId = manager.organizationId || null;
+  const managerIds = [
+    ...new Set([
+      managerId,
+      ...(await loadOrganisationManagerIds(organizationId)),
+    ].filter(Boolean)),
+  ] as string[];
 
   const teamRef = await addDoc(collection(db, 'teams'), {
     managerId,
-    managerIds: [managerId],
-    organizationId: manager.organizationId || null,
+    managerIds,
+    organizationId,
     organizationName: manager.organizationName || null,
     name: trimmed,
     workerIds: [],
@@ -981,9 +1379,9 @@ export async function createTeam(managerId: string, name: string) {
   await ensureTeamChatThreads({
     teamId: teamRef.id,
     teamName: trimmed,
-    managerIds: [managerId],
+    managerIds,
     workerIds: [],
-    organizationId: manager.organizationId || null,
+    organizationId,
   });
 }
 
@@ -1116,6 +1514,7 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
   const managerCanUseTeam = team.managerId === managerId
     || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && manager.role === 'manager');
   if (!managerCanUseTeam) throw new Error('Only managers in this organisation can invite workers to this team');
+  await ensureOrganisationManagersOnTeam(teamRef, team, managerId);
 
   const existingInvite = await loadActiveInvite({ managerId, teamId, email: normalizedEmail });
   if (existingInvite) {
@@ -1152,12 +1551,12 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
 
     await updateInviteDeliveryState({
       inviteId: inviteRef.id,
-      status: delivery.status === 'sent' ? 'delivered' : 'delivery_queued',
+      status: 'delivery_queued',
       statusReason: delivery.reason,
       via: delivery.via,
     });
 
-    return { inviteId: inviteRef.id, queued: delivery.status !== 'sent', via: delivery.via, reused: false };
+    return { inviteId: inviteRef.id, queued: true, via: delivery.via, reused: false };
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Invite email transport failed';
     await updateDoc(inviteRef, {
@@ -1178,61 +1577,10 @@ async function sendInviteEmail(params: {
   managerId: string;
   teamId?: string;
 }): Promise<{
-  status: 'sent' | 'queued';
+  status: 'queued';
   reason: string;
-  via: 'http-endpoint' | 'firebase-auth-email-link' | 'firebase-mail-collection';
+  via: 'firebase-mail-collection';
 }> {
-  const endpoint = (process.env.EXPO_PUBLIC_INVITE_EMAIL_ENDPOINT || '').trim();
-
-  if (endpoint) {
-    const token = (process.env.EXPO_PUBLIC_INVITE_EMAIL_BEARER_TOKEN || '').trim();
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        type: 'dispatch-worker-invite',
-        to: params.email,
-        teamName: params.teamName,
-        appLink: params.appLink,
-        inviteId: params.inviteId,
-        managerId: params.managerId,
-        teamId: params.teamId,
-      }),
-    });
-
-    if (!response.ok) {
-      const raw = await response.text();
-      throw new Error(raw || `Transport HTTP ${response.status}`);
-    }
-
-    return {
-      status: 'sent',
-      reason: 'Invite email delivered through configured HTTP endpoint.',
-      via: 'http-endpoint',
-    };
-  }
-
-  const fallbackUrl = (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || params.appLink;
-  if (/^https?:\/\//i.test(fallbackUrl)) {
-    try {
-      await sendSignInLinkToEmail(auth, params.email, {
-        url: fallbackUrl,
-        handleCodeInApp: true,
-      });
-
-      return {
-        status: 'sent',
-        reason: 'Invite email sent immediately via Dispatch sign-in link delivery.',
-        via: 'firebase-auth-email-link',
-      };
-    } catch (error) {
-      console.warn('Dispatch invite email-link delivery failed, falling back to mail queue.', error);
-    }
-  }
-
   const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
   await addDoc(collection(db, collectionName), {
     to: [params.email],
@@ -1257,6 +1605,129 @@ async function sendInviteEmail(params: {
     reason: `Invite email queued in Firestore collection "${collectionName}" for delivery worker.`,
     via: 'firebase-mail-collection',
   };
+}
+
+async function queueEventRoleInviteEmail(params: {
+  email?: string | null;
+  eventName: string;
+  eventLocation?: string | null;
+  eventStartsAt?: string | null;
+  roleName: string;
+  roleOpenSlots: number;
+  roleTasks: EventRole['tasks'];
+  managerId: string;
+  workerId: string;
+  eventId: string;
+  roleId: string;
+}) {
+  const email = params.email?.trim().toLowerCase();
+  if (!email) return;
+
+  const appLink = getInviteAppLink();
+  const eventDate = params.eventStartsAt
+    ? new Date(params.eventStartsAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : 'the scheduled event time';
+  const locationText = params.eventLocation?.trim() || 'Location TBD';
+  const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
+  const taskDetails = (params.roleTasks || []).map((task, index) => {
+    const countdown = Number.isFinite(task.expectedOffsetMinutes)
+      ? `Countdown offset: ${task.expectedOffsetMinutes} minute${task.expectedOffsetMinutes === 1 ? '' : 's'} from event start.`
+      : 'No countdown timer.';
+    const description = task.description?.trim() || '';
+    const attachmentText = (task.attachments || []).map((attachment) => `${attachment.name}: ${attachment.url}`).join(', ');
+    const attachmentHtml = (task.attachments || []).map((attachment) => `<a href="${escapeHtml(attachment.url)}">${escapeHtml(attachment.name)}</a>`).join(', ');
+    return {
+      text: `${index + 1}. ${task.name}${description ? ` - ${description}` : ''}. ${countdown}${attachmentText ? ` Attachments: ${attachmentText}` : ''}`,
+      html: `<li><strong>${escapeHtml(task.name)}</strong>${description ? `<br/>${escapeHtml(description)}` : ''}<br/>${escapeHtml(countdown)}${attachmentHtml ? `<br/>Attachments: ${attachmentHtml}` : ''}</li>`,
+    };
+  });
+  const taskText = taskDetails.length ? `\n\nTasks:\n${taskDetails.map((task) => task.text).join('\n')}` : '\n\nTasks: No tasks listed.';
+  const taskHtml = taskDetails.length ? `<p><strong>Tasks</strong></p><ol>${taskDetails.map((task) => task.html).join('')}</ol>` : '<p><strong>Tasks:</strong> No tasks listed.</p>';
+
+  await addDoc(collection(db, collectionName), {
+    to: [email],
+    message: {
+      subject: `Dispatch role invite: ${params.roleName} for ${params.eventName}`,
+      text: `You have been invited to ${params.roleName} for ${params.eventName}.\nWhen: ${eventDate}\nWhere: ${locationText}\nOpen positions: ${params.roleOpenSlots}${taskText}\n\nOpen Dispatch to accept or join the waitlist: ${appLink}`,
+      html: `<p>You have been invited to <strong>${escapeHtml(params.roleName)}</strong> for <strong>${escapeHtml(params.eventName)}</strong>.</p><p><strong>When:</strong> ${escapeHtml(eventDate)}<br/><strong>Where:</strong> ${escapeHtml(locationText)}<br/><strong>Open positions:</strong> ${params.roleOpenSlots}</p>${taskHtml}<p><a href="${escapeHtml(appLink)}">Open Dispatch</a> to accept or join the waitlist.</p>`,
+    },
+    dispatchEventRoleInvite: {
+      managerId: params.managerId,
+      workerId: params.workerId,
+      eventId: params.eventId,
+      roleId: params.roleId,
+      eventName: params.eventName,
+      roleName: params.roleName,
+      roleOpenSlots: params.roleOpenSlots,
+      roleTasks: params.roleTasks,
+      appLink,
+      email,
+    },
+    createdAt: serverTimestamp(),
+  });
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+async function queueEventRoleReminderEmail(params: {
+  eventId: string;
+  roleId: string;
+  workerId: string;
+}) {
+  const [eventSnap, workerSnap] = await Promise.all([
+    getDoc(doc(db, 'events', params.eventId)).catch(() => null),
+    getDoc(doc(db, 'users', params.workerId)).catch(() => null),
+  ]);
+  if (!eventSnap?.exists() || !workerSnap?.exists()) return;
+
+  const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+  const worker = workerSnap.data() as Partial<UserProfile>;
+  const email = worker.email?.trim().toLowerCase();
+  if (!email) return;
+
+  const role = (event.roles || []).find((item) => item.id === params.roleId);
+  if (!role || !(role.assignedWorkerIds || []).includes(params.workerId)) return;
+
+  const eventStart = new Date(event.startsAt);
+  if (Number.isNaN(eventStart.getTime()) || eventStart.getTime() <= Date.now()) return;
+
+  const reminderAt = new Date(Math.max(Date.now(), eventStart.getTime() - 12 * 60 * 60 * 1000));
+  const eventDate = eventStart.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const locationText = event.location?.trim() || 'Location TBD';
+  const appLink = getInviteAppLink();
+  const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
+  const reminderId = `event-reminder-${params.eventId}-${params.roleId}-${params.workerId}`.replace(/[^A-Za-z0-9_-]/g, '-');
+
+  await setDoc(doc(db, collectionName, reminderId), {
+    to: [email],
+    delivery: {
+      startTime: reminderAt,
+    },
+    message: {
+      subject: `Dispatch reminder: ${event.name} today`,
+      text: `Reminder: you are assigned to ${role.name} for ${event.name} at ${eventDate}. Location: ${locationText}. Open Dispatch: ${appLink}`,
+      html: `<p>Reminder: you are assigned to <strong>${role.name}</strong> for <strong>${event.name}</strong>.</p><p><strong>When:</strong> ${eventDate}<br/><strong>Where:</strong> ${locationText}</p><p><a href="${appLink}">Open Dispatch</a></p>`,
+    },
+    dispatchEventReminder: {
+      eventId: params.eventId,
+      roleId: params.roleId,
+      workerId: params.workerId,
+      eventName: event.name,
+      roleName: role.name,
+      appLink,
+      email,
+      reminderAt,
+    },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
 
 export async function retryWorkerInviteDelivery(params: { managerId: string; inviteId: string }) {
@@ -1290,7 +1761,7 @@ export async function retryWorkerInviteDelivery(params: { managerId: string; inv
 
     await updateInviteDeliveryState({
       inviteId: params.inviteId,
-      status: delivery.status === 'sent' ? 'delivered' : 'delivery_queued',
+      status: 'delivery_queued',
       statusReason: `Retry successful: ${delivery.reason}`,
       via: delivery.via,
       incrementSendCount: true,
@@ -1369,12 +1840,6 @@ async function setInvitePendingAcceptance(params: { userId: string; email: strin
         statusReason: 'Worker account found. Awaiting explicit in-app acceptance.',
         linkedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
-
-      await ensureManagerWorkerThread({
-        managerId: invite.managerId,
-        workerId: params.userId,
-        teamId: invite.teamId || undefined,
       });
 
       await ensureWorkerInviteNotification({
@@ -1623,6 +2088,7 @@ export async function inviteWorkerByEmailToTeam(params: {
     const managerCanUseTeam = team.managerId === managerId
       || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && manager.role === 'manager');
     if (!managerCanUseTeam) throw new Error('Only managers in this organisation can invite workers to this team');
+    await ensureOrganisationManagersOnTeam(teamRef, team, managerId);
     teamName = team.name || 'Dispatch Team';
     organizationId = team.organizationId || null;
     organizationName = team.organizationName || null;
@@ -1653,8 +2119,6 @@ export async function inviteWorkerByEmailToTeam(params: {
   });
 
   if (foundWorkerId) {
-    await ensureManagerWorkerThread({ managerId, workerId: foundWorkerId, teamId });
-
     const managerProfile = await getDoc(doc(db, 'users', managerId));
     const managerName = (managerProfile.exists() ? ((managerProfile.data() as Partial<UserProfile>).displayName || null) : null) || params.managerName || 'A manager';
 
@@ -1680,7 +2144,7 @@ export async function inviteWorkerByEmailToTeam(params: {
 
     await updateInviteDeliveryState({
       inviteId: inviteRef.id,
-      status: delivery.status === 'sent' ? 'delivered' : 'delivery_queued',
+      status: 'delivery_queued',
       statusReason: delivery.reason,
       via: delivery.via,
     });
@@ -1805,6 +2269,14 @@ export async function acceptWorkerInvite(params: { userId: string; inviteId: str
       );
     }
 
+    if (organizationId) {
+      tx.update(doc(db, 'organizations', organizationId), {
+        workerIds: arrayUnion(params.userId),
+        lastAcceptedInviteId: params.inviteId,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
     const managerNotificationRef = doc(collection(db, 'userNotifications'));
     tx.set(managerNotificationRef, {
       userId: invite.managerId,
@@ -1818,14 +2290,18 @@ export async function acceptWorkerInvite(params: { userId: string; inviteId: str
   });
 
   const teamSync = acceptedTeamSync as AcceptedTeamSync | null;
+  let acceptedOrganizationId = teamSync?.organizationId || null;
   if (teamSync) {
-    await ensureTeamChatThreads({
-      teamId: teamSync.teamId,
-      teamName: teamSync.teamName,
-      managerIds: [teamSync.managerId],
-      workerIds: [teamSync.workerId],
-      organizationId: teamSync.organizationId || null,
-    }).catch(() => null);
+    const acceptedTeamSnapshot = await getDoc(doc(db, 'teams', teamSync.teamId)).catch(() => null);
+    if (acceptedTeamSnapshot?.exists()) {
+      const acceptedTeam = { id: acceptedTeamSnapshot.id, ...(acceptedTeamSnapshot.data() as Omit<Team, 'id'>) };
+      acceptedOrganizationId = acceptedTeam.organizationId || acceptedOrganizationId;
+      await ensureTeamCommunicationThreads(acceptedTeam).catch(() => null);
+    }
+  }
+
+  if (acceptedOrganizationId) {
+    await ensureOrganizationCommunicationThreads(acceptedOrganizationId).catch(() => null);
   }
 
   await syncInviteTokenState({ inviteId: params.inviteId, status: 'consumed', timestampField: 'consumedAt' });
@@ -1892,10 +2368,102 @@ export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProf
         role: (data.role as UserProfile['role']) || 'worker',
         organizationId: data.organizationId || null,
         organizationName: data.organizationName || null,
+        email: data.email || null,
+        canonicalEmail: data.canonicalEmail || null,
         phoneNumber: data.phoneNumber,
         avatarUrl: data.avatarUrl,
       };
     });
+}
+
+export async function loadOrganizationMembers(organizationId: string): Promise<{
+  organization: Organisation;
+  members: UserProfile[];
+}> {
+  const organizationSnapshot = await getDoc(doc(db, 'organizations', organizationId));
+  if (!organizationSnapshot.exists()) throw new Error('Organization not found.');
+
+  const data = organizationSnapshot.data() as Omit<Organisation, 'id'>;
+  const storedOrganization: Organisation = {
+    id: organizationSnapshot.id,
+    ...data,
+    managerIds: [...new Set((data.managerIds || []).filter(Boolean))],
+    workerIds: [...new Set((data.workerIds || []).filter(Boolean))],
+  };
+  const rosterMembers = await loadUserProfilesByIds([
+    ...storedOrganization.managerIds,
+    ...(storedOrganization.workerIds || []),
+  ]);
+  const organizationMembersSnapshot = await getDocs(
+    query(collection(db, 'users'), where('organizationId', '==', organizationId))
+  ).catch(() => null);
+  const queriedMembers = (organizationMembersSnapshot?.docs || []).map((memberSnapshot) => {
+    const member = memberSnapshot.data() as Partial<UserProfile>;
+    return {
+      uid: memberSnapshot.id,
+      displayName: member.displayName || 'Dispatch User',
+      role: (member.role as UserProfile['role']) || 'worker',
+      organizationId: member.organizationId || null,
+      organizationName: member.organizationName || null,
+      email: member.email || null,
+      canonicalEmail: member.canonicalEmail || null,
+      phoneNumber: member.phoneNumber,
+      avatarUrl: member.avatarUrl,
+    } satisfies UserProfile;
+  });
+  const members = [...new Map([...rosterMembers, ...queriedMembers].map((member) => [member.uid, member])).values()];
+  const organization: Organisation = {
+    ...storedOrganization,
+    managerIds: [...new Set([
+      ...storedOrganization.managerIds,
+      ...members.filter((member) => member.role === 'manager').map((member) => member.uid),
+    ])],
+    workerIds: [...new Set([
+      ...(storedOrganization.workerIds || []),
+      ...members.filter((member) => member.role === 'worker').map((member) => member.uid),
+    ])],
+  };
+
+  return { organization, members };
+}
+
+export async function ensureOrganizationCommunicationThreads(organizationId: string) {
+  const { organization, members } = await loadOrganizationMembers(organizationId);
+  const participantIds = members.map((member) => member.uid);
+  if (!participantIds.length) return;
+
+  const writes: Promise<unknown>[] = [
+    setDoc(
+      doc(db, 'chatThreads', buildOrganizationChatThreadId(organizationId)),
+      {
+        id: buildOrganizationChatThreadId(organizationId),
+        organizationId,
+        title: organization.name || 'Organization',
+        kind: 'organization',
+        participants: participantIds,
+      },
+      { merge: true }
+    ),
+  ];
+
+  (organization.workerIds || []).forEach((workerId) => {
+    const worker = members.find((member) => member.uid === workerId);
+    writes.push(
+      setDoc(
+        doc(db, 'chatThreads', buildOrganizationManagersThreadId(organizationId, workerId)),
+        {
+          id: buildOrganizationManagersThreadId(organizationId, workerId),
+          organizationId,
+          title: worker?.displayName || 'Worker',
+          kind: 'manager',
+          participants: [...new Set([workerId, ...organization.managerIds])],
+        },
+        { merge: true }
+      )
+    );
+  });
+
+  await Promise.all(writes);
 }
 
 export async function updateEventRoleAssignment(params: {
@@ -2001,7 +2569,67 @@ export async function updateEventRoleAssignment(params: {
       responseOptions: ['accept', 'decline'],
       createdAt: serverTimestamp(),
     });
+
   });
+
+  if (action === 'assign') {
+    const [workerSnap, eventSnap] = await Promise.all([
+      getDoc(doc(db, 'users', workerId)).catch(() => null),
+      getDoc(doc(db, 'events', eventId)).catch(() => null),
+    ]);
+    const worker = workerSnap?.exists() ? workerSnap.data() as Partial<UserProfile> : null;
+    const event = eventSnap?.exists() ? eventSnap.data() as Omit<DispatchEvent, 'id'> : null;
+    const role = event?.roles?.find((item) => item.id === roleId);
+    if (!event || !role) return;
+
+    await queueEventRoleInviteEmail({
+      email: worker?.email,
+      managerId,
+      workerId,
+      eventId,
+      roleId,
+      eventName: event.name,
+      eventLocation: event.location || null,
+      eventStartsAt: event.startsAt || null,
+      roleName: role.name,
+      roleOpenSlots: role.openSlots || 0,
+      roleTasks: role.tasks || [],
+    }).catch((error) => {
+      console.warn('Dispatch event role invite email queue failed', error);
+    });
+  }
+}
+
+export async function withdrawPendingEventRoleInvite(params: {
+  eventId: string;
+  roleId: string;
+  managerId: string;
+  workerId: string;
+}) {
+  const inviteSnap = await getDocs(
+    query(
+      collection(db, 'roleAssignmentNotifications'),
+      where('eventId', '==', params.eventId),
+      where('roleId', '==', params.roleId),
+      where('managerId', '==', params.managerId),
+      where('workerId', '==', params.workerId),
+      where('status', '==', 'pending')
+    )
+  );
+
+  if (inviteSnap.empty) return;
+
+  const batch = writeBatch(db);
+  inviteSnap.docs.forEach((inviteDoc) => {
+    batch.update(inviteDoc.ref, {
+      status: 'declined',
+      statusReason: 'The manager withdrew this role invitation.',
+      response: 'decline',
+      respondedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+  await batch.commit();
 }
 
 export async function updateEventRoleDetails(params: {
@@ -2009,6 +2637,7 @@ export async function updateEventRoleDetails(params: {
   roleId: string;
   managerId: string;
   name: string;
+  tasks?: EventRole['tasks'];
 }) {
   const { eventId, roleId, managerId, name } = params;
   const nextName = name.trim();
@@ -2025,8 +2654,13 @@ export async function updateEventRoleDetails(params: {
     const roles = (event.roles || []) as EventRole[];
     if (!roles.some((role) => role.id === roleId)) throw new Error('Role not found');
 
+    const nextRoles = roles.map((role) => sanitizeEventRoleForFirestore(
+      role.id === roleId ? { ...role, name: nextName } : role,
+      role.id === roleId && params.tasks ? params.tasks : role.tasks
+    ));
+
     tx.update(ref, {
-      roles: roles.map((role) => (role.id === roleId ? { ...role, name: nextName } : role)),
+      roles: nextRoles,
       updatedAt: serverTimestamp(),
     });
   });
@@ -2051,7 +2685,12 @@ export async function deleteEventRole(params: {
     if (!roles.some((role) => role.id === roleId)) throw new Error('Role not found');
 
     const nextRoles = roles.filter((role) => role.id !== roleId);
-    const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
+    const workerIds = [...new Set(nextRoles.flatMap((role) => [
+      ...(role.assignedWorkerIds || []),
+      ...(role.waitlistWorkerIds || []),
+      ...(role.eligibleWaitlistWorkerIds || []),
+      ...(role.waitlistInviteWorkerIds || []),
+    ]))];
 
     tx.update(ref, {
       roles: nextRoles,
@@ -2059,6 +2698,27 @@ export async function deleteEventRole(params: {
       updatedAt: serverTimestamp(),
     });
   });
+
+  const notifications = await getDocs(
+    query(
+      collection(db, 'roleAssignmentNotifications'),
+      where('eventId', '==', eventId),
+      where('roleId', '==', roleId)
+    )
+  );
+  if (!notifications.empty) {
+    const batch = writeBatch(db);
+    notifications.docs.forEach((notificationDoc) => {
+      batch.update(notificationDoc.ref, {
+        status: 'declined',
+        statusReason: 'This role was deleted from the event.',
+        respondedAt: serverTimestamp(),
+        response: 'decline',
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  }
 }
 
 export async function cancelWorkerEventRole(params: {
@@ -2255,6 +2915,10 @@ export async function acceptEventRoleWaitlistInvite(params: {
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === params.roleId);
     if (!role) throw new Error('Role not found');
+    const alreadyAssignedToEvent = roles.some((item) => (item.assignedWorkerIds || []).includes(params.workerId));
+    if (alreadyAssignedToEvent && !(role.assignedWorkerIds || []).includes(params.workerId)) {
+      throw new Error('You already accepted a role for this event.');
+    }
     const hasWaitlistInvite = (role.waitlistInviteWorkerIds || []).includes(params.workerId);
     const isWaitlisted = (role.waitlistWorkerIds || []).includes(params.workerId);
     if (!hasWaitlistInvite && !isWaitlisted) {
@@ -2293,18 +2957,20 @@ export async function acceptEventRoleWaitlistInvite(params: {
     const workerName = workerSnap.exists()
       ? ((workerSnap.data() as Partial<UserProfile>).displayName || 'Worker')
       : 'Worker';
-    const nextRoles = roles.map((item) => (
-      item.id === params.roleId
-        ? {
+    const nextRoles = roles.map((item) => {
+      if (item.id === params.roleId) {
+        return {
           ...item,
           assignedWorkerIds: [...(item.assignedWorkerIds || []), params.workerId],
           waitlistWorkerIds: (item.waitlistWorkerIds || []).filter((id) => id !== params.workerId),
           waitlistInviteWorkerIds: (item.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
           eligibleWaitlistWorkerIds: (item.eligibleWaitlistWorkerIds || []).filter((id) => id !== params.workerId),
           openSlots: Math.max(0, (item.openSlots || 0) - 1),
-        }
-        : item
-    ));
+        };
+      }
+
+      return removeWorkerFromOtherRoleWaitlists(item, params.roleId, params.workerId);
+    });
     const workerIds = [...new Set(nextRoles.flatMap((item) => [
       ...(item.assignedWorkerIds || []),
       ...(item.waitlistWorkerIds || []),
@@ -2325,6 +2991,15 @@ export async function acceptEventRoleWaitlistInvite(params: {
       read: false,
       createdAt: serverTimestamp(),
     });
+
+  });
+
+  await queueEventRoleReminderEmail({
+    eventId: params.eventId,
+    roleId: params.roleId,
+    workerId: params.workerId,
+  }).catch((error) => {
+    console.warn('Dispatch event reminder email queue failed', error);
   });
 }
 
@@ -2359,12 +3034,18 @@ export async function respondToRoleAssignmentNotification(params: {
       const targetRole = notificationRole;
       if (!targetRole) throw new Error('Role not found');
       const alreadyAssigned = (targetRole.assignedWorkerIds || []).includes(params.workerId);
+      const alreadyAssignedToEvent = nextRoles.some((role) => (role.assignedWorkerIds || []).includes(params.workerId));
+      if (alreadyAssignedToEvent && !alreadyAssigned) {
+        throw new Error('You already accepted a role for this event.');
+      }
       if (!alreadyAssigned && Math.max(0, targetRole.openSlots || 0) <= 0) {
         throw new Error('This role is full. Join the waitlist instead.');
       }
 
       nextRoles = nextRoles.map((role) => {
-        if (role.id !== notification.roleId) return role;
+        if (role.id !== notification.roleId) {
+          return removeWorkerFromOtherRoleWaitlists(role, notification.roleId, params.workerId);
+        }
 
         const assignedWorkerIds = role.assignedWorkerIds || [];
         if (assignedWorkerIds.includes(params.workerId)) return role;
@@ -2465,6 +3146,27 @@ export async function respondToRoleAssignmentNotification(params: {
       const acceptedNotification = acceptedNotificationSnap.data() as Partial<RoleAssignmentNotification>;
       if (acceptedNotification.action !== 'assign' || !acceptedNotification.eventId || !acceptedNotification.roleId) return;
 
+      await queueEventRoleReminderEmail({
+        eventId: acceptedNotification.eventId,
+        roleId: acceptedNotification.roleId,
+        workerId: params.workerId,
+      }).catch((error) => {
+        console.warn('Dispatch event reminder email queue failed', error);
+      });
+
+      const acceptedEventSnap = await getDoc(doc(db, 'events', acceptedNotification.eventId));
+      const acceptedEvent = acceptedEventSnap.exists() ? acceptedEventSnap.data() as Omit<DispatchEvent, 'id'> : null;
+      const acceptedRole = acceptedEvent?.roles?.find((role) => role.id === acceptedNotification.roleId);
+
+      const workerEventNotifications = await getDocs(
+        query(
+          collection(db, 'roleAssignmentNotifications'),
+          where('eventId', '==', acceptedNotification.eventId),
+          where('workerId', '==', params.workerId),
+          where('action', '==', 'assign'),
+          where('status', '==', 'pending')
+        )
+      );
       const competingNotifications = await getDocs(
         query(
           collection(db, 'roleAssignmentNotifications'),
@@ -2476,10 +3178,24 @@ export async function respondToRoleAssignmentNotification(params: {
       );
 
       const batch = writeBatch(db);
+      workerEventNotifications.docs
+        .filter((docSnap) => docSnap.id !== params.notificationId)
+        .forEach((docSnap) => {
+          batch.update(docSnap.ref, {
+            status: 'declined',
+            statusReason: 'Worker accepted another role for this event. Join the waitlist if this role opens again.',
+            respondedAt: serverTimestamp(),
+            response: 'decline',
+            updatedAt: serverTimestamp(),
+          });
+        });
       competingNotifications.docs
         .filter((docSnap) => docSnap.id !== params.notificationId)
         .forEach((docSnap) => {
           batch.update(docSnap.ref, {
+            roleOpenSlots: Math.max(0, acceptedRole?.openSlots || 0),
+            roleAssignedWorkerIds: acceptedRole?.assignedWorkerIds || [],
+            roleWaitlistWorkerIds: acceptedRole?.waitlistWorkerIds || [],
             statusReason: 'This role has been filled. Join the waitlist to be considered if it opens again.',
             updatedAt: serverTimestamp(),
           });

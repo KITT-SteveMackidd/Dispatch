@@ -1,0 +1,11 @@
+{
+  "projects": {},
+  "targets": {},
+  "etags": {
+    "dispatch-eb63a": {
+      "extensionInstances": {
+        "firestore-send-email": "76ca5c115a4d5a5e909c8be18c81c6a4088e4b9cbe1f125b2a29c6a4ca98098f"
+      }
+    }
+  }
+}

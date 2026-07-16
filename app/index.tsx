@@ -1,5 +1,5 @@
 import { Redirect } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { useSession } from '@/context/session';
 
 export default function Index() {
@@ -8,8 +8,11 @@ export default function Index() {
   if (loading) {
     return (
       <View style={styles.screen}>
-        <Text style={styles.title}>Dispatch</Text>
-        <Text style={styles.text}>Loading account...</Text>
+        <Image
+          source={require('../assets/images/dispatch-splash-full.png')}
+          style={styles.splashImage}
+          resizeMode="contain"
+        />
       </View>
     );
   }
@@ -34,18 +37,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#061229',
-    padding: 24,
+    backgroundColor: '#06132a',
   },
-  title: {
-    color: '#ffffff',
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  text: {
-    color: '#dbeafe',
-    fontSize: 16,
-    fontWeight: '700',
+  splashImage: {
+    width: '100%',
+    maxWidth: 402,
+    aspectRatio: 402 / 310,
   },
 });

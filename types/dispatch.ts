@@ -10,6 +10,7 @@ export type UserProfile = {
   canonicalEmail?: string | null;
   phoneNumber?: string;
   avatarUrl?: string;
+  scheduledEventReminderKeys?: string[];
 };
 
 export type Organisation = {
@@ -61,6 +62,7 @@ export type DispatchEvent = {
   roles: EventRole[];
   pendingInviteNotificationId?: string;
   pendingInviteRoleId?: string;
+  pendingInviteNotificationIds?: Record<string, string>;
 };
 
 export type Team = {
@@ -158,7 +160,7 @@ export type EventTemplateTask = {
   name: string;
   description?: string;
   attachments?: EventTaskAttachment[];
-  expectedOffsetMinutes: number;
+  expectedOffsetMinutes?: number;
 };
 
 export type EventTemplateRole = {

@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
 import {
+  buildOrganizationManagersThreadId,
   deleteDispatchEvent,
   ensureTaskBehindScheduleNotification,
   loadUserProfilesByIds,
@@ -68,6 +69,15 @@ function getWorkerSummaries(event: DispatchEvent): WorkerSummary[] {
   return [...map.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
 }
 
+function getWorkerRoleSubtitle(event: DispatchEvent, workerId?: string | null) {
+  if (!workerId) return '';
+  return event.roles
+    .filter((role) => (role.assignedWorkerIds || []).includes(workerId))
+    .map((role) => role.name)
+    .filter(Boolean)
+    .join(', ');
+}
+
 function formatOrdinalDay(date: Date) {
   const day = date.getDate();
   const remainder = day % 10;
@@ -116,7 +126,7 @@ export default function TodayScreen() {
 
     setManagerTeams([]);
     let active = true;
-    loadWorkerTeams(profile.uid)
+    loadWorkerTeams(profile.uid, profile.organizationId)
       .then((teams) => {
         if (!active) return;
         setWorkerTeams(teams);
@@ -246,8 +256,9 @@ export default function TodayScreen() {
   const today = useMemo(() => {
     return events
       .filter((event) => occursToday(event, nowMs))
+      .filter((event) => profile?.role !== 'worker' || event.roles.some((role) => (role.assignedWorkerIds || []).includes(profile.uid)))
       .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
-  }, [events, nowMs]);
+  }, [events, nowMs, profile]);
 
   const todayDateLabel = useMemo(() => {
     const now = new Date(nowMs);
@@ -474,6 +485,31 @@ export default function TodayScreen() {
     }
   };
 
+  const openTaskDescription = (task: EventTask) => {
+    Alert.alert(task.name || 'Task description', task.description?.trim() || 'No description has been added for this task.');
+  };
+
+  const openTaskAttachments = (task: EventTask, kind: 'photo' | 'document') => {
+    const attachments = (task.attachments || []).filter((attachment) => attachment.kind === kind && attachment.url?.trim());
+    if (!attachments.length) return;
+    if (attachments.length === 1) {
+      openAttachmentUrl(attachments[0].url);
+      return;
+    }
+
+    Alert.alert(
+      kind === 'photo' ? 'Task photos' : 'Task attachments',
+      'Choose an attachment to open.',
+      [
+        ...attachments.map((attachment) => ({
+          text: attachment.name || (kind === 'photo' ? 'Photo' : 'Attachment'),
+          onPress: () => openAttachmentUrl(attachment.url),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]
+    );
+  };
+
   const openPhoneDialer = async (phoneNumber?: string) => {
     const sanitizedPhone = phoneNumber?.trim();
     if (!sanitizedPhone) {
@@ -534,7 +570,9 @@ export default function TodayScreen() {
     if (profile?.role !== 'worker') return null;
 
     const tasks = getEventChecklist(event);
-    if (!tasks.length) return <Text style={[styles.emptyChecklist, isDarkMode ? styles.emptyChecklistDark : styles.emptyChecklistLight]}>No tasks have been added to this event yet.</Text>;
+    if (!tasks.length) {
+      return <Text style={[styles.emptyChecklist, isDarkMode ? styles.emptyChecklistDark : styles.emptyChecklistLight]}>No tasks have been added to this event yet.</Text>;
+    }
 
     return (
       <View style={styles.checklistContainer}>
@@ -542,63 +580,83 @@ export default function TodayScreen() {
           const isComplete = item.completedByMe;
           const isSaving = !!savingTaskIds[item.id];
           const canToggle = item.assignedToMe && !isSaving;
+          const hasPhoto = item.task.attachments?.some((attachment) => attachment.kind === 'photo' && attachment.url?.trim());
+          const hasDocument = item.task.attachments?.some((attachment) => attachment.kind === 'document' && attachment.url?.trim());
 
           return (
-            <View key={item.id} style={styles.checklistItem}>
-              <Pressable
-                onPress={() => handleToggleTask(event, item)}
-                disabled={!canToggle}
-                style={[
-                  styles.checkbox,
-                  isDarkMode ? styles.checkboxDark : styles.checkboxLight,
-                  isComplete && styles.checkboxComplete,
-                  !item.assignedToMe && styles.checkboxDisabled,
-                  isSaving && styles.checkboxSaving,
-                ]}
-              >
-                {isComplete ? <Text style={styles.checkboxMark}>✓</Text> : null}
-              </Pressable>
+            <Pressable
+              key={item.id}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isComplete, disabled: !canToggle }}
+              accessibilityLabel={`${isComplete ? 'Mark incomplete' : 'Mark complete'}: ${item.task.name}`}
+              onPress={(pressEvent) => {
+                pressEvent.stopPropagation();
+                handleToggleTask(event, item);
+              }}
+              disabled={!canToggle}
+              style={[
+                styles.checklistItem,
+                isDarkMode ? styles.checklistItemDark : styles.checklistItemLight,
+                isComplete && styles.checklistItemComplete,
+                isSaving && styles.checkboxSaving,
+              ]}>
+              <View style={[
+                styles.checkbox,
+                isDarkMode ? styles.checkboxDark : styles.checkboxLight,
+                isComplete && styles.checkboxComplete,
+              ]}>
+                {isComplete ? <MaterialIcons name="check" size={14} color="#0EC3C9" /> : null}
+              </View>
+
               <View style={styles.checklistContent}>
-                <View style={styles.checklistTaskRow}>
-                  <Text style={[styles.checklistTask, isDarkMode ? styles.checklistTaskDark : styles.checklistTaskLight, isComplete && styles.checklistTaskComplete]}>
-                    {item.task.name} · due {formatTaskDueTime(event, item.task)}
-                    {item.task.optional ? ' (optional)' : ''}
-                  </Text>
-                  {item.task.attachments?.length ? (
-                    <View style={styles.taskAttachmentRow}>
-                      {item.task.attachments
-                        .filter((attachment) => attachment?.url?.trim())
-                        .map((attachment) => (
-                          <Pressable
-                            key={attachment.id}
-                            onPress={() => openAttachmentUrl(attachment.url)}
-                            hitSlop={6}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Open ${attachment.kind === 'photo' ? 'photo' : 'document'} attachment`}
-                          >
-                            <Text style={styles.taskAttachmentIcon}>{attachment.kind === 'photo' ? '🖼️' : '📄'}</Text>
-                          </Pressable>
-                        ))}
-                    </View>
+                <Text style={[styles.checklistTask, isDarkMode ? styles.checklistTaskDark : styles.checklistTaskLight, isComplete && styles.checklistTaskComplete]}>
+                  {item.task.name} - due {formatTaskDueTime(event, item.task)}{item.task.optional ? ' (optional)' : ''}
+                </Text>
+
+                <View style={styles.taskActionRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open description for ${item.task.name}`}
+                    hitSlop={6}
+                    onPress={(pressEvent) => {
+                      pressEvent.stopPropagation();
+                      openTaskDescription(item.task);
+                    }}>
+                    <Text style={styles.taskDescriptionLink}>Description</Text>
+                  </Pressable>
+                  {hasPhoto ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open photos for ${item.task.name}`}
+                      hitSlop={6}
+                      onPress={(pressEvent) => {
+                        pressEvent.stopPropagation();
+                        openTaskAttachments(item.task, 'photo');
+                      }}>
+                      <MaterialIcons name="photo" size={17} color="#F98D2F" />
+                    </Pressable>
+                  ) : null}
+                  {hasDocument ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open attachments for ${item.task.name}`}
+                      hitSlop={6}
+                      onPress={(pressEvent) => {
+                        pressEvent.stopPropagation();
+                        openTaskAttachments(item.task, 'document');
+                      }}>
+                      <MaterialIcons name="attach-file" size={17} color="#F98D2F" />
+                    </Pressable>
                   ) : null}
                 </View>
-                {!!item.task.description?.trim() ? <Text style={[styles.checklistDescription, isDarkMode ? styles.checklistDescriptionDark : styles.checklistDescriptionLight]}>{item.task.description.trim()}</Text> : null}
+
                 <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>Role: {item.roleName}</Text>
                 <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>
-                  {item.completedByMe
-                    ? 'Completed by you'
-                    : item.completedCount > 0
-                      ? `Completed by ${item.completedCount} worker${item.completedCount > 1 ? 's' : ''}`
-                      : 'In progress'}
+                  {isComplete ? 'Completed by you' : item.completedCount > 0 ? `Completed by ${item.completedCount} worker${item.completedCount > 1 ? 's' : ''}` : 'In progress'}
                 </Text>
-                {isSaving ? <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>Saving…</Text> : null}
-                {Number.isFinite(getTaskDueAtMs(event, item.task)) ? (
-                  <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>
-                    Due {new Date(getTaskDueAtMs(event, item.task)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                  </Text>
-                ) : null}
+                {isSaving ? <Text style={[styles.checklistMeta, isDarkMode ? styles.checklistMetaDark : styles.checklistMetaLight]}>Saving...</Text> : null}
               </View>
-            </View>
+            </Pressable>
           );
         })}
       </View>
@@ -606,39 +664,46 @@ export default function TodayScreen() {
   };
 
   const openWorkerTeamChat = (event: DispatchEvent, workerId: string, workerLabel?: string) => {
-    const eventTeamIds = new Set(event.teamIds || []);
-    const workerTeam = managerTeams.find((team) => eventTeamIds.has(team.id) && (team.workerIds || []).includes(workerId))
-      || managerTeams.find((team) => (team.workerIds || []).includes(workerId));
+    if (!profile?.organizationId) return;
+    const managerIds = [...new Set([
+      profile.uid,
+      ...managerTeams.flatMap((team) => team.managerIds || [team.managerId]),
+    ].filter(Boolean))];
+    const title = workerLabel || workerId;
 
     router.navigate({
       pathname: '/chat/[workerId]',
       params: {
         workerId,
-        workerLabel: workerLabel || workerId,
+        workerLabel: title,
         eventName: event.name,
-        teamId: workerTeam?.id,
-        teamName: workerTeam?.name,
-        teamMemberIds: workerTeam?.workerIds?.join(',') || '',
+        teamName: title,
+        teamMemberIds: [...new Set([workerId, ...managerIds])].join(','),
+        isTeamAll: '1',
+        teamThreadId: buildOrganizationManagersThreadId(profile.organizationId, workerId),
+        teamThreadPath: 'Worker and all organization managers',
       },
     });
   };
 
   const openManagerChat = (event: DispatchEvent) => {
-    const managerId = event.managerId;
-    const managerLabel = managerInfoById[managerId]?.displayName || 'Manager';
-    const eventTeamIds = new Set(event.teamIds || []);
-    const managerTeam = workerTeams.find((team) => eventTeamIds.has(team.id) && team.managerId === managerId)
-      || workerTeams.find((team) => team.managerId === managerId);
+    if (!profile?.organizationId) return;
+    const managerIds = [...new Set([
+      event.managerId,
+      ...workerTeams.flatMap((team) => team.managerIds || [team.managerId]),
+    ].filter(Boolean))];
 
     router.navigate({
       pathname: '/chat/[workerId]',
       params: {
-        workerId: managerId,
-        workerLabel: managerLabel,
+        workerId: event.managerId,
+        workerLabel: 'Managers',
         eventName: event.name,
-        teamId: managerTeam?.id,
-        teamName: managerTeam?.name,
-        teamMemberIds: managerTeam?.workerIds?.join(',') || '',
+        teamName: 'Managers',
+        teamMemberIds: [...new Set([profile.uid, ...managerIds])].join(','),
+        isTeamAll: '1',
+        teamThreadId: buildOrganizationManagersThreadId(profile.organizationId, profile.uid),
+        teamThreadPath: 'You and all organization managers',
       },
     });
   };
@@ -931,6 +996,7 @@ export default function TodayScreen() {
           const isExpanded = !!expandedEventIds[item.id];
           const workers = isManager ? getWorkerSummaries(item) : [];
           const managerInfo = managerInfoById[item.managerId];
+          const workerRoleSubtitle = profile?.role === 'worker' ? getWorkerRoleSubtitle(item, profile.uid) : '';
           const nextTask = profile?.role === 'worker' ? workerNextTask(item, profile.uid) : null;
           const nextTaskDueAtMs = nextTask ? getTaskDueAtMs(item, nextTask) : Number.POSITIVE_INFINITY;
           const countdownClock = formatCountdownClock(nextTaskDueAtMs);
@@ -940,11 +1006,15 @@ export default function TodayScreen() {
           const overdueTaskCount = isManager ? getOverdueIncompleteTasks(item).length : 0;
 
           const card = !isDarkMode && isManager ? renderLightManagerCard(item, isExpanded) : isDarkMode && isManager ? renderDarkManagerCard(item, isExpanded) : (
-            <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => toggleExpand(item.id)}>
+            <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+              <Pressable style={styles.workerEventSummary} onPress={() => toggleExpand(item.id)}>
               <View style={styles.headerRow}>
                 <View style={styles.cardTitleStack}>
                   <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
                   <Text style={isDarkMode ? styles.eventDateTimeSubtitleDark : styles.eventDateTimeSubtitleLight}>{eventDate} - {eventTime}</Text>
+                  {workerRoleSubtitle ? (
+                    <Text style={isDarkMode ? styles.workerRoleSubtitleDark : styles.workerRoleSubtitleLight}>{workerRoleSubtitle}</Text>
+                  ) : null}
                 </View>
                 {isManager && overdueTaskCount > 0 ? (
                   <View style={styles.overdueChip}>
@@ -984,7 +1054,7 @@ export default function TodayScreen() {
                     <Text style={[styles.badgeText, { color: b.fg }]}>{b.text}</Text>
                   </View>
                   <View style={styles.managerRow}>
-                    <Pressable onPress={() => openManagerChat(item)} style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]} hitSlop={8}>
+                    <Pressable onPress={(pressEvent) => { pressEvent.stopPropagation(); openManagerChat(item); }} style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]} hitSlop={8}>
                       <Text style={[styles.avatarText, isDarkMode ? styles.avatarTextDarkTheme : styles.avatarTextLightTheme]}>{(managerInfo?.displayName || 'Manager').slice(0, 1).toUpperCase()}</Text>
                     </Pressable>
                     <View style={styles.managerDetails}>
@@ -1055,8 +1125,9 @@ export default function TodayScreen() {
                 </View>
               ) : null}
 
+              </Pressable>
               {!isManager && isExpanded ? renderWorkerChecklist(item) : null}
-            </Pressable>
+            </View>
           );
 
           if (!isManager) return card;
@@ -1126,6 +1197,8 @@ const styles = StyleSheet.create({
   figmaCardTitleDark: { color: '#F7F7F7', fontSize: 16, fontWeight: '700' },
   eventDateTimeSubtitleLight: { color: '#121212', fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
   eventDateTimeSubtitleDark: { color: '#F7F7F7', fontSize: 13, lineHeight: 17, fontWeight: '700', marginTop: 3 },
+  workerRoleSubtitleLight: { color: '#121212', fontSize: 13, lineHeight: 17, fontWeight: '800', marginTop: 2 },
+  workerRoleSubtitleDark: { color: '#F7F7F7', fontSize: 13, lineHeight: 17, fontWeight: '800', marginTop: 2 },
   figmaExpandLight: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
   figmaExpandDark: { color: '#F98D2F', fontSize: 10, fontWeight: '400' },
   figmaCardMetaLight: { color: '#121212', fontSize: 12, fontWeight: '200' },
@@ -1177,6 +1250,7 @@ const styles = StyleSheet.create({
   },
   swipeDeleteActionText: { color: '#fee2e2', fontWeight: '700' },
   cardDark: { backgroundColor: '#12274D', borderColor: '#12274D', borderRadius: 16, padding: 16, marginBottom: 8 },
+  workerEventSummary: { gap: 4 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardTitleStack: { flex: 1, marginBottom: 6 },
   title: { fontWeight: '700', fontSize: 20, flex: 1 },
@@ -1245,7 +1319,10 @@ const styles = StyleSheet.create({
   workerProgressSection: { marginTop: 8 },
   emptyWorkers: { fontSize: 10 },
   checklistContainer: { marginTop: 12, gap: 10 },
-  checklistItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  checklistItem: { minHeight: 76, flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderWidth: 1, borderRadius: 8, padding: 12 },
+  checklistItemLight: { backgroundColor: '#EDF0FC', borderColor: '#DBE2F9' },
+  checklistItemDark: { backgroundColor: '#203E75', borderColor: '#31558E' },
+  checklistItemComplete: { borderColor: '#0EC3C9' },
   checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
   checkboxLight: { borderColor: '#DBE2F9', backgroundColor: '#EDF0FC' },
   checkboxDark: { borderColor: '#203E75', backgroundColor: '#203E75' },
@@ -1259,11 +1336,8 @@ const styles = StyleSheet.create({
   checklistTaskLight: { color: '#121212' },
   checklistTaskDark: { color: '#F7F7F7' },
   checklistTaskComplete: { color: '#0EC3C9', textDecorationLine: 'line-through' },
-  taskAttachmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  taskAttachmentIcon: { fontSize: 16 },
-  checklistDescription: { fontSize: 12, marginTop: 3 },
-  checklistDescriptionLight: { color: '#121212' },
-  checklistDescriptionDark: { color: '#F7F7F7' },
+  taskActionRow: { minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+  taskDescriptionLink: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
   checklistMeta: { fontSize: 12, marginTop: 2 },
   checklistMetaLight: { color: '#121212' },
   checklistMetaDark: { color: '#F7F7F7' },

@@ -1,48 +1,88 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useSession } from '@/context/session';
 import {
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSession } from '@/context/session';
+import { useThemeMode } from '@/context/theme';
+import { headerLogoSource } from '@/constants/branding';
+import {
+  ChatThreadHead,
   acceptWorkerInvite,
+  buildOrganizationChatThreadId,
+  buildOrganizationManagersThreadId,
+  createChatGroup,
   createTeam,
   declineWorkerInvite,
+  ensureOrganizationCommunicationThreads,
   ensureTeamCommunicationThreads,
   inviteManagerByEmailToOrganisation,
   inviteWorkerByEmailToTeam,
+  loadOrganizationMembers,
   loadUserProfilesByIds,
-  loadWorkerTeams,
   markUserNotificationsRead,
-  retryWorkerInviteDelivery,
-  searchWorkersByEmail,
-  watchManagerEvents,
+  watchIncomingChatThreadHeads,
   watchManagerTeams,
-  watchManagerWorkerInvites,
   watchUserNotifications,
   watchUserTeamUnreadCounts,
-  watchWorkerEvents,
   watchWorkerTeams,
 } from '@/services/dispatch';
-import type { WorkerInvite } from '@/types/dispatch';
 import type { UserNotification } from '@/services/dispatch';
-import { clearAllWorkerInviteNotifications, clearWorkerInviteNotification } from '@/services/worker-invite-notifications';
-import { DispatchEvent, Team, UserProfile } from '@/types/dispatch';
-import { useThemeMode } from '@/context/theme';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { headerLogoSource } from '@/constants/branding';
+import type { Organisation, Team, UserProfile } from '@/types/dispatch';
 
 type DrawerMode = 'add-team' | 'invite-worker' | 'invite-manager';
 
-const lightEventsLogoSource = headerLogoSource;
-const darkEventsLogoSource = headerLogoSource;
+type ChatListItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  participantIds: string[];
+  kind: 'organization' | 'team' | 'manager' | 'custom';
+  teamId?: string;
+  threadId?: string;
+};
+
+function toDate(value: ChatThreadHead['updatedAt']) {
+  if (value instanceof Date) return value;
+  if (value && typeof value === 'object' && typeof value.toDate === 'function') return value.toDate();
+  return null;
+}
 
 export default function TeamsScreen() {
   const { profile } = useSession();
   const router = useRouter();
-  const { resolvedThemeMode } = useThemeMode();
   const insets = useSafeAreaInsets();
+  const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
+
   const [teams, setTeams] = useState<Team[]>([]);
-  const [events, setEvents] = useState<DispatchEvent[]>([]);
+  const [organization, setOrganization] = useState<Organisation | null>(null);
+  const [members, setMembers] = useState<UserProfile[]>([]);
+  const [threadHeads, setThreadHeads] = useState<ChatThreadHead[]>([]);
+  const [unreadCountByThreadId, setUnreadCountByThreadId] = useState<Record<string, number>>({});
+  const [legacyUnreadCountByTeamId, setLegacyUnreadCountByTeamId] = useState<Record<string, number>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [workerInviteNotifications, setWorkerInviteNotifications] = useState<UserNotification[]>([]);
+  const [workerInviteBusyId, setWorkerInviteBusyId] = useState<string | null>(null);
+
+  const [chatPickerOpen, setChatPickerOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [creatingChat, setCreatingChat] = useState(false);
+
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('add-team');
   const [teamName, setTeamName] = useState('');
@@ -50,339 +90,261 @@ export default function TeamsScreen() {
   const [inviteTeamId, setInviteTeamId] = useState<'solo' | string>('solo');
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
-  const [drawerMessageTone, setDrawerMessageTone] = useState<'info' | 'success' | 'error'>('info');
-  const [memberInfoById, setMemberInfoById] = useState<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>({});
-  const [unreadCountByTeamId, setUnreadCountByTeamId] = useState<Record<string, number>>({});
-  const [invites, setInvites] = useState<WorkerInvite[]>([]);
-  const [retryingInviteId, setRetryingInviteId] = useState<string | null>(null);
-  const [clearingInviteId, setClearingInviteId] = useState<string | null>(null);
-  const [clearingAllInvites, setClearingAllInvites] = useState(false);
-  const [workerInviteNotifications, setWorkerInviteNotifications] = useState<UserNotification[]>([]);
-  const [workerInviteBusyId, setWorkerInviteBusyId] = useState<string | null>(null);
-  const [expandedWorkerInviteIds, setExpandedWorkerInviteIds] = useState<Record<string, boolean>>({});
-  const [matchedWorker, setMatchedWorker] = useState<UserProfile | null>(null);
-  const [searchingWorker, setSearchingWorker] = useState(false);
+  const [drawerMessageTone, setDrawerMessageTone] = useState<'success' | 'error'>('success');
 
   useEffect(() => {
     if (!profile) return;
-    if (profile.role === 'manager') {
-      const unsubTeams = watchManagerTeams(profile.uid, setTeams, profile.organizationId);
-      const unsubEvents = watchManagerEvents(profile.uid, setEvents);
-      return () => {
-        unsubTeams();
-        unsubEvents();
-      };
-    }
-
-    const unsubEvents = watchWorkerEvents(profile.uid, setEvents);
-    const unsubTeams = watchWorkerTeams(profile.uid, setTeams);
-    return () => {
-      unsubEvents();
-      unsubTeams();
+    const handleTeams = (items: Team[]) => {
+      setTeams(items);
+      setLoadError(null);
     };
+    const handleError = () => setLoadError('Unable to load team conversations. Please try again.');
+    return profile.role === 'manager'
+      ? watchManagerTeams(profile.uid, handleTeams, profile.organizationId, handleError)
+      : watchWorkerTeams(
+          profile.uid,
+          (items) => handleTeams(items.filter((team) => (team.workerIds || []).includes(profile.uid))),
+          handleError,
+          profile.organizationId
+        );
   }, [profile]);
 
   useEffect(() => {
-    if (inviteTeamId === 'solo') return;
-    if (!teams.some((team) => team.id === inviteTeamId)) {
-      setInviteTeamId(teams[0]?.id || 'solo');
-    }
-  }, [teams, inviteTeamId]);
-
-  useEffect(() => {
-    if (profile?.role !== 'manager' || drawerMode !== 'invite-worker') {
-      setMatchedWorker(null);
-      setSearchingWorker(false);
+    if (!profile?.organizationId) {
+      setOrganization(null);
+      setMembers(profile ? [profile] : []);
       return;
     }
-
-    const normalizedEmail = inviteEmail.trim().toLowerCase();
-    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      setMatchedWorker(null);
-      setSearchingWorker(false);
-      return;
-    }
+    const organizationId = profile.organizationId;
 
     let active = true;
-    setSearchingWorker(true);
-
-    const timer = setTimeout(() => {
-      searchWorkersByEmail(normalizedEmail)
-        .then((matches) => {
-          if (!active) return;
-          setMatchedWorker(matches[0] || null);
-        })
-        .catch(() => {
-          if (!active) return;
-          setMatchedWorker(null);
-        })
-        .finally(() => {
-          if (!active) return;
-          setSearchingWorker(false);
-        });
-    }, 250);
-
+    (async () => {
+      try {
+        const result = await loadOrganizationMembers(organizationId);
+        const teamWorkerIds = profile.role === 'manager'
+          ? [...new Set(teams.flatMap((team) => team.workerIds || []).filter(Boolean))]
+          : [];
+        const teamWorkers = teamWorkerIds.length ? await loadUserProfilesByIds(teamWorkerIds) : [];
+        if (!active) return;
+        setOrganization(result.organization);
+        setMembers([
+          ...new Map([...result.members, ...teamWorkers].map((member) => [member.uid, member])).values(),
+        ]);
+      } catch {
+        if (!active) return;
+        setOrganization(null);
+        setMembers([profile]);
+      }
+    })();
     return () => {
       active = false;
-      clearTimeout(timer);
     };
-  }, [drawerMode, inviteEmail, profile]);
+  }, [profile, teams]);
 
   useEffect(() => {
-    if (!profile || profile.role !== 'manager') {
-      setInvites([]);
-      return;
-    }
-
-    return watchManagerWorkerInvites(profile.uid, setInvites);
-  }, [profile]);
-
-  useEffect(() => {
-    if (profile?.role !== 'manager' || !teams.length) return;
-
-    teams.forEach((team) => {
-      ensureTeamCommunicationThreads(team).catch(() => null);
-    });
-  }, [profile?.role, teams]);
+    if (!profile?.uid) return;
+    return watchIncomingChatThreadHeads(
+      profile.uid,
+      (items) => {
+        setThreadHeads(items);
+        setLoadError(null);
+      },
+      () => setLoadError('Unable to load chat activity. Please try again.')
+    );
+  }, [profile?.uid]);
 
   useEffect(() => {
-    if (!profile) {
-      setUnreadCountByTeamId({});
-      return;
-    }
-
+    if (!profile?.uid) return;
     return watchUserTeamUnreadCounts(profile.uid, (items) => {
-      const next = items.reduce<Record<string, number>>((acc, item) => {
-        acc[item.teamId] = item.unreadCount;
-        return acc;
-      }, {});
-      setUnreadCountByTeamId(next);
-    });
-  }, [profile]);
+      setUnreadCountByThreadId(Object.fromEntries(items.filter((item) => item.threadId).map((item) => [item.threadId as string, item.unreadCount])));
+      setLegacyUnreadCountByTeamId(Object.fromEntries(items.filter((item) => !item.threadId && item.teamId).map((item) => [item.teamId as string, item.unreadCount])));
+    }, () => setLoadError('Unable to load chat activity. Please try again.'));
+  }, [profile?.uid]);
+
+  useEffect(() => {
+    if (!profile) return;
+    teams.forEach((team) => ensureTeamCommunicationThreads(team).catch(() => undefined));
+    if (profile.organizationId) {
+      ensureOrganizationCommunicationThreads(profile.organizationId).catch(() => undefined);
+    }
+  }, [profile, teams]);
 
   useEffect(() => {
     if (profile?.role !== 'worker') {
       setWorkerInviteNotifications([]);
       return;
     }
-
     return watchUserNotifications(profile.uid, (items) => {
       setWorkerInviteNotifications(items.filter((item) => item.kind === 'worker_team_invite' && !item.read));
     });
   }, [profile]);
 
-  useEffect(() => {
-    if (!profile || !teams.length) {
-      setMemberInfoById({});
-      return;
-    }
+  const memberById = useMemo(() => new Map(members.map((member) => [member.uid, member])), [members]);
+  const threadHeadById = useMemo(() => new Map(threadHeads.map((thread) => [thread.id, thread])), [threadHeads]);
 
-    const ids = [...new Set([
-      ...teams.flatMap((team) => [...(team.managerIds || [team.managerId]), ...team.workerIds]),
-      ...invites.map((invite) => invite.workerId).filter(Boolean) as string[],
-    ].filter((id) => id && id !== profile.uid))];
-
-    if (!ids.length) {
-      setMemberInfoById({});
-      return;
-    }
-
-    let active = true;
-    loadUserProfilesByIds(ids)
-      .then((members) => {
-        if (!active) return;
-        const next = members.reduce<Record<string, Pick<UserProfile, 'displayName' | 'phoneNumber'>>>((acc, member) => {
-          acc[member.uid] = {
-            displayName: member.displayName || 'Dispatch User',
-            phoneNumber: member.phoneNumber,
-          };
-          return acc;
-        }, {});
-        setMemberInfoById(next);
-      })
-      .catch(() => {
-        if (!active) return;
-        setMemberInfoById({});
+  const chatItems = useMemo<ChatListItem[]>(() => {
+    if (!profile) return [];
+    const items: ChatListItem[] = [];
+    const allMemberIds = [...new Set([profile.uid, ...members.map((member) => member.uid)])];
+    const managerIds = [...new Set([
+      ...(organization?.managerIds || members.filter((member) => member.role === 'manager').map((member) => member.uid)),
+      ...(profile.role === 'manager' ? [profile.uid] : []),
+    ])];
+    const organizationId = organization?.id || profile.organizationId;
+    const managerThreadWorkerIds = threadHeads
+      .filter((thread) => organizationId && thread.kind === 'manager' && thread.id.startsWith(`organization:${organizationId}:managers:`))
+      .map((thread) => thread.id.split(':managers:')[1])
+      .filter(Boolean);
+    const workerIds = [...new Set([
+      ...(organization?.workerIds || members.filter((member) => member.role === 'worker').map((member) => member.uid)),
+      ...teams.flatMap((team) => team.workerIds || []),
+      ...managerThreadWorkerIds,
+      ...(profile.role === 'worker' ? [profile.uid] : []),
+    ])];
+    if (organizationId) {
+      items.push({
+        id: buildOrganizationChatThreadId(organizationId),
+        threadId: buildOrganizationChatThreadId(organizationId),
+        title: organization?.name || profile.organizationName || 'Organization',
+        subtitle: `Everyone in the organization (${allMemberIds.length})`,
+        participantIds: allMemberIds,
+        kind: 'organization',
       });
+    }
 
-    return () => {
-      active = false;
-    };
-  }, [invites, teams, profile]);
-
-  const eventCountsByTeam = useMemo(() => {
-    const counts = new Map<string, number>();
-    events.forEach((event) => {
-      event.teamIds.forEach((teamId) => {
-        counts.set(teamId, (counts.get(teamId) ?? 0) + 1);
+    teams.forEach((team) => {
+      const participantIds = [...new Set([...managerIds, ...(team.managerIds || [team.managerId]), ...(team.workerIds || [])])];
+      if (!participantIds.includes(profile.uid)) return;
+      items.push({
+        id: `team:${team.id}:all`,
+        threadId: `team:${team.id}:all`,
+        teamId: team.id,
+        title: team.name,
+        subtitle: `${participantIds.length} team members`,
+        participantIds,
+        kind: 'team',
       });
     });
-    return counts;
-  }, [events]);
 
-  const visibleInvites = useMemo(
-    () => invites.filter((invite) => !(invite as WorkerInvite & { managerClearedAt?: unknown }).managerClearedAt),
-    [invites]
-  );
+    const visibleWorkerIds = profile.role === 'worker' ? [profile.uid] : workerIds;
+    visibleWorkerIds.forEach((workerId) => {
+      const threadId = buildOrganizationManagersThreadId(organizationId || '', workerId);
+      const existingThread = threadHeadById.get(threadId);
+      const participantIds = [...new Set(existingThread?.participants?.length ? existingThread.participants : [workerId, ...managerIds])];
+      if (!organizationId || !participantIds.includes(profile.uid)) return;
+      const worker = memberById.get(workerId);
+      const chatManagerIds = participantIds.filter((participantId) => participantId !== workerId && memberById.get(participantId)?.role === 'manager');
+      const workerFacingTitle = chatManagerIds.length === 1
+        ? memberById.get(chatManagerIds[0])?.displayName || 'Manager'
+        : 'Managers';
+      items.push({
+        id: threadId,
+        threadId,
+        title: profile.role === 'worker' ? workerFacingTitle : worker?.displayName || existingThread?.title || 'Worker',
+        subtitle: 'Worker and all organization managers',
+        participantIds,
+        kind: 'manager',
+      });
+    });
 
-  const soloWorkerIds = useMemo(() => {
-    const teamWorkerIds = new Set(teams.flatMap((team) => team.workerIds || []));
-    return [...new Set(
-      invites
-        .filter((invite) => invite.workerId && !invite.teamId)
-        .map((invite) => invite.workerId as string)
-        .filter((workerId) => !teamWorkerIds.has(workerId))
-    )];
-  }, [invites, teams]);
+    threadHeads
+      .filter((thread) => thread.kind === 'custom' && thread.participants?.includes(profile.uid))
+      .forEach((thread) => {
+        items.push({
+          id: thread.id,
+          threadId: thread.id,
+          title: thread.title || 'Group chat',
+          subtitle: `${thread.participants?.length || 0} members`,
+          participantIds: thread.participants || [profile.uid],
+          kind: 'custom',
+        });
+      });
 
-  const getOtherMemberIds = (team: Team) => {
-    if (!profile) return [];
-    return [...new Set([...(team.managerIds || [team.managerId]), ...team.workerIds].filter((memberId) => memberId && memberId !== profile.uid))];
+    return [...new Map(items.map((item) => [item.id, item])).values()];
+  }, [memberById, members, organization, profile, teams, threadHeads]);
+
+  const selectableMembers = useMemo(() => {
+    const search = memberSearch.trim().toLowerCase();
+    return members
+      .filter((member) => member.uid !== profile?.uid)
+      .filter((member) => !search || `${member.displayName} ${member.email || ''}`.toLowerCase().includes(search))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [memberSearch, members, profile?.uid]);
+
+  const formatThreadTime = (head?: ChatThreadHead) => {
+    const date = toDate(head?.updatedAt);
+    return date ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase() : '';
   };
 
-  const openDirectChat = (workerId: string, team?: Team) => {
+  const openChat = (item: ChatListItem) => {
+    if (!profile) return;
+    const otherId = item.participantIds.find((id) => id !== profile.uid) || item.id;
     router.navigate({
       pathname: '/chat/[workerId]',
       params: {
-        workerId,
-        workerLabel: memberInfoById[workerId]?.displayName || workerId,
-        teamId: team?.id,
-        teamName: team?.name,
+        workerId: otherId,
+        workerLabel: item.title,
+        teamId: item.teamId,
+        teamName: item.title,
+        teamMemberIds: item.participantIds.join(','),
+        isTeamAll: '1',
+        teamThreadId: item.threadId,
+        teamThreadPath: item.subtitle,
+        chatKind: item.kind,
       },
     });
   };
 
-  const handleTeamPress = (team: Team) => {
-    if (!profile) return;
-
-    const otherMemberIds = getOtherMemberIds(team);
-    if (!otherMemberIds.length) return;
-
-    if (otherMemberIds.length === 1) {
-      openDirectChat(otherMemberIds[0], team);
-      return;
-    }
-
-    router.navigate({
-      pathname: '/team/[teamId]',
-      params: {
-        teamId: team.id,
-        teamName: team.name,
-        memberIds: otherMemberIds.join(','),
-      },
-    });
+  const toggleMember = (memberId: string) => {
+    setSelectedMemberIds((current) => current.includes(memberId) ? current.filter((id) => id !== memberId) : [...current, memberId]);
   };
 
-  const openDrawer = () => {
-    setDrawerMode('add-team');
-    setDrawerMessage(null);
-    setDrawerMessageTone('info');
-    setTeamName('');
-    setInviteEmail('');
-    setDrawerOpen(true);
+  const toggleSelectAll = () => {
+    const visibleIds = selectableMembers.map((member) => member.uid);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedMemberIds.includes(id));
+    setSelectedMemberIds((current) => allSelected
+      ? current.filter((id) => !visibleIds.includes(id))
+      : [...new Set([...current, ...visibleIds])]);
   };
 
-  const handleSubmitDrawer = async () => {
-    if (!profile || profile.role !== 'manager') return;
-    setSaving(true);
-    setDrawerMessage(null);
-    setDrawerMessageTone('info');
+  const closeChatPicker = () => {
+    setChatPickerOpen(false);
+    setMemberSearch('');
+    setSelectedMemberIds([]);
+  };
+
+  const handleCreateChat = async () => {
+    if (!profile?.organizationId || !selectedMemberIds.length || creatingChat) return;
+    const selected = [...new Set(selectedMemberIds)].sort();
+    const participantIds = [...new Set([profile.uid, ...selected])];
+    const names = selected.map((id) => memberById.get(id)?.displayName || 'Member');
+    const title = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
+    const threadId = `organization:${profile.organizationId}:group:${participantIds.slice().sort().join('__')}`;
 
     try {
-      if (drawerMode === 'add-team') {
-        await createTeam(profile.uid, teamName);
-        setTeamName('');
-        setDrawerMessageTone('success');
-        setDrawerMessage('Team created.');
-      } else if (drawerMode === 'invite-worker') {
-        const teamId = inviteTeamId === 'solo' ? undefined : inviteTeamId;
-        const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId, email: inviteEmail });
-        setInviteEmail('');
-        setMatchedWorker(null);
-        setDrawerMessageTone('success');
-        setDrawerMessage(
-          result.linked
-            ? (teamId ? 'Worker account found. In-app invite created and now awaiting worker acceptance.' : 'Worker account found. Direct invite created and awaiting worker acceptance.')
-            : 'Invite sent. The worker will need to sign in and explicitly accept it in the app.'
-        );
-      } else {
-        const result = await inviteManagerByEmailToOrganisation({ inviterId: profile.uid, email: inviteEmail });
-        setInviteEmail('');
-        setMatchedWorker(null);
-        setDrawerMessageTone('success');
-        setDrawerMessage(
-          result.linked
-            ? 'Manager account found. They were added to your organization.'
-            : result.reused
-              ? 'A pending manager invite already exists for this organization.'
-              : 'Manager invite saved. They will join the organization when they create or sign in with that email.'
-        );
-      }
+      setCreatingChat(true);
+      await createChatGroup({
+        threadId,
+        organizationId: profile.organizationId,
+        title,
+        creatorId: profile.uid,
+        participantIds,
+      });
+      closeChatPicker();
+      openChat({ id: threadId, threadId, title, subtitle: `${participantIds.length} members`, participantIds, kind: 'custom' });
     } catch (error) {
-      setDrawerMessageTone('error');
-      setDrawerMessage(error instanceof Error ? error.message : 'Unable to complete this action.');
+      Alert.alert('Unable to create chat', error instanceof Error ? error.message : 'Please try again.');
     } finally {
-      setSaving(false);
+      setCreatingChat(false);
     }
-  };
-
-  const handleRetryInvite = async (inviteId: string) => {
-    if (!profile || profile.role !== 'manager') return;
-    if (retryingInviteId === inviteId) return;
-
-    try {
-      setRetryingInviteId(inviteId);
-      await retryWorkerInviteDelivery({ managerId: profile.uid, inviteId });
-      setDrawerMessageTone('success');
-      setDrawerMessage('Invite retry sent successfully.');
-    } catch (error) {
-      setDrawerMessageTone('error');
-      setDrawerMessage(error instanceof Error ? error.message : 'Invite retry failed.');
-    } finally {
-      setRetryingInviteId(null);
-    }
-  };
-
-  const handleClearInvite = async (inviteId: string) => {
-    if (!profile || profile.role !== 'manager') return;
-    if (clearingInviteId === inviteId || clearingAllInvites) return;
-
-    try {
-      setClearingInviteId(inviteId);
-      await clearWorkerInviteNotification({ managerId: profile.uid, inviteId });
-      setDrawerMessageTone('success');
-      setDrawerMessage('Invite notification cleared.');
-    } catch (error) {
-      setDrawerMessageTone('error');
-      setDrawerMessage(error instanceof Error ? error.message : 'Unable to clear invite notification.');
-    } finally {
-      setClearingInviteId(null);
-    }
-  };
-
-  const toggleWorkerInviteExpanded = (notificationId: string) => {
-    setExpandedWorkerInviteIds((current) => ({
-      ...current,
-      [notificationId]: !current[notificationId],
-    }));
   };
 
   const handleWorkerInviteResponse = async (notification: UserNotification, response: 'accept' | 'decline') => {
-    if (!profile?.uid || workerInviteBusyId === notification.id) return;
-
-    const inviteId = notification.relatedRoleId;
-    if (!inviteId) {
-      Alert.alert('Invite unavailable', 'This team invite is missing its invite reference.');
-      return;
-    }
-
+    if (!profile?.uid || !notification.relatedRoleId || workerInviteBusyId) return;
     try {
       setWorkerInviteBusyId(notification.id);
-      if (response === 'accept') {
-        await acceptWorkerInvite({ userId: profile.uid, inviteId });
-      } else {
-        await declineWorkerInvite({ userId: profile.uid, inviteId });
-      }
+      if (response === 'accept') await acceptWorkerInvite({ userId: profile.uid, inviteId: notification.relatedRoleId });
+      else await declineWorkerInvite({ userId: profile.uid, inviteId: notification.relatedRoleId });
       await markUserNotificationsRead({ userId: profile.uid, notificationIds: [notification.id] });
     } catch (error) {
       Alert.alert('Unable to respond', error instanceof Error ? error.message : 'Please try again.');
@@ -391,309 +353,196 @@ export default function TeamsScreen() {
     }
   };
 
-  const handleClearAllInvites = async () => {
-    if (!profile || profile.role !== 'manager' || !visibleInvites.length) return;
-    if (clearingAllInvites) return;
+  const openDrawer = () => {
+    setDrawerMode('add-team');
+    setTeamName('');
+    setInviteEmail('');
+    setDrawerMessage(null);
+    setDrawerOpen(true);
+  };
 
+  const handleSubmitDrawer = async () => {
+    if (!profile || profile.role !== 'manager' || saving) return;
     try {
-      setClearingAllInvites(true);
-      await clearAllWorkerInviteNotifications({
-        managerId: profile.uid,
-        inviteIds: visibleInvites.map((invite) => invite.id),
-      });
+      setSaving(true);
+      setDrawerMessage(null);
+      if (drawerMode === 'add-team') {
+        await createTeam(profile.uid, teamName);
+        setTeamName('');
+        setDrawerMessage('Team created.');
+      } else if (drawerMode === 'invite-worker') {
+        await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId: inviteTeamId === 'solo' ? undefined : inviteTeamId, email: inviteEmail });
+        setInviteEmail('');
+        setDrawerMessage('Worker invite sent.');
+      } else {
+        await inviteManagerByEmailToOrganisation({ inviterId: profile.uid, email: inviteEmail });
+        setInviteEmail('');
+        setDrawerMessage('Manager invite sent.');
+      }
       setDrawerMessageTone('success');
-      setDrawerMessage('Cleared all recent worker invite notifications.');
     } catch (error) {
       setDrawerMessageTone('error');
-      setDrawerMessage(error instanceof Error ? error.message : 'Unable to clear invite notifications.');
+      setDrawerMessage(error instanceof Error ? error.message : 'Unable to complete this action.');
     } finally {
-      setClearingAllInvites(false);
+      setSaving(false);
     }
   };
 
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
-      <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
-        <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="contain" />
-        {profile?.role === 'manager' ? (
-          <Pressable style={isDarkMode ? styles.eventsDarkAddButton : styles.eventsLightAddButton} onPress={openDrawer}>
-            <Text style={isDarkMode ? styles.eventsDarkAddButtonIcon : styles.eventsLightAddButtonIcon}>+</Text>
+      <View style={[styles.topHeader, { paddingTop: insets.top + 16 }]}>
+        <Image source={headerLogoSource} style={styles.logo} resizeMode="contain" />
+        <View style={styles.headerActions}>
+          <Pressable accessibilityLabel="Create chat" style={styles.iconButton} onPress={() => setChatPickerOpen(true)}>
+            <MaterialIcons name="chat" size={21} color="#F7F7F7" />
           </Pressable>
-        ) : <View style={styles.headerSpacer} />}
+          {profile?.role === 'manager' ? (
+            <Pressable accessibilityLabel="Team actions" style={styles.iconButton} onPress={openDrawer}>
+              <MaterialIcons name="add" size={26} color="#F7F7F7" />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
-      {profile?.role === 'worker' && workerInviteNotifications.length ? (
-        <View style={[styles.pendingNotificationsCard, isDarkMode ? styles.pendingNotificationsCardDark : styles.pendingNotificationsCardLight]}>
-          <Text style={[styles.pendingNotificationsTitle, isDarkMode ? styles.pendingNotificationsTitleDark : styles.pendingNotificationsTitleLight]}>
-            Team invites need your response
-          </Text>
-          {workerInviteNotifications.map((notification) => {
-            const busy = workerInviteBusyId === notification.id;
-            const expanded = !!expandedWorkerInviteIds[notification.id];
-            return (
-              <View key={notification.id} style={styles.pendingNotificationRow}>
-                <View style={styles.pendingNotificationHeader}>
-                  <Text style={[styles.pendingNotificationText, styles.pendingNotificationTitleText, isDarkMode ? styles.titleDark : styles.titleLight]}>
-                    {notification.title}
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${expanded ? 'Hide' : 'Show'} invite details`}
-                    hitSlop={6}
-                    onPress={() => toggleWorkerInviteExpanded(notification.id)}>
-                    <Text style={[styles.pendingNotificationExpandText, isDarkMode ? styles.pendingNotificationExpandTextDark : styles.pendingNotificationExpandTextLight]}>
-                      {expanded ? 'Hide details ▲' : 'Show details ▼'}
-                    </Text>
-                  </Pressable>
-                </View>
-                {expanded ? (
-                  <View style={styles.pendingNotificationDetails}>
-                    <Text style={[styles.pendingNotificationDetail, isDarkMode ? styles.metaDark : styles.metaLight]}>
-                      {notification.body}
-                    </Text>
-                  </View>
-                ) : null}
-                <View style={styles.pendingNotificationActions}>
-                  <Pressable
-                    disabled={busy}
-                    style={[
-                      styles.pendingActionButton,
-                      isDarkMode ? styles.pendingActionDeclineDark : styles.pendingActionDeclineLight,
-                      busy && styles.drawerCloseDisabled,
-                    ]}
-                    onPress={() => handleWorkerInviteResponse(notification, 'decline')}>
-                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionDeclineTextDark : styles.pendingActionDeclineTextLight]}>
-                      {busy ? '…' : 'Decline'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    disabled={busy}
-                    style={[
-                      styles.pendingActionButton,
-                      isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight,
-                      busy && styles.drawerCloseDisabled,
-                    ]}
-                    onPress={() => handleWorkerInviteResponse(notification, 'accept')}>
-                    <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight]}>
-                      {busy ? '…' : 'Accept'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
-
-      {profile?.role === 'manager' && visibleInvites.length ? (
-        <View style={[styles.inviteStatusCard, isDarkMode ? styles.inviteStatusCardDark : styles.inviteStatusCardLight]}>
-          <View style={styles.inviteStatusHeaderRow}>
-            <Text style={[styles.inviteStatusTitle, isDarkMode ? styles.inviteStatusTitleDark : styles.inviteStatusTitleLight]}>Recent Worker Invites</Text>
-            <Pressable style={[styles.clearAllButton, clearingAllInvites && styles.retryButtonDisabled]} onPress={handleClearAllInvites} disabled={clearingAllInvites}>
-              <Text style={styles.clearAllButtonText}>{clearingAllInvites ? 'Clearing…' : 'Clear all'}</Text>
-            </Pressable>
-          </View>
-          {visibleInvites.slice(0, 5).map((invite) => {
-            const canRetry = invite.status === 'delivery_failed';
-            const isClearingThisInvite = clearingInviteId === invite.id;
-            return (
-              <View key={invite.id} style={styles.inviteStatusRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.inviteEmail, isDarkMode ? styles.titleDark : styles.titleLight]}>{invite.email}</Text>
-                  <Text style={[styles.inviteMeta, isDarkMode ? styles.metaDark : styles.metaLight]}>{invite.status}{invite.statusReason ? ` · ${invite.statusReason}` : ''}</Text>
-                </View>
-                <View style={styles.inviteStatusActions}>
-                  {canRetry ? (
-                    <Pressable
-                      style={[styles.retryButton, retryingInviteId === invite.id && styles.retryButtonDisabled]}
-                      disabled={retryingInviteId === invite.id}
-                      onPress={() => handleRetryInvite(invite.id)}>
-                      <Text style={styles.retryButtonText}>{retryingInviteId === invite.id ? 'Retrying…' : 'Retry'}</Text>
-                    </Pressable>
-                  ) : null}
-                  <Pressable
-                    style={[styles.clearInviteButton, (isClearingThisInvite || clearingAllInvites) && styles.retryButtonDisabled]}
-                    disabled={isClearingThisInvite || clearingAllInvites}
-                    onPress={() => handleClearInvite(invite.id)}>
-                    <Text style={styles.clearInviteButtonText}>{isClearingThisInvite ? 'Clearing…' : 'Clear'}</Text>
-                  </Pressable>
-                </View>
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
-
-      {soloWorkerIds.length ? (
-        <View style={[styles.soloSection, isDarkMode ? styles.soloSectionDark : styles.soloSectionLight]}>
-          <Text style={[styles.soloSectionTitle, isDarkMode ? styles.titleDark : styles.titleLight]}>Solo Workers</Text>
-          {soloWorkerIds.map((workerId) => (
-            <Pressable key={`solo-${workerId}`} style={[styles.soloWorkerRow, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => openDirectChat(workerId)}>
-              <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}><Text style={styles.avatarText}>{(memberInfoById[workerId]?.displayName || workerId).slice(0, 1).toUpperCase()}</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{memberInfoById[workerId]?.displayName || workerId}</Text>
-                <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Not assigned to a team</Text>
-              </View>
-              <Text style={[styles.hint, isDarkMode ? styles.hintDark : styles.hintLight]}>Open chat</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-
       <FlatList
-        data={teams}
-        keyExtractor={(i) => i.id}
-        ListEmptyComponent={<Text style={[styles.empty, isDarkMode ? styles.emptyDark : styles.emptyLight]}>No teams found yet.</Text>}
-        renderItem={({ item }) => {
-          const otherCount = getOtherMemberIds(item).length;
-          const unreadCount = unreadCountByTeamId[item.id] ?? 0;
-          return (
-            <Pressable style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => handleTeamPress(item)}>
-              <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{item.name}</Text>
-                <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>{item.workerIds.length} workers</Text>
+        data={chatItems}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={(loadError || workerInviteNotifications.length) ? (
+          <>
+            {loadError ? (
+              <View style={styles.loadErrorBanner}>
+                <MaterialIcons name="error-outline" size={18} color="#991b1b" />
+                <Text style={styles.loadErrorText}>{loadError}</Text>
               </View>
-              <View style={styles.rightSide}>
-                <Text style={[styles.status, isDarkMode ? styles.statusDark : styles.statusLight]}>{eventCountsByTeam.get(item.id) ?? 0} events</Text>
-                {unreadCount > 0 ? (
-                  <View style={styles.unreadBadge}>
-                    <Text style={styles.unreadBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+            ) : null}
+            {workerInviteNotifications.length ? (
+              <View style={[styles.invitePanel, isDarkMode ? styles.cardDark : styles.cardLight]}>
+            <Text style={[styles.panelTitle, isDarkMode ? styles.textDark : styles.textLight]}>Team invites</Text>
+            {workerInviteNotifications.map((notification) => {
+              const busy = workerInviteBusyId === notification.id;
+              return (
+                <View key={notification.id} style={styles.inviteRow}>
+                  <View style={styles.flex}>
+                    <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]}>{notification.title}</Text>
+                    <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]}>{notification.body}</Text>
                   </View>
-                ) : null}
-                <Text style={[styles.hint, isDarkMode ? styles.hintDark : styles.hintLight]}>{otherCount > 1 ? 'Choose member' : otherCount === 1 ? 'Open chat' : 'No members'}</Text>
+                  <Pressable disabled={busy} style={styles.smallOutlineButton} onPress={() => handleWorkerInviteResponse(notification, 'decline')}>
+                    <Text style={styles.smallOutlineText}>Decline</Text>
+                  </Pressable>
+                  <Pressable disabled={busy} style={styles.smallButton} onPress={() => handleWorkerInviteResponse(notification, 'accept')}>
+                    <Text style={styles.smallButtonText}>{busy ? '...' : 'Accept'}</Text>
+                  </Pressable>
+                </View>
+              );
+            })}
+              </View>
+            ) : null}
+          </>
+        ) : null}
+        ListEmptyComponent={<Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>No conversations yet.</Text>}
+        renderItem={({ item }) => {
+          const head = threadHeadById.get(item.id);
+          const unread = unreadCountByThreadId[item.id] ?? (item.teamId ? legacyUnreadCountByTeamId[item.teamId] || 0 : 0);
+          return (
+            <Pressable style={[styles.chatCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => openChat(item)}>
+              <View style={[styles.avatar, styles.groupAvatar]}>
+                <MaterialIcons name="groups" size={22} color="#F98D2F" />
+              </View>
+              <View style={[styles.flex, styles.chatCopy]}>
+                <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]} numberOfLines={1}>{item.title}</Text>
+                <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]} numberOfLines={1}>
+                  {head?.lastMessageText || item.subtitle}
+                </Text>
+              </View>
+              <View style={styles.chatMetaColumn}>
+                {unread > 0 ? (
+                  <View style={styles.badge}><Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text></View>
+                ) : (
+                  <View style={styles.badgePlaceholder} />
+                )}
+                <Text style={[styles.timeText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>{formatThreadTime(head)}</Text>
               </View>
             </Pressable>
           );
         }}
       />
 
-      <Modal visible={drawerOpen} animationType="slide" transparent onRequestClose={() => setDrawerOpen(false)}>
-        <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)}>
-          <KeyboardAvoidingView style={styles.drawerKeyboardWrap} behavior={Platform.select({ ios: 'padding', android: 'height' })}>
-            <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-              <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.drawerContent}>
-                <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Team Actions</Text>
-                <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Add teams or invite workers to your app.</Text>
-
-                <View style={styles.modeRow}>
-              <Pressable
-                style={[
-                  styles.modeButton,
-                  isDarkMode ? styles.modeButtonDark : styles.modeButtonLight,
-                  drawerMode === 'add-team' && styles.modeButtonSelected,
-                ]}
-                onPress={() => { setDrawerMode('add-team'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'add-team' && styles.modeTextSelected]}>Add Team</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.modeButton,
-                  isDarkMode ? styles.modeButtonDark : styles.modeButtonLight,
-                  drawerMode === 'invite-worker' && styles.modeButtonSelected,
-                ]}
-                onPress={() => { setDrawerMode('invite-worker'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'invite-worker' && styles.modeTextSelected]}>Invite Worker</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.modeButton,
-                  isDarkMode ? styles.modeButtonDark : styles.modeButtonLight,
-                  drawerMode === 'invite-manager' && styles.modeButtonSelected,
-                ]}
-                onPress={() => { setDrawerMode('invite-manager'); setInviteTeamId('solo'); setDrawerMessage(null); setDrawerMessageTone('info'); }}>
-                <Text style={[styles.modeText, isDarkMode && styles.modeTextDark, drawerMode === 'invite-manager' && styles.modeTextSelected]}>Invite Manager</Text>
-              </Pressable>
-            </View>
-
-            {drawerMode === 'add-team' ? (
-              <>
-                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Team name</Text>
-                <TextInput value={teamName} onChangeText={setTeamName} placeholder="Example: Night Shift Crew" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} />
-              </>
-            ) : drawerMode === 'invite-worker' ? (
-              <>
-                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Choose team (or solo)</Text>
-                <View style={styles.teamChipWrap}>
-                  <Pressable key="solo" style={[styles.teamChip, isDarkMode ? styles.teamChipDark : styles.teamChipLight, inviteTeamId === 'solo' && styles.teamChipActive]} onPress={() => setInviteTeamId('solo')}>
-                    <Text style={[styles.teamChipText, isDarkMode ? styles.teamChipTextDark : styles.teamChipTextLight, inviteTeamId === 'solo' && styles.teamChipTextActive]}>Solo worker</Text>
-                  </Pressable>
-                  {teams.length ? teams.map((team) => (
-                    <Pressable key={team.id} style={[styles.teamChip, isDarkMode ? styles.teamChipDark : styles.teamChipLight, inviteTeamId === team.id && styles.teamChipActive]} onPress={() => setInviteTeamId(team.id)}>
-                      <Text style={[styles.teamChipText, isDarkMode ? styles.teamChipTextDark : styles.teamChipTextLight, inviteTeamId === team.id && styles.teamChipTextActive]}>{team.name}</Text>
-                    </Pressable>
-                  )) : <Text style={styles.emptyHint}>No teams yet. You can still invite as solo.</Text>}
-                </View>
-
-                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Worker email</Text>
-                <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="worker@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
-                {searchingWorker ? (
-                  <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>Looking for an existing worker account…</Text>
-                ) : matchedWorker ? (
-                  <View style={[styles.matchedWorkerCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
-                    <View style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}>
-                      <Text style={styles.avatarText}>{(matchedWorker.displayName || 'D').slice(0, 1).toUpperCase()}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.title, isDarkMode ? styles.titleDark : styles.titleLight]}>{matchedWorker.displayName || 'Dispatch User'}</Text>
-                      <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>Existing worker account found. This invite will be delivered in-app.</Text>
-                    </View>
-                  </View>
-                ) : null}
-                <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
-                  {matchedWorker
-                    ? 'This worker already has Dispatch. Sending the invite now will place it directly in their app for accept or decline.'
-                    : 'Invite keeps this worker unlinked until they sign in with that email. Solo workers appear in their own section with direct chat.'}
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.fieldLabel, isDarkMode ? styles.fieldLabelDark : styles.fieldLabelLight]}>Manager email</Text>
-                <TextInput value={inviteEmail} onChangeText={setInviteEmail} placeholder="manager@example.com" placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} autoCapitalize="none" keyboardType="email-address" />
-                <Text style={[styles.helperText, isDarkMode ? styles.helperTextDark : styles.helperTextLight]}>
-                  Managers are added to the organization and can work across every team. They are not assigned to one team here.
-                </Text>
-              </>
-            )}
-
-            {drawerMessage ? (
-              <Text style={[styles.message, drawerMessageTone === 'error' ? styles.messageError : drawerMessageTone === 'success' ? styles.messageSuccess : styles.messageInfo]}>
-                {drawerMessage}
-              </Text>
-            ) : null}
-
-            <Pressable
-              style={[
-                styles.drawerSave,
-                drawerMode === 'invite-worker' || drawerMode === 'invite-manager'
-                  ? styles.drawerSaveInviteWorker
-                  : drawerMode === 'add-team'
-                    ? styles.drawerSaveCreateTeam
-                  : isDarkMode
-                    ? styles.drawerSaveDark
-                    : styles.drawerSaveLight,
-                saving && styles.drawerSaveDisabled,
-              ]}
-              onPress={handleSubmitDrawer}
-              disabled={saving}>
-              <Text
-                style={[
-                  styles.drawerSaveText,
-                  drawerMode === 'invite-worker' || drawerMode === 'invite-manager'
-                    ? styles.drawerSaveTextInviteWorker
-                    : drawerMode === 'add-team'
-                      ? styles.drawerSaveTextCreateTeam
-                    : isDarkMode
-                      ? styles.drawerSaveTextDark
-                      : styles.drawerSaveTextLight,
-                ]}>
-                {saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-manager' ? 'Invite Manager' : 'Invite Worker'}
-              </Text>
+      <Modal visible={chatPickerOpen} transparent animationType="slide" onRequestClose={closeChatPicker}>
+        <Pressable style={styles.backdrop} onPress={closeChatPicker}>
+          <Pressable style={[styles.pickerDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => undefined}>
+            <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>New Chat</Text>
+            <TextInput
+              value={memberSearch}
+              onChangeText={setMemberSearch}
+              placeholder="Search organization members"
+              placeholderTextColor={isDarkMode ? '#9fb0cf' : '#64748b'}
+              style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]}
+            />
+            <Pressable style={styles.selectAllRow} onPress={toggleSelectAll}>
+              <MaterialIcons
+                name={selectableMembers.length > 0 && selectableMembers.every((member) => selectedMemberIds.includes(member.uid)) ? 'check-box' : 'check-box-outline-blank'}
+                size={23}
+                color="#0EC3C9"
+              />
+              <Text style={[styles.selectLabel, isDarkMode ? styles.textDark : styles.textLight]}>Select all</Text>
             </Pressable>
-
-                <Pressable style={[styles.drawerClose, isDarkMode ? styles.drawerCloseDark : styles.drawerCloseLight]} onPress={() => setDrawerOpen(false)}>
-                  <Text style={[styles.drawerCloseText, isDarkMode ? styles.drawerCloseTextDark : styles.drawerCloseTextLight]}>Close</Text>
+            <ScrollView style={styles.memberList} keyboardShouldPersistTaps="handled">
+              {selectableMembers.map((member) => (
+                <Pressable key={member.uid} style={styles.memberRow} onPress={() => toggleMember(member.uid)}>
+                  <MaterialIcons name={selectedMemberIds.includes(member.uid) ? 'check-box' : 'check-box-outline-blank'} size={23} color="#0EC3C9" />
+                  <View style={styles.flex}>
+                    <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]}>{member.displayName}</Text>
+                    <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]}>{member.email || (member.role === 'manager' ? 'Manager' : 'Worker')}</Text>
+                  </View>
                 </Pressable>
+              ))}
+            </ScrollView>
+            <Pressable style={[styles.chatButton, (!selectedMemberIds.length || creatingChat) && styles.disabled]} disabled={!selectedMemberIds.length || creatingChat} onPress={handleCreateChat}>
+              <Text style={styles.chatButtonText}>{creatingChat ? 'Creating...' : 'Chat'}</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={drawerOpen} transparent animationType="slide" onRequestClose={() => setDrawerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDrawerOpen(false)}>
+          <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })}>
+            <Pressable style={[styles.actionDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => undefined}>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.drawerContent}>
+                <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>Team Actions</Text>
+                <View style={styles.modeRow}>
+                  {(['add-team', 'invite-worker', 'invite-manager'] as DrawerMode[]).map((mode) => (
+                    <Pressable key={mode} style={[styles.modeButton, drawerMode === mode && styles.modeButtonActive]} onPress={() => { setDrawerMode(mode); setDrawerMessage(null); }}>
+                      <Text style={[styles.modeText, drawerMode === mode && styles.modeTextActive]}>{mode === 'add-team' ? 'Add Team' : mode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {drawerMode === 'add-team' ? (
+                  <>
+                    <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Team name</Text>
+                    <TextInput value={teamName} onChangeText={setTeamName} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="Team name" placeholderTextColor="#64748b" />
+                  </>
+                ) : (
+                  <>
+                    {drawerMode === 'invite-worker' ? (
+                      <>
+                        <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Team</Text>
+                        <View style={styles.teamChips}>
+                          <Pressable style={[styles.teamChip, inviteTeamId === 'solo' && styles.teamChipActive]} onPress={() => setInviteTeamId('solo')}><Text style={styles.teamChipText}>Solo worker</Text></Pressable>
+                          {teams.map((team) => <Pressable key={team.id} style={[styles.teamChip, inviteTeamId === team.id && styles.teamChipActive]} onPress={() => setInviteTeamId(team.id)}><Text style={styles.teamChipText}>{team.name}</Text></Pressable>)}
+                        </View>
+                      </>
+                    ) : null}
+                    <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>{drawerMode === 'invite-worker' ? 'Worker email' : 'Manager email'}</Text>
+                    <TextInput value={inviteEmail} onChangeText={setInviteEmail} autoCapitalize="none" keyboardType="email-address" style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="name@example.com" placeholderTextColor="#64748b" />
+                  </>
+                )}
+                {drawerMessage ? <Text style={drawerMessageTone === 'error' ? styles.errorText : styles.successText}>{drawerMessage}</Text> : null}
+                <Pressable style={[styles.chatButton, saving && styles.disabled]} disabled={saving} onPress={handleSubmitDrawer}>
+                  <Text style={styles.chatButtonText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
+                </Pressable>
+                <Pressable style={styles.closeButton} onPress={() => setDrawerOpen(false)}><Text style={[styles.closeText, isDarkMode ? styles.textDark : styles.textLight]}>Close</Text></Pressable>
               </ScrollView>
             </Pressable>
           </KeyboardAvoidingView>
@@ -704,160 +553,72 @@ export default function TeamsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 16, paddingBottom: 16 },
+  container: { flex: 1, paddingHorizontal: 16 },
   containerLight: { backgroundColor: '#DBE2F9' },
   containerDark: { backgroundColor: '#061229' },
   topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 },
-  topHeaderLight: { backgroundColor: '#DBE2F9' },
-  topHeaderDark: { backgroundColor: '#061229' },
-  headerSpacer: { width: 34, height: 34 },
-  lightLogo: { width: 64, height: 64 },
-  darkLogo: { width: 64, height: 64 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  subhead: { fontWeight: '600' },
-  subheadLight: { color: '#334155' },
-  subheadDark: { color: '#F4F8FF' },
-  createButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1d4ed8', alignItems: 'center', justifyContent: 'center' },
-  createButtonText: { color: '#F7F7F7', fontSize: 24, lineHeight: 24, fontWeight: '500', marginTop: -1 },
-  eventsLightAddButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
-  eventsLightAddButtonIcon: { color: '#F7F7F7', fontSize: 26, lineHeight: 28, fontWeight: '400', marginTop: -2 },
-  eventsDarkAddButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
-  eventsDarkAddButtonIcon: { color: '#F7F7F7', fontSize: 26, lineHeight: 28, fontWeight: '400', marginTop: -2 },
-  empty: { marginTop: 20 },
-  emptyLight: { color: '#64748b' },
-  emptyDark: { color: '#F4F8FF' },
-  card: { borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  logo: { width: 64, height: 64 },
+  headerActions: { flexDirection: 'row', gap: 10 },
+  iconButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
+  listContent: { paddingBottom: 24 },
+  chatCard: { minHeight: 76, borderRadius: 8, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1 },
+  loadErrorBanner: { minHeight: 48, marginBottom: 10, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fecaca' },
+  loadErrorText: { flex: 1, color: '#991b1b', fontSize: 13, fontWeight: '600' },
   cardLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7' },
-  cardDark: { backgroundColor: '#12274D', borderColor: '#12274D' },
-  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#F98D2F' },
-  avatarLight: { backgroundColor: '#F7F7F7' },
-  avatarDark: { backgroundColor: '#12274D' },
-  avatarText: { fontWeight: '700', color: '#F98D2F' },
-  title: { fontWeight: '700', fontSize: 16 },
-  titleLight: { color: '#232832' },
-  titleDark: { color: '#F4F8FF' },
-  meta: { marginTop: 2, fontSize: 12 },
-  metaLight: { color: '#64748b' },
-  metaDark: { color: '#F4F8FF' },
-  rightSide: { alignItems: 'flex-end' },
-  status: { fontSize: 12, fontWeight: '600' },
-  statusLight: { color: '#475569' },
-  statusDark: { color: '#F4F8FF' },
-  hint: { fontSize: 11, fontWeight: '600', marginTop: 4 },
-  hintLight: { color: '#F98D2F' },
-  hintDark: { color: '#F98D2F' },
-  unreadBadge: { marginTop: 6, backgroundColor: '#dc2626', borderRadius: 999, minWidth: 20, paddingHorizontal: 6, height: 20, alignItems: 'center', justifyContent: 'center' },
-  unreadBadgeText: { color: '#fff', fontWeight: '700', fontSize: 11 },
-  inviteStatusCard: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
-  inviteStatusCardLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
-  inviteStatusCardDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
-  inviteStatusHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  inviteStatusTitle: { fontWeight: '700', fontSize: 13 },
-  inviteStatusTitleLight: { color: '#232832' },
-  inviteStatusTitleDark: { color: '#F4F8FF' },
-  clearAllButton: { borderRadius: 8, borderWidth: 1, borderColor: '#F98D2F', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#DBE2F9' },
-  clearAllButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
-  inviteStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: 'rgba(249,141,47,0.25)', paddingTop: 8 },
-  inviteStatusActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  soloSection: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
-  soloSectionLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
-  soloSectionDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
-  soloSectionTitle: { fontWeight: '700', fontSize: 13 },
-  soloWorkerRow: { borderRadius: 10, borderWidth: 1, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  inviteEmail: { fontWeight: '600', fontSize: 13 },
-  inviteMeta: { marginTop: 2, fontSize: 11 },
-  retryButton: { borderRadius: 8, backgroundColor: '#0EC3C9', paddingHorizontal: 10, paddingVertical: 6 },
-  clearInviteButton: { borderRadius: 8, borderWidth: 1, borderColor: '#F98D2F', backgroundColor: '#DBE2F9', paddingHorizontal: 10, paddingVertical: 6 },
-  clearInviteButtonText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
-  retryButtonDisabled: { opacity: 0.6 },
-  retryButtonText: { color: '#061229', fontSize: 12, fontWeight: '700' },
-  pendingNotificationsCard: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16, gap: 8 },
-  pendingNotificationsCardLight: { borderColor: '#F7F7F7', backgroundColor: '#F7F7F7' },
-  pendingNotificationsCardDark: { borderColor: '#12274D', backgroundColor: '#12274D' },
-  pendingNotificationsTitle: { fontWeight: '700', fontSize: 13 },
-  pendingNotificationsTitleLight: { color: '#232832' },
-  pendingNotificationsTitleDark: { color: '#F4F8FF' },
-  pendingNotificationRow: { gap: 10, borderTopWidth: 1, borderTopColor: 'rgba(249,141,47,0.25)', paddingTop: 10 },
-  pendingNotificationHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  pendingNotificationText: { flex: 1 },
-  pendingNotificationTitleText: { fontWeight: '700', fontSize: 13 },
-  pendingNotificationExpandText: { fontSize: 11, fontWeight: '600' },
-  pendingNotificationExpandTextLight: { color: '#F98D2F' },
-  pendingNotificationExpandTextDark: { color: '#F98D2F' },
-  pendingNotificationDetails: { gap: 4 },
-  pendingNotificationDetail: { fontSize: 12, lineHeight: 18 },
-  pendingNotificationActions: { flexDirection: 'row', gap: 10 },
-  pendingActionButton: { flex: 1, minHeight: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
-  pendingActionButtonText: { fontWeight: '700', fontSize: 13 },
-  pendingActionDeclineLight: { backgroundColor: '#F7F7F7', borderWidth: 1, borderColor: '#F98D2F' },
-  pendingActionDeclineDark: { backgroundColor: '#12274D', borderWidth: 1, borderColor: '#F98D2F' },
-  pendingActionDeclineTextLight: { color: '#F98D2F' },
-  pendingActionDeclineTextDark: { color: '#F98D2F' },
-  pendingActionAcceptLight: { backgroundColor: '#F98D2F', borderWidth: 1, borderColor: '#F98D2F' },
-  pendingActionAcceptDark: { backgroundColor: '#F98D2F', borderWidth: 1, borderColor: '#F98D2F' },
-  pendingActionAcceptTextLight: { color: '#F7F7F7' },
-  pendingActionAcceptTextDark: { color: '#F7F7F7' },
-  drawerCloseDisabled: { opacity: 0.6 },
-  drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  drawerKeyboardWrap: { width: '100%' },
-  drawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, maxHeight: '89%' },
-  drawerContent: { gap: 12, paddingBottom: 8 },
+  cardDark: { backgroundColor: '#12274D', borderColor: '#203E75' },
+  avatar: { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: '#F98D2F', alignItems: 'center', justifyContent: 'center' },
+  groupAvatar: { backgroundColor: 'rgba(14,195,201,0.1)' },
+  flex: { flex: 1, minWidth: 0 },
+  chatCopy: { minHeight: 44, justifyContent: 'center' },
+  chatMetaColumn: { width: 58, minHeight: 44, alignItems: 'flex-end', justifyContent: 'space-between' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  itemTitle: { fontSize: 15, fontWeight: '700' },
+  itemSubtitle: { marginTop: 3, fontSize: 12, lineHeight: 16 },
+  timeText: { fontSize: 11 },
+  textLight: { color: '#232832' },
+  textDark: { color: '#F4F8FF' },
+  mutedLight: { color: '#64748b' },
+  mutedDark: { color: '#B7C3D9' },
+  badge: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6, backgroundColor: '#dc2626', alignItems: 'center', justifyContent: 'center' },
+  badgePlaceholder: { height: 22 },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  emptyText: { paddingTop: 24, textAlign: 'center' },
+  invitePanel: { borderRadius: 8, borderWidth: 1, padding: 14, marginBottom: 12, gap: 10 },
+  panelTitle: { fontSize: 15, fontWeight: '700' },
+  inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(100,116,139,0.25)' },
+  smallButton: { minHeight: 34, borderRadius: 7, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0EC3C9' },
+  smallButtonText: { color: '#061229', fontWeight: '700', fontSize: 12 },
+  smallOutlineButton: { minHeight: 34, borderRadius: 7, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#F98D2F' },
+  smallOutlineText: { color: '#F98D2F', fontWeight: '700', fontSize: 12 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
+  pickerDrawer: { height: '78%', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
+  actionDrawer: { maxHeight: '88%', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
   drawerLight: { backgroundColor: '#F7F7F7' },
   drawerDark: { backgroundColor: '#12274D' },
-  drawerTitle: { fontWeight: '700', fontSize: 16 },
-  drawerTitleLight: { color: '#121212' },
-  drawerTitleDark: { color: '#F7F7F7' },
-  drawerSub: { fontSize: 12, marginTop: 8, fontWeight: '300' },
-  drawerSubLight: { color: '#121212', opacity: 0.8 },
-  drawerSubDark: { color: '#F7F7F7', opacity: 0.8 },
-  modeRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
-  modeButton: { flex: 1, borderRadius: 8, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },
-  modeButtonLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
-  modeButtonDark: { backgroundColor: '#12274D', borderColor: 'rgba(247,247,247,0.15)' },
-  modeButtonSelected: { borderColor: '#F98D2F' },
-  modeButtonActive: { borderColor: '#0EC3C9', backgroundColor: '#DBE2F9' },
-  modeText: { color: '#121212', fontWeight: '600' },
-  modeTextDark: { color: '#F7F7F7' },
-  modeTextSelected: { color: '#F98D2F' },
-  fieldLabel: { marginTop: 14, fontSize: 12, fontWeight: '700' },
-  fieldLabelLight: { color: '#334155' },
-  fieldLabelDark: { color: '#F4F8FF' },
-  input: { marginTop: 6, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, minHeight: 44, fontSize: 12, fontWeight: '700' },
-  inputLight: { borderColor: 'rgba(6,18,41,0.1)', color: '#121212', backgroundColor: '#EDF0FC' },
-  inputDark: { borderColor: 'rgba(6,18,41,0.1)', color: '#F7F7F7', backgroundColor: '#203E75' },
-  teamChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  teamChip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10, alignItems: 'center' },
-  teamChipLight: { borderColor: 'rgba(6,18,41,0.1)', backgroundColor: '#F7F7F7' },
-  teamChipDark: { borderColor: 'rgba(247,247,247,0.15)', backgroundColor: '#12274D' },
+  drawerTitle: { fontSize: 19, fontWeight: '700', marginBottom: 12 },
+  drawerContent: { paddingBottom: 8 },
+  input: { minHeight: 46, borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, fontSize: 14 },
+  inputLight: { backgroundColor: '#EDF0FC', borderColor: 'rgba(6,18,41,0.12)', color: '#121212' },
+  inputDark: { backgroundColor: '#203E75', borderColor: 'rgba(247,247,247,0.15)', color: '#F7F7F7' },
+  selectAllRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.25)' },
+  selectLabel: { fontSize: 14, fontWeight: '700' },
+  memberList: { flex: 1 },
+  memberRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.2)' },
+  chatButton: { minHeight: 52, borderRadius: 8, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', marginTop: 14 },
+  chatButtonText: { color: '#061229', fontSize: 16, fontWeight: '700' },
+  disabled: { opacity: 0.5 },
+  modeRow: { flexDirection: 'row', gap: 6, marginBottom: 16 },
+  modeButton: { flex: 1, minHeight: 42, borderRadius: 7, borderWidth: 1, borderColor: 'rgba(100,116,139,0.3)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  modeButtonActive: { borderColor: '#F98D2F' },
+  modeText: { color: '#64748b', fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  modeTextActive: { color: '#F98D2F' },
+  fieldLabel: { fontSize: 13, fontWeight: '700', marginTop: 10, marginBottom: 6 },
+  teamChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  teamChip: { borderRadius: 7, borderWidth: 1, borderColor: 'rgba(100,116,139,0.35)', paddingHorizontal: 10, paddingVertical: 9 },
   teamChipActive: { borderColor: '#F98D2F' },
-  teamChipText: { fontSize: 12, fontWeight: '600' },
-  teamChipTextLight: { color: '#475569' },
-  teamChipTextDark: { color: '#F4F8FF' },
-  teamChipTextActive: { color: '#F98D2F' },
-  emptyHint: { color: '#64748b', fontSize: 12, marginTop: 4 },
-  helperText: { marginTop: 6, fontSize: 11 },
-  matchedWorkerCard: { marginTop: 10, borderRadius: 10, borderWidth: 1, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  helperTextLight: { color: '#64748b' },
-  helperTextDark: { color: '#F4F8FF' },
-  message: { marginTop: 12, fontSize: 12, fontWeight: '600' },
-  messageInfo: { color: '#1e40af' },
-  messageSuccess: { color: '#15803d' },
-  messageError: { color: '#b91c1c' },
-  drawerSave: { marginTop: 12, borderRadius: 8, alignItems: 'center', paddingVertical: 10, width: '100%', borderWidth: 1 },
-  drawerSaveLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
-  drawerSaveDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
-  drawerSaveInviteWorker: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
-  drawerSaveCreateTeam: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
-  drawerSaveDisabled: { opacity: 0.7 },
-  drawerSaveText: { fontWeight: '700' },
-  drawerSaveTextLight: { color: '#121212' },
-  drawerSaveTextDark: { color: '#F7F7F7' },
-  drawerSaveTextInviteWorker: { color: '#F7F7F7' },
-  drawerSaveTextCreateTeam: { color: '#F7F7F7' },
-  drawerClose: { marginTop: 8, borderRadius: 8, alignItems: 'center', paddingVertical: 10, width: '100%', borderWidth: 1 },
-  drawerCloseLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.1)' },
-  drawerCloseDark: { backgroundColor: '#12274D', borderColor: 'rgba(6,18,41,0.1)' },
-  drawerCloseText: { fontWeight: '700' },
-  drawerCloseTextLight: { color: '#121212' },
-  drawerCloseTextDark: { color: '#F7F7F7' },
+  teamChipText: { color: '#F98D2F', fontSize: 12, fontWeight: '700' },
+  successText: { color: '#15803d', fontSize: 13, fontWeight: '600', marginTop: 12 },
+  errorText: { color: '#dc2626', fontSize: 13, fontWeight: '600', marginTop: 12 },
+  closeButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', marginTop: 5 },
+  closeText: { fontSize: 15, fontWeight: '700' },
 });
