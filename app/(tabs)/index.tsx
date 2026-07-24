@@ -42,13 +42,20 @@ import { headerLogoSource } from '@/constants/branding';
 import { addDispatchEventToCalendar } from '@/lib/calendar-events';
 import { fetchPlaceAutocomplete, PlaceAutocompleteSuggestion } from '@/lib/google-places';
 import { openMapAppPicker } from '@/lib/map-apps';
+import {
+  getAvailableRoleSlots,
+  getWorkerRoleAction,
+  getWorkerRoleActionFromNotification,
+  keepLatestWorkerRoleNotifications,
+  mergeWorkerRoleAvailability,
+} from '@/lib/worker-role-action';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
 
 type ManagerNamesMap = Record<string, string>;
 type UserMap = Record<string, UserProfile>;
-type InviteStatus = 'pending' | 'accepted' | 'declined';
+type InviteStatus = 'pending' | 'accepted' | 'declined' | 'waitlisted';
 
 type DrawerState = {
   open: boolean;
@@ -308,6 +315,8 @@ export default function EventsScreen() {
     roleOpenSlots?: number;
     roleAssignedWorkerIds?: string[];
     roleWaitlistWorkerIds?: string[];
+    roleEligibleWaitlistWorkerIds?: string[];
+    roleWaitlistInviteWorkerIds?: string[];
   }>>([]);
   const [pendingInviteWorkerIdsByRoleKey, setPendingInviteWorkerIdsByRoleKey] = useState<Record<string, string[]>>({});
   const [inviteStatusByRoleWorkerKey, setInviteStatusByRoleWorkerKey] = useState<Record<string, InviteStatus>>({});
@@ -678,6 +687,8 @@ export default function EventsScreen() {
         roleOpenSlots: item.roleOpenSlots,
         roleAssignedWorkerIds: item.roleAssignedWorkerIds,
         roleWaitlistWorkerIds: item.roleWaitlistWorkerIds,
+        roleEligibleWaitlistWorkerIds: item.roleEligibleWaitlistWorkerIds,
+        roleWaitlistInviteWorkerIds: item.roleWaitlistInviteWorkerIds,
       })));
     });
   }, [profile]);
@@ -714,7 +725,7 @@ export default function EventsScreen() {
 
       items.forEach((item) => {
         if (!item.eventId || !item.roleId || !item.workerId) return;
-        if (item.status !== 'pending' && item.status !== 'accepted' && item.status !== 'declined') return;
+        if (item.status !== 'pending' && item.status !== 'accepted' && item.status !== 'declined' && item.status !== 'waitlisted') return;
 
         const key = `${item.eventId}:${item.roleId}:${item.workerId}`;
         const createdAtMs = item.createdAt && 'toDate' in item.createdAt && typeof item.createdAt.toDate === 'function'
@@ -1314,6 +1325,11 @@ export default function EventsScreen() {
     );
   };
 
+  const latestRoleNotifications = useMemo(
+    () => keepLatestWorkerRoleNotifications(pendingRoleNotifications),
+    [pendingRoleNotifications]
+  );
+
   const allEvents = useMemo(
     () => {
       const buildPendingInviteRole = (notification: (typeof pendingRoleNotifications)[number]): EventRole => ({
@@ -1321,7 +1337,12 @@ export default function EventsScreen() {
         name: notification.roleName?.trim() || 'Invited role',
         assignedWorkerIds: notification.roleAssignedWorkerIds || [],
         waitlistWorkerIds: notification.roleWaitlistWorkerIds || [],
-        openSlots: Math.max(0, notification.roleOpenSlots ?? 0),
+        eligibleWaitlistWorkerIds: notification.roleEligibleWaitlistWorkerIds || [],
+        waitlistInviteWorkerIds: notification.roleWaitlistInviteWorkerIds || [],
+        openSlots: getAvailableRoleSlots({
+          openSlots: notification.roleOpenSlots,
+          assignedWorkerIds: notification.roleAssignedWorkerIds,
+        }),
         tasks: (notification.roleTaskNames || []).map((taskName, index) => ({
           id: `pending-task-${notification.id}-${index}`,
           name: taskName,
@@ -1334,7 +1355,7 @@ export default function EventsScreen() {
       const pendingNotificationsByEvent = new Map<string, typeof pendingRoleNotifications>();
 
       if (profile?.role === 'worker') {
-        pendingRoleNotifications
+        latestRoleNotifications
           .filter((notification) => notification.action === 'assign')
           .filter((notification) => notification.status === 'pending' || notification.status === 'declined' || notification.status === 'waitlisted')
           .filter((notification) => Number.isFinite(new Date(notification.eventStartsAt || '').getTime()))
@@ -1347,29 +1368,34 @@ export default function EventsScreen() {
 
       const activeEventsWithPendingInvites = baseEvents.map((event) => {
         if (profile?.role !== 'worker') return event;
-        const hasAcceptedRole = event.roles.some((role) => role.assignedWorkerIds.includes(profile.uid));
-        if (hasAcceptedRole) return event;
-
         const notifications = pendingNotificationsByEvent.get(event.id) || [];
         if (!notifications.length) return event;
 
-        const existingRoleIds = new Set(event.roles.map((role) => role.id));
+        const rolesWithLiveAvailability = event.roles.map((role) => {
+          const notification = notifications.find((item) => item.roleId === role.id);
+          return notification ? mergeWorkerRoleAvailability(role, notification) : role;
+        });
+        const eventWithLiveAvailability = { ...event, roles: rolesWithLiveAvailability };
+        const hasAcceptedRole = rolesWithLiveAvailability.some((role) => role.assignedWorkerIds.includes(profile.uid));
+        if (hasAcceptedRole) return eventWithLiveAvailability;
+
+        const existingRoleIds = new Set(rolesWithLiveAvailability.map((role) => role.id));
         const pendingRoles = notifications
           .filter((notification) => !existingRoleIds.has(notification.roleId))
           .map(buildPendingInviteRole);
 
         return {
-          ...event,
+          ...eventWithLiveAvailability,
           pendingInviteNotificationIds: {
             ...(event.pendingInviteNotificationIds || {}),
             ...Object.fromEntries(notifications.map((notification) => [notification.roleId, notification.id])),
           },
-          roles: [...event.roles, ...pendingRoles],
+          roles: [...rolesWithLiveAvailability, ...pendingRoles],
         };
       });
 
       const pendingInviteEvents: DispatchEvent[] = profile?.role === 'worker'
-        ? pendingRoleNotifications
+        ? latestRoleNotifications
             .filter((notification) => notification.action === 'assign')
             .filter((notification) => notification.status === 'pending' || notification.status === 'declined' || notification.status === 'waitlisted')
             .filter((notification) => !activeEventIds.has(notification.eventId))
@@ -1405,7 +1431,7 @@ export default function EventsScreen() {
       const validEvents = unique.filter((event) => Number.isFinite(new Date(event.startsAt).getTime()));
       return sortDispatchEvents(validEvents);
     },
-    [events, optimisticCreatedEvents, pendingRoleNotifications, profile?.role, profile?.uid]
+    [events, latestRoleNotifications, optimisticCreatedEvents, profile?.role, profile?.uid]
   );
 
   const acceptedWorkerEventIds = useMemo(() => {
@@ -1418,10 +1444,10 @@ export default function EventsScreen() {
   }, [allEvents, profile?.role, profile?.uid]);
 
   const actionableRoleNotifications = useMemo(
-    () => pendingRoleNotifications
+    () => latestRoleNotifications
       .filter((notification) => notification.status === 'pending')
       .filter((notification) => !acceptedWorkerEventIds.has(notification.eventId)),
-    [acceptedWorkerEventIds, pendingRoleNotifications]
+    [acceptedWorkerEventIds, latestRoleNotifications]
   );
 
   const visibleEvents = useMemo(() => {
@@ -1613,23 +1639,39 @@ export default function EventsScreen() {
 
     const assignedRoles = event.roles.filter((role) => role.assignedWorkerIds.includes(profile.uid));
     const pendingInviteRoleCards = Object.entries(event.pendingInviteNotificationIds || {})
-      .map(([roleId, notificationId]) => ({
-        notificationId,
-        role: event.roles.find((role) => role.id === roleId),
-      }))
-      .filter((item): item is { notificationId: string; role: EventRole } => Boolean(item.role));
+      .flatMap(([roleId, notificationId]) => {
+        const role = event.roles.find((item) => item.id === roleId);
+        if (!role) return [];
+        const notification = latestRoleNotifications.find(
+          (item) => item.eventId === event.id && item.roleId === roleId
+        );
+        return [{
+          notificationId: notification?.id || notificationId,
+          notificationStatus: notification?.status,
+          notification,
+          role,
+        }];
+      });
 
     if (!assignedRoles.length && pendingInviteRoleCards.length) {
       return (
         <View style={styles.taskList}>
-          {pendingInviteRoleCards.map(({ notificationId, role }) => {
-            const busy = notificationBusyId === notificationId;
-            const alreadyWaitlisted = (role.waitlistWorkerIds || []).includes(profile.uid);
+          {pendingInviteRoleCards.map(({ notificationId, notificationStatus, notification, role }) => {
+            const busyKey = `${event.id}:${role.id}`;
+            const busy = notificationBusyId === notificationId || notificationBusyId === busyKey;
+            const roleAction = notification
+              ? getWorkerRoleActionFromNotification(notification, profile.uid)
+              : getWorkerRoleAction(role, profile.uid);
+            const canAccept = roleAction === 'accept';
+            const isWaitlisted = roleAction === 'waitlisted';
+            const buttonLabel = canAccept ? 'Accept' : isWaitlisted ? 'Waitlisted' : 'Join Waitlist';
 
             return (
               <View key={`pending-invite-role-${notificationId}`} style={[styles.pendingInviteRoleCard, isDarkMode ? styles.pendingInviteRoleCardDark : styles.pendingInviteRoleCardLight]}>
                 <View style={styles.pendingInviteRoleInfo}>
-                  <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>Invited role</Text>
+                  <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>
+                    {canAccept ? 'Open role' : isWaitlisted ? 'Waitlisted role' : 'Invited role'}
+                  </Text>
                   <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{role.name}</Text>
                   {role.tasks.length ? (
                     <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>
@@ -1639,16 +1681,33 @@ export default function EventsScreen() {
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Join waitlist for ${role.name}`}
-                  disabled={busy || alreadyWaitlisted}
+                  accessibilityLabel={canAccept ? `Accept ${role.name}` : isWaitlisted ? `Waitlisted for ${role.name}` : `Join waitlist for ${role.name}`}
+                  disabled={busy || isWaitlisted}
                   style={[
                     styles.pendingInviteWaitlistButton,
-                    isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight,
-                    (busy || alreadyWaitlisted) && styles.drawerCloseDisabled,
+                    canAccept
+                      ? (isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight)
+                      : (isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight),
+                    (busy || isWaitlisted) && styles.drawerCloseDisabled,
                   ]}
-                  onPress={() => handleJoinRoleWaitlist(notificationId)}>
-                  <Text style={[styles.pendingActionButtonText, isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight]}>
-                    {busy ? 'Joining...' : alreadyWaitlisted ? 'Waitlisted' : 'Join Waitlist'}
+                  onPress={() => {
+                    if (canAccept) {
+                      if (notificationStatus === 'pending') {
+                        handleRoleNotificationResponse(notificationId, 'accept');
+                      } else {
+                        handleAcceptEventRoleWaitlistInvite(event.id, role.id);
+                      }
+                      return;
+                    }
+                    handleJoinRoleWaitlist(notificationId);
+                  }}>
+                  <Text style={[
+                    styles.pendingActionButtonText,
+                    canAccept
+                      ? (isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight)
+                      : (isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight),
+                  ]}>
+                    {busy ? (canAccept ? 'Accepting...' : 'Joining...') : buttonLabel}
                   </Text>
                 </Pressable>
               </View>
@@ -1684,40 +1743,34 @@ export default function EventsScreen() {
     const renderWaitlistRoleCards = () => waitlistEligibleRoles.map((role) => {
       const busyKey = `${event.id}:${role.id}`;
       const busy = notificationBusyId === busyKey;
-      const alreadyWaitlisted = (role.waitlistWorkerIds || []).includes(profile.uid);
-      const hasWaitlistInvite = (role.waitlistInviteWorkerIds || []).includes(profile.uid);
-      const canAcceptWaitlistInvite = (hasWaitlistInvite || alreadyWaitlisted) && Math.max(0, role.openSlots || 0) > 0;
-      const waitlistButtonLabel = canAcceptWaitlistInvite
-        ? 'Accept'
-        : hasWaitlistInvite
-          ? 'Join Waitlist'
-          : alreadyWaitlisted
-            ? 'Waitlisted'
-            : 'Join Waitlist';
+      const roleAction = getWorkerRoleAction(role, profile.uid);
+      const canAccept = roleAction === 'accept';
+      const isWaitlisted = roleAction === 'waitlisted';
+      const waitlistButtonLabel = canAccept ? 'Accept' : isWaitlisted ? 'Waitlisted' : 'Join Waitlist';
 
       return (
         <View key={`waitlist-role-${role.id}`} style={[styles.pendingInviteRoleCard, isDarkMode ? styles.pendingInviteRoleCardDark : styles.pendingInviteRoleCardLight]}>
           <View style={styles.pendingInviteRoleInfo}>
             <Text style={[styles.roleMeta, isDarkMode ? styles.roleMetaDark : styles.roleMetaLight]}>
-              {canAcceptWaitlistInvite ? 'Role invite' : alreadyWaitlisted ? 'Waitlisted role' : 'Available waitlist'}
+              {canAccept ? 'Open role' : isWaitlisted ? 'Waitlisted role' : 'Available waitlist'}
             </Text>
             <Text style={[styles.roleTitle, isDarkMode ? styles.roleTitleDark : styles.roleTitleLight]}>{role.name}</Text>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={canAcceptWaitlistInvite ? `Accept ${role.name} invite` : `Join waitlist for ${role.name}`}
-            disabled={busy || (!canAcceptWaitlistInvite && !hasWaitlistInvite && alreadyWaitlisted)}
+            accessibilityLabel={canAccept ? `Accept ${role.name}` : isWaitlisted ? `Waitlisted for ${role.name}` : `Join waitlist for ${role.name}`}
+            disabled={busy || isWaitlisted}
             style={[
               styles.pendingInviteWaitlistButton,
-              canAcceptWaitlistInvite
+              canAccept
                 ? (isDarkMode ? styles.pendingActionAcceptDark : styles.pendingActionAcceptLight)
                 : (isDarkMode ? styles.pendingActionWaitlistDark : styles.pendingActionWaitlistLight),
-              (busy || (!canAcceptWaitlistInvite && !hasWaitlistInvite && alreadyWaitlisted)) && styles.drawerCloseDisabled,
+              (busy || isWaitlisted) && styles.drawerCloseDisabled,
             ]}
-            onPress={() => canAcceptWaitlistInvite ? handleAcceptEventRoleWaitlistInvite(event.id, role.id) : handleJoinEventRoleWaitlist(event.id, role.id)}>
+            onPress={() => canAccept ? handleAcceptEventRoleWaitlistInvite(event.id, role.id) : handleJoinEventRoleWaitlist(event.id, role.id)}>
             <Text style={[
               styles.pendingActionButtonText,
-              canAcceptWaitlistInvite
+              canAccept
                 ? (isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight)
                 : (isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight),
             ]}>
@@ -1793,6 +1846,8 @@ export default function EventsScreen() {
         return isDarkMode ? styles.avatarCircleRingAcceptedDark : styles.avatarCircleRingAcceptedLight;
       case 'declined':
         return isDarkMode ? styles.avatarCircleRingDeclinedDark : styles.avatarCircleRingDeclinedLight;
+      case 'waitlisted':
+        return isDarkMode ? styles.avatarCircleRingWaitlistedDark : styles.avatarCircleRingWaitlistedLight;
       default:
         return isDarkMode ? styles.avatarCircleRingPendingDark : styles.avatarCircleRingPendingLight;
     }
@@ -2817,9 +2872,10 @@ export default function EventsScreen() {
           {actionableRoleNotifications.map((notification) => {
             const busy = notificationBusyId === notification.id;
             const expanded = !!expandedPendingNotificationIds[notification.id];
+            const roleAction = getWorkerRoleActionFromNotification(notification, profile.uid);
             const roleIsFull = notification.action === 'assign'
               && !notification.roleAssignedWorkerIds?.includes(profile.uid)
-              && Math.max(0, notification.roleOpenSlots ?? 1) <= 0;
+              && roleAction !== 'accept';
             return (
               <View key={notification.id} style={styles.pendingNotificationRow}>
                 <View style={styles.pendingNotificationHeader}>
@@ -2890,7 +2946,7 @@ export default function EventsScreen() {
                         ? (isDarkMode ? styles.pendingActionWaitlistTextDark : styles.pendingActionWaitlistTextLight)
                         : (isDarkMode ? styles.pendingActionAcceptTextDark : styles.pendingActionAcceptTextLight),
                     ]}>
-                      {busy ? '...' : roleIsFull ? 'Waitlist' : 'Accept'}
+                      {busy ? '...' : roleIsFull ? 'Join Waitlist' : 'Accept'}
                     </Text>
                   </Pressable>
                 </View>
@@ -4437,6 +4493,8 @@ const styles = StyleSheet.create({
   avatarCircleRingAcceptedDark: { borderWidth: 2, borderColor: '#0EC3C9' },
   avatarCircleRingDeclinedLight: { borderWidth: 2, borderColor: '#dc2626' },
   avatarCircleRingDeclinedDark: { borderWidth: 2, borderColor: '#fb7185' },
+  avatarCircleRingWaitlistedLight: { borderWidth: 2, borderColor: '#2563eb' },
+  avatarCircleRingWaitlistedDark: { borderWidth: 2, borderColor: '#60a5fa' },
   avatarCircleRingPendingLight: { borderWidth: 2, borderColor: '#F98D2F' },
   avatarCircleRingPendingDark: { borderWidth: 2, borderColor: '#F98D2F' },
   avatarText: { fontWeight: '700', color: '#bfdbfe' },

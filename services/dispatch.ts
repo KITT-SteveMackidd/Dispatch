@@ -24,6 +24,9 @@ import {
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
 import { buildEventTaskFromTemplate, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
+import { normalizeTeamMemberRole, validateTeamWorkerSelection } from '@/lib/team-membership';
+import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
+import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 export type { InviteToken, InviteTokenStatus, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 
@@ -81,6 +84,8 @@ export type RoleAssignmentNotification = {
   roleOpenSlots?: number;
   roleAssignedWorkerIds?: string[];
   roleWaitlistWorkerIds?: string[];
+  roleEligibleWaitlistWorkerIds?: string[];
+  roleWaitlistInviteWorkerIds?: string[];
   pushSeenBy?: string[];
   createdAt?: { toDate?: () => Date } | Date | null;
 };
@@ -308,10 +313,14 @@ export async function sendChatMessage(params: {
   const text = params.text.trim();
   const attachments = params.attachments || [];
   if (!text && !attachments.length) return;
+  const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
 
   await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
+    threadId: params.threadId,
+    teamId: params.teamId || null,
     senderId: params.senderId,
     senderName: params.senderName?.trim() || null,
+    recipientIds,
     text,
     attachments,
     createdAt: serverTimestamp(),
@@ -331,7 +340,6 @@ export async function sendChatMessage(params: {
     { merge: true }
   );
 
-  const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
   await Promise.all(
     recipientIds.map((userId) =>
       setDoc(
@@ -601,6 +609,52 @@ export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[
   return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
 }
 
+export async function updateTeamWorkerMembership(params: {
+  managerId: string;
+  teamId: string;
+  workerIds: string[];
+}) {
+  const teamRef = doc(db, 'teams', params.teamId);
+  const [teamSnapshot, managerSnapshot] = await Promise.all([
+    getDoc(teamRef),
+    getDoc(doc(db, 'users', params.managerId)),
+  ]);
+  if (!teamSnapshot.exists()) throw new Error('Team not found.');
+  if (!managerSnapshot.exists()) throw new Error('Manager profile not found.');
+
+  const team = { id: teamSnapshot.id, ...(teamSnapshot.data() as Omit<Team, 'id'>) };
+  const manager = managerSnapshot.data() as Partial<UserProfile>;
+  const organizationId = team.organizationId;
+  const canManageTeam = normalizeTeamMemberRole(manager.role) === 'manager'
+    && !!organizationId
+    && manager.organizationId === organizationId;
+  if (!canManageTeam) throw new Error('Only an organization manager can update this Team.');
+
+  const { organization, members } = await loadOrganizationMembers(organizationId);
+  const workerIds = validateTeamWorkerSelection(members, params.workerIds);
+  const managerIds = [...new Set([
+    team.managerId,
+    ...(team.managerIds || []),
+    ...organization.managerIds,
+    params.managerId,
+  ].filter(Boolean))];
+
+  await updateDoc(teamRef, {
+    managerIds,
+    workerIds,
+    updatedAt: serverTimestamp(),
+  });
+  await ensureTeamChatThreads({
+    teamId: team.id,
+    teamName: team.name,
+    managerIds,
+    workerIds,
+    organizationId,
+  });
+
+  return { ...team, managerIds, workerIds } satisfies Team;
+}
+
 export async function markChatNotificationSeen(params: { threadId: string; userId: string }) {
   await updateDoc(doc(db, 'chatThreads', params.threadId), {
     pushSeenBy: arrayUnion(params.userId),
@@ -857,8 +911,88 @@ export async function deleteEventTemplate(params: { managerId: string; templateI
 
 export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (items: RoleAssignmentNotification[]) => void) {
   const q = query(collection(db, 'roleAssignmentNotifications'), where('workerId', '==', workerId));
-  return onSnapshot(q, (snap) => {
-    const notifications = snap.docs
+  let notifications: RoleAssignmentNotification[] = [];
+  const eventStates = new Map<string, Omit<DispatchEvent, 'id'> | null>();
+  const unavailableEventIds = new Set<string>();
+  const eventUnsubscribers = new Map<string, () => void>();
+  let disposed = false;
+
+  const emit = () => {
+    if (disposed) return;
+
+    const requiredEventIds = [...new Set(
+      notifications
+        .filter((notification) => notification.eventId && notification.roleId)
+        .map((notification) => notification.eventId)
+    )];
+    if (requiredEventIds.some((eventId) => !eventStates.has(eventId) && !unavailableEventIds.has(eventId))) {
+      return;
+    }
+
+    const items = notifications.map((notification) => {
+      if (!notification.eventId || !notification.roleId || unavailableEventIds.has(notification.eventId)) {
+        return notification;
+      }
+
+      const event = eventStates.get(notification.eventId);
+      if (!event) return null;
+
+      const role = (event.roles || []).find((item) => item.id === notification.roleId);
+      if (!role) return null;
+
+      return {
+        ...notification,
+        roleOpenSlots: Math.max(0, role.openSlots || 0),
+        roleAssignedWorkerIds: role.assignedWorkerIds || [],
+        roleWaitlistWorkerIds: role.waitlistWorkerIds || [],
+        roleEligibleWaitlistWorkerIds: role.eligibleWaitlistWorkerIds || [],
+        roleWaitlistInviteWorkerIds: role.waitlistInviteWorkerIds || [],
+      };
+    });
+
+    cb(items.filter((item): item is RoleAssignmentNotification => !!item));
+  };
+
+  const syncEventSubscriptions = () => {
+    const eventIds = new Set(
+      notifications
+        .filter((notification) => notification.eventId && notification.roleId)
+        .map((notification) => notification.eventId)
+    );
+
+    eventUnsubscribers.forEach((unsubscribe, eventId) => {
+      if (eventIds.has(eventId)) return;
+      unsubscribe();
+      eventUnsubscribers.delete(eventId);
+      eventStates.delete(eventId);
+      unavailableEventIds.delete(eventId);
+    });
+
+    eventIds.forEach((eventId) => {
+      if (eventUnsubscribers.has(eventId)) return;
+
+      const unsubscribe = onSnapshot(
+        doc(db, 'events', eventId),
+        (eventSnap) => {
+          if (disposed || !eventUnsubscribers.has(eventId)) return;
+          unavailableEventIds.delete(eventId);
+          eventStates.set(eventId, eventSnap.exists() ? eventSnap.data() as Omit<DispatchEvent, 'id'> : null);
+          emit();
+        },
+        () => {
+          if (disposed || !eventUnsubscribers.has(eventId)) return;
+          unavailableEventIds.add(eventId);
+          emit();
+        }
+      );
+      eventUnsubscribers.set(eventId, unsubscribe);
+    });
+
+    emit();
+  };
+
+  const unsubscribeNotifications = onSnapshot(q, (snap) => {
+    notifications = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as Omit<RoleAssignmentNotification, 'id'>) }))
       .filter((item) => item.status === 'pending' || item.status === 'declined' || item.status === 'waitlisted')
       .sort((a, b) => {
@@ -870,27 +1004,15 @@ export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (it
           : 0;
         return bTime - aTime;
       });
-
-    Promise.all(
-      notifications.map(async (notification) => {
-        if (!notification.eventId || !notification.roleId) return notification;
-
-        const eventSnap = await getDoc(doc(db, 'events', notification.eventId));
-        if (!eventSnap.exists()) return null;
-
-        const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
-        const role = (event.roles || []).find((item) => item.id === notification.roleId);
-        if (!role) return null;
-
-        return {
-          ...notification,
-          roleOpenSlots: Math.max(0, role.openSlots || 0),
-          roleAssignedWorkerIds: role.assignedWorkerIds || [],
-          roleWaitlistWorkerIds: role.waitlistWorkerIds || [],
-        };
-      })
-    ).then((items) => cb(items.filter((item): item is RoleAssignmentNotification => !!item))).catch(() => cb(notifications));
+    syncEventSubscriptions();
   });
+
+  return () => {
+    disposed = true;
+    unsubscribeNotifications();
+    eventUnsubscribers.forEach((unsubscribe) => unsubscribe());
+    eventUnsubscribers.clear();
+  };
 }
 
 export function watchManagerPendingRoleInvites(managerId: string, cb: (items: RoleAssignmentNotification[]) => void) {
@@ -898,7 +1020,7 @@ export function watchManagerPendingRoleInvites(managerId: string, cb: (items: Ro
   return onSnapshot(q, (snap) => {
     const invites = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as Omit<RoleAssignmentNotification, 'id'>) }))
-      .filter((item) => item.action === 'assign' && item.status === 'pending');
+      .filter((item) => item.action === 'assign' && (item.status === 'pending' || item.status === 'waitlisted'));
 
     cb(invites);
   });
@@ -991,6 +1113,21 @@ export async function deleteDispatchEvent(params: { eventId: string; managerId: 
 
   const event = snap.data() as Omit<DispatchEvent, 'id'>;
   if (event.managerId !== params.managerId) throw new Error('Only the event manager can delete this event');
+
+  const [roleNotificationsSnap, userNotificationsSnap] = await Promise.all([
+    getDocs(query(collection(db, 'roleAssignmentNotifications'), where('eventId', '==', params.eventId))),
+    getDocs(query(collection(db, 'userNotifications'), where('relatedEventId', '==', params.eventId))),
+  ]);
+  const relatedRefs = [...new Map(
+    [...roleNotificationsSnap.docs, ...userNotificationsSnap.docs].map((item) => [item.ref.path, item.ref])
+  ).values()];
+
+  // Keep the event available while every related-record permission is checked.
+  while (relatedRefs.length) {
+    const cleanupBatch = writeBatch(db);
+    relatedRefs.splice(0, 500).forEach((relatedRef) => cleanupBatch.delete(relatedRef));
+    await cleanupBatch.commit();
+  }
 
   await deleteDoc(ref);
 }
@@ -1441,10 +1578,11 @@ async function createWorkerInviteRecord(params: {
 }) {
   const token = generateInviteToken();
   const expiresAt = getFutureDate(INVITE_AUTO_EXPIRY_MS);
+  const teamName = params.teamName?.trim() || (params.teamId ? 'Dispatch Team' : 'Solo worker');
   const inviteRef = await addDoc(collection(db, 'workerInvites'), {
     managerId: params.managerId,
     teamId: params.teamId || null,
-    teamName: params.teamName,
+    teamName,
     organizationId: params.organizationId || null,
     organizationName: params.organizationName || null,
     appLink: params.appLink,
@@ -1512,7 +1650,7 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
 
   const team = teamSnap.data() as Omit<Team, 'id'>;
   const managerCanUseTeam = team.managerId === managerId
-    || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && manager.role === 'manager');
+    || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && normalizeTeamMemberRole(manager.role) === 'manager');
   if (!managerCanUseTeam) throw new Error('Only managers in this organisation can invite workers to this team');
   await ensureOrganisationManagersOnTeam(teamRef, team, managerId);
 
@@ -1583,20 +1721,7 @@ async function sendInviteEmail(params: {
 }> {
   const collectionName = (process.env.EXPO_PUBLIC_INVITE_EMAIL_COLLECTION || '').trim() || 'mail';
   await addDoc(collection(db, collectionName), {
-    to: [params.email],
-    message: {
-      subject: `You are invited to join ${params.teamName} on Dispatch`,
-      text: `You have been invited to join ${params.teamName} on Dispatch. If you do not have the app yet, download Dispatch from the Apple App Store or Google Play, then sign in with this email to review and accept the invite: ${params.appLink}`,
-      html: `<p>You have been invited to join <strong>${params.teamName}</strong> on Dispatch.</p><p>If you do not have the app yet, download Dispatch from the Apple App Store or Google Play.</p><p><a href="${params.appLink}">Open Dispatch download and sign-in link</a> to review and accept the invite with <strong>${params.email}</strong>.</p>`,
-    },
-    dispatchInvite: {
-      inviteId: params.inviteId,
-      managerId: params.managerId,
-      teamId: params.teamId,
-      teamName: params.teamName,
-      appLink: params.appLink,
-      email: params.email,
-    },
+    ...buildWorkerInviteEmailDocument(params),
     createdAt: serverTimestamp(),
   });
 
@@ -2086,7 +2211,7 @@ export async function inviteWorkerByEmailToTeam(params: {
     if (!teamSnap.exists()) throw new Error('Team not found');
     const team = teamSnap.data() as Omit<Team, 'id'>;
     const managerCanUseTeam = team.managerId === managerId
-      || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && manager.role === 'manager');
+      || Boolean(team.organizationId && manager.organizationId && team.organizationId === manager.organizationId && normalizeTeamMemberRole(manager.role) === 'manager');
     if (!managerCanUseTeam) throw new Error('Only managers in this organisation can invite workers to this team');
     await ensureOrganisationManagersOnTeam(teamRef, team, managerId);
     teamName = team.name || 'Dispatch Team';
@@ -2365,7 +2490,7 @@ export async function loadUserProfilesByIds(userIds: string[]): Promise<UserProf
       return {
         uid: snap.id,
         displayName: data.displayName || 'Dispatch User',
-        role: (data.role as UserProfile['role']) || 'worker',
+        role: normalizeTeamMemberRole(data.role) || 'worker',
         organizationId: data.organizationId || null,
         organizationName: data.organizationName || null,
         email: data.email || null,
@@ -2402,7 +2527,7 @@ export async function loadOrganizationMembers(organizationId: string): Promise<{
     return {
       uid: memberSnapshot.id,
       displayName: member.displayName || 'Dispatch User',
-      role: (member.role as UserProfile['role']) || 'worker',
+      role: normalizeTeamMemberRole(member.role) || 'worker',
       organizationId: member.organizationId || null,
       organizationName: member.organizationName || null,
       email: member.email || null,
@@ -2563,6 +2688,11 @@ export async function updateEventRoleAssignment(params: {
       eventStartsAt: event.startsAt || '',
       roleName: role.name,
       roleTaskNames: (role.tasks || []).map((task) => task.name).filter(Boolean),
+      roleOpenSlots: Math.max(0, role.openSlots || 0),
+      roleAssignedWorkerIds: role.assignedWorkerIds || [],
+      roleWaitlistWorkerIds: role.waitlistWorkerIds || [],
+      roleEligibleWaitlistWorkerIds: role.eligibleWaitlistWorkerIds || [],
+      roleWaitlistInviteWorkerIds: role.waitlistInviteWorkerIds || [],
       action,
       status: 'pending',
       statusReason: 'Worker must accept or decline this role assignment before it is finalized.',
@@ -2921,12 +3051,13 @@ export async function acceptEventRoleWaitlistInvite(params: {
     }
     const hasWaitlistInvite = (role.waitlistInviteWorkerIds || []).includes(params.workerId);
     const isWaitlisted = (role.waitlistWorkerIds || []).includes(params.workerId);
-    if (!hasWaitlistInvite && !isWaitlisted) {
+    const isWaitlistEligible = (role.eligibleWaitlistWorkerIds || []).includes(params.workerId);
+    if (!hasWaitlistInvite && !isWaitlisted && !isWaitlistEligible) {
       throw new Error('This invite is no longer available.');
     }
     if ((role.assignedWorkerIds || []).includes(params.workerId)) return;
 
-    const roleOpenSlots = Math.max(0, role.openSlots || 0);
+    const roleOpenSlots = getAvailableRoleSlots(role);
     if (roleOpenSlots <= 0) {
       const waitlistWorkerIds = role.waitlistWorkerIds || [];
       const nextWaitlistWorkerIds = waitlistWorkerIds.includes(params.workerId)
@@ -2939,6 +3070,7 @@ export async function acceptEventRoleWaitlistInvite(params: {
             ...item,
             waitlistWorkerIds: nextWaitlistWorkerIds,
             waitlistInviteWorkerIds: (item.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
+            eligibleWaitlistWorkerIds: (item.eligibleWaitlistWorkerIds || []).filter((id) => id !== params.workerId),
           }
           : item
       ));
@@ -2965,7 +3097,7 @@ export async function acceptEventRoleWaitlistInvite(params: {
           waitlistWorkerIds: (item.waitlistWorkerIds || []).filter((id) => id !== params.workerId),
           waitlistInviteWorkerIds: (item.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
           eligibleWaitlistWorkerIds: (item.eligibleWaitlistWorkerIds || []).filter((id) => id !== params.workerId),
-          openSlots: Math.max(0, (item.openSlots || 0) - 1),
+          openSlots: Math.max(0, getAvailableRoleSlots(item) - 1),
         };
       }
 
@@ -3038,7 +3170,7 @@ export async function respondToRoleAssignmentNotification(params: {
       if (alreadyAssignedToEvent && !alreadyAssigned) {
         throw new Error('You already accepted a role for this event.');
       }
-      if (!alreadyAssigned && Math.max(0, targetRole.openSlots || 0) <= 0) {
+      if (!alreadyAssigned && getAvailableRoleSlots(targetRole) <= 0) {
         throw new Error('This role is full. Join the waitlist instead.');
       }
 
@@ -3056,7 +3188,7 @@ export async function respondToRoleAssignmentNotification(params: {
           waitlistWorkerIds: (role.waitlistWorkerIds || []).filter((id) => id !== params.workerId),
           eligibleWaitlistWorkerIds: (role.eligibleWaitlistWorkerIds || []).filter((id) => id !== params.workerId),
           waitlistInviteWorkerIds: (role.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
-          openSlots: Math.max(0, (role.openSlots || 0) - 1),
+          openSlots: Math.max(0, getAvailableRoleSlots(role) - 1),
         };
       });
 
@@ -3153,57 +3285,8 @@ export async function respondToRoleAssignmentNotification(params: {
       }).catch((error) => {
         console.warn('Dispatch event reminder email queue failed', error);
       });
-
-      const acceptedEventSnap = await getDoc(doc(db, 'events', acceptedNotification.eventId));
-      const acceptedEvent = acceptedEventSnap.exists() ? acceptedEventSnap.data() as Omit<DispatchEvent, 'id'> : null;
-      const acceptedRole = acceptedEvent?.roles?.find((role) => role.id === acceptedNotification.roleId);
-
-      const workerEventNotifications = await getDocs(
-        query(
-          collection(db, 'roleAssignmentNotifications'),
-          where('eventId', '==', acceptedNotification.eventId),
-          where('workerId', '==', params.workerId),
-          where('action', '==', 'assign'),
-          where('status', '==', 'pending')
-        )
-      );
-      const competingNotifications = await getDocs(
-        query(
-          collection(db, 'roleAssignmentNotifications'),
-          where('eventId', '==', acceptedNotification.eventId),
-          where('roleId', '==', acceptedNotification.roleId),
-          where('action', '==', 'assign'),
-          where('status', '==', 'pending')
-        )
-      );
-
-      const batch = writeBatch(db);
-      workerEventNotifications.docs
-        .filter((docSnap) => docSnap.id !== params.notificationId)
-        .forEach((docSnap) => {
-          batch.update(docSnap.ref, {
-            status: 'declined',
-            statusReason: 'Worker accepted another role for this event. Join the waitlist if this role opens again.',
-            respondedAt: serverTimestamp(),
-            response: 'decline',
-            updatedAt: serverTimestamp(),
-          });
-        });
-      competingNotifications.docs
-        .filter((docSnap) => docSnap.id !== params.notificationId)
-        .forEach((docSnap) => {
-          batch.update(docSnap.ref, {
-            roleOpenSlots: Math.max(0, acceptedRole?.openSlots || 0),
-            roleAssignedWorkerIds: acceptedRole?.assignedWorkerIds || [],
-            roleWaitlistWorkerIds: acceptedRole?.waitlistWorkerIds || [],
-            statusReason: 'This role has been filled. Join the waitlist to be considered if it opens again.',
-            updatedAt: serverTimestamp(),
-          });
-        });
-
-      await batch.commit();
-    } catch {
-      // Competing invite cleanup is best-effort; the event role state is authoritative.
+    } catch (error) {
+      console.warn('Dispatch event reminder email queue failed', error);
     }
   }
 }
