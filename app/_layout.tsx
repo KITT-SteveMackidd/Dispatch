@@ -1,11 +1,16 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Stack } from 'expo-router';
 import { useEffect } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { StartupShell } from '@/components/startup/StartupShell';
 import type { StartupModules } from '@/components/startup/StartupShell';
 import { markStartup, Sentry } from '@/lib/sentry';
+
+const supportsRemotePushBridge =
+  Platform.OS === 'ios' ||
+  (Platform.OS === 'android' && Constants.executionEnvironment !== ExecutionEnvironment.StoreClient);
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   return (
@@ -55,7 +60,9 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
 
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
-      {authUser && profile?.uid && !requiresEmailVerification ? <PushNotificationBridge /> : null}
+      {supportsRemotePushBridge && authUser && profile?.uid && !requiresEmailVerification
+        ? <PushNotificationBridge />
+        : null}
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signin" options={{ headerShown: false }} />

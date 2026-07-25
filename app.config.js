@@ -4,7 +4,7 @@ const projectId =
   '7d0f7257-64f9-443f-ba27-a75af5fbafaa';
 const owner = process.env.EXPO_PUBLIC_EXPO_OWNER || process.env.EXPO_OWNER || 'smackidd';
 const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE;
-const updatesEnabled = buildProfile === 'production';
+const updatesEnabled = buildProfile === 'production' || buildProfile === 'preview';
 const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
 const googleIosUrlScheme = googleIosClientId
   ? `com.googleusercontent.apps.${googleIosClientId.replace(/\.apps\.googleusercontent\.com$/, '')}`
@@ -12,6 +12,7 @@ const googleIosUrlScheme = googleIosClientId
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
+  config.newArchEnabled = true;
   config.splash = {
     ...(config.splash || {}),
     image: './assets/images/dispatch-splash-full.png',
@@ -39,7 +40,7 @@ module.exports = ({ config: baseConfig }) => {
     package: config.android?.package || 'com.smackidd.dispatch',
   };
 
-  config.runtimeVersion = 'dispatch-sdk54-rn081-v1';
+  config.runtimeVersion = 'dispatch-sdk54-rn081-newarch-delegate-v4';
 
   const plugins = [...(config.plugins || [])];
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-splash-screen')) {
@@ -103,9 +104,12 @@ module.exports = ({ config: baseConfig }) => {
       'expo-calendar',
       {
         calendarPermission: 'Dispatch needs calendar access to add event dates, times, and locations to your calendar.',
-        remindersPermission: false,
+        remindersPermission: 'Dispatch needs reminders access when you choose to add or manage an event reminder.',
       },
     ]);
+  }
+  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-notifications')) {
+    plugins.push('expo-notifications');
   }
   config.plugins = plugins;
 

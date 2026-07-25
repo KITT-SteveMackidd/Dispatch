@@ -33,6 +33,13 @@ service cloud.firestore {
       return signedIn() && userDocAfter().data.role in ['manager', 'Manager'];
     }
 
+    function isEventOwner(eventId) {
+      return signedIn()
+        && eventId is string
+        && exists(/databases/$(database)/documents/events/$(eventId))
+        && get(/databases/$(database)/documents/events/$(eventId)).data.managerId == request.auth.uid;
+    }
+
     function teamDoc(teamId) {
       return get(/databases/$(database)/documents/teams/$(teamId));
     }
@@ -144,6 +151,16 @@ service cloud.firestore {
         && request.resource.data.managerIds is list
         && request.resource.data.managerIds.size() > 0
         && request.resource.data.managerId in request.resource.data.managerIds
+      )
+      || (
+        isOrganizationManager(resource.data.organizationId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'managerIds', 'updatedAt'])
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.workerIds is list
+        && request.resource.data.managerIds is list
+        && request.resource.data.managerIds.hasAll(resource.data.managerIds)
+        && request.auth.uid in request.resource.data.managerIds
       )
       || (
         acceptedWorkerInviteForTeam(teamId)
@@ -326,15 +343,27 @@ service cloud.firestore {
     }
 
     match /roleAssignmentNotifications/{notificationId} {
-      allow read: if signedIn() && (resource.data.workerId == request.auth.uid || resource.data.managerId == request.auth.uid);
+      allow read: if signedIn() && (
+        resource.data.workerId == request.auth.uid
+        || resource.data.managerId == request.auth.uid
+        || (isManager() && isEventOwner(resource.data.eventId))
+      );
       allow create: if isManager() && request.resource.data.managerId == request.auth.uid && request.resource.data.action == 'assign';
       allow update: if signedIn() && resource.data.workerId == request.auth.uid;
+      allow delete: if isManager() && isEventOwner(resource.data.eventId);
     }
 
     match /userNotifications/{notificationId} {
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || (isManager() && isEventOwner(resource.data.relatedEventId))
+      );
       allow create: if signedIn();
       allow update: if signedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || (isManager() && isEventOwner(resource.data.relatedEventId))
+      );
     }
 
     match /chatThreads/{threadId} {
@@ -354,6 +383,11 @@ service cloud.firestore {
 
     match /events/{eventId} {
       allow read, write: if signedIn();
+    }
+
+    // Private beta checklist state. Each tester can access only their own run.
+    match /dispatchBetaChecklistRuns/{userId} {
+      allow read, create, update, delete: if signedIn() && request.auth.uid == userId;
     }
 
     match /mail/{mailId} {

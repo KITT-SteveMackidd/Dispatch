@@ -1,0 +1,12 @@
+diff --git a/node_modules/react-native/Libraries/AppDelegate/RCTReactNativeFactory.h b/node_modules/react-native/Libraries/AppDelegate/RCTReactNativeFactory.h
+--- a/node_modules/react-native/Libraries/AppDelegate/RCTReactNativeFactory.h
++++ b/node_modules/react-native/Libraries/AppDelegate/RCTReactNativeFactory.h
+@@ -106,7 +106,7 @@ NS_ASSUME_NONNULL_BEGIN
+ 
+ @property (nonatomic, nullable) RCTSurfacePresenterBridgeAdapter *bridgeAdapter;
+ 
+-@property (nonatomic, weak) id<RCTReactNativeFactoryDelegate> delegate;
++@property (nonatomic, strong) id<RCTReactNativeFactoryDelegate> delegate;
+ 
+ @end
+ 

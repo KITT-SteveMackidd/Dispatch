@@ -9,6 +9,7 @@ import { createOrganisationForManager, loadRoleAssignmentExport, markUserNotific
 import { useThemeMode } from '@/context/theme';
 import { headerLogoSource } from '@/constants/branding';
 import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
+import { canResetDispatchDatabase, resetDispatchDatabase } from '@/lib/admin-database-reset';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
@@ -26,6 +27,7 @@ export default function ProfileScreen() {
   const [organisationName, setOrganisationName] = useState('');
   const [creatingOrganisation, setCreatingOrganisation] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [resettingDatabase, setResettingDatabase] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportStartDate, setExportStartDate] = useState(startOfCurrentMonth);
   const [exportEndDate, setExportEndDate] = useState(() => new Date());
@@ -37,6 +39,7 @@ export default function ProfileScreen() {
     () => getPreferredDisplayName(profile?.displayName, authUser?.displayName, authUser?.email),
     [authUser?.displayName, authUser?.email, profile?.displayName]
   );
+  const canResetDatabase = canResetDispatchDatabase(authUser?.email);
 
   useEffect(() => {
     if (!profile?.uid) {
@@ -130,6 +133,51 @@ export default function ProfileScreen() {
             } finally {
               setDeletingAccount(false);
             }
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmDatabaseReset = () => {
+    if (!canResetDatabase || resettingDatabase) return;
+
+    Alert.alert(
+      'Clear all Dispatch data?',
+      'This permanently deletes every Firestore collection and every Firebase user account. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Final confirmation',
+              'All Dispatch data and accounts, including your own account, will be permanently deleted.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete everything',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      setResettingDatabase(true);
+                      await resetDispatchDatabase();
+                      await signOut().catch(() => undefined);
+                      router.replace('/(auth)/signin');
+                      Alert.alert('Dispatch cleared', 'The database and all user accounts were deleted.');
+                    } catch (error) {
+                      Alert.alert(
+                        'Unable to clear Dispatch',
+                        error instanceof Error ? error.message : 'The database reset did not complete.'
+                      );
+                    } finally {
+                      setResettingDatabase(false);
+                    }
+                  },
+                },
+              ]
+            );
           },
         },
       ]
@@ -237,6 +285,18 @@ export default function ProfileScreen() {
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => stub('Help & Support')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Help & Support</Text>
       </Pressable>
+      {canResetDatabase ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear all Dispatch data and user accounts"
+          style={[styles.row, isDarkMode ? styles.resetRowDark : styles.resetRowLight, resettingDatabase && styles.disabled]}
+          onPress={confirmDatabaseReset}
+          disabled={resettingDatabase}>
+          <Text style={[styles.rowText, isDarkMode ? styles.resetRowTextDark : styles.resetRowTextLight]}>
+            {resettingDatabase ? 'Clearing Dispatch...' : 'Clear Database & User Accounts'}
+          </Text>
+        </Pressable>
+      ) : null}
       <Pressable
         style={[styles.row, isDarkMode ? styles.deleteRowDark : styles.deleteRowLight, deletingAccount && styles.disabled]}
         onPress={confirmDeleteAccount}
@@ -387,6 +447,10 @@ const styles = StyleSheet.create({
   deleteRowDark: { backgroundColor: '#2f1018', borderColor: '#7f1d1d' },
   deleteRowTextLight: { color: '#b91c1c' },
   deleteRowTextDark: { color: '#fecaca' },
+  resetRowLight: { backgroundColor: '#fff7ed', borderColor: '#fdba74' },
+  resetRowDark: { backgroundColor: '#2b1909', borderColor: '#c2410c' },
+  resetRowTextLight: { color: '#c2410c' },
+  resetRowTextDark: { color: '#fed7aa' },
   createOrganisationRow: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
   createOrganisationText: { color: '#061229', fontWeight: '700' },
   input: { marginTop: 14, padding: 13, borderRadius: 12, borderWidth: 1 },

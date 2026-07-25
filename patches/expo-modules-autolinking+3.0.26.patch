@@ -1,0 +1,38 @@
+diff --git a/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js b/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js
+--- a/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js
++++ b/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js
+@@ -26,8 +26,12 @@ function generateModulesProviderCommand(cli) {
+             appRoot: commandArguments.appRoot ?? (await autolinkingOptionsLoader.getAppRoot()),
+         });
+         const expoModulesResolveResults = await (0, resolveModules_1.resolveModulesAsync)(expoModulesSearchResults, autolinkingOptions);
+-        const includeModules = new Set(commandArguments.packages ?? []);
+-        const filteredModules = expoModulesResolveResults.filter((module) => includeModules.has(module.packageName));
++        // CocoaPods can pass an incomplete package allowlist when regenerating
++        // the provider during an SDK 54 archive. The
++        // resolver has already applied the project's search paths and excludes,
++        // so use its complete Apple module set to avoid compiling a partial
++        // ExpoModulesProvider.
++        const filteredModules = expoModulesResolveResults;
+         await (0, generatePackageList_1.generateModulesProviderAsync)(filteredModules, {
+             platform,
+             targetPath: commandArguments.target,
+diff --git a/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts b/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts
+--- a/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts
++++ b/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts
+@@ -50,10 +50,12 @@ export function generateModulesProviderCommand(cli: commander.CommanderStatic) {
+           autolinkingOptions
+         );
+ 
+-        const includeModules = new Set(commandArguments.packages ?? []);
+-        const filteredModules = expoModulesResolveResults.filter((module) =>
+-          includeModules.has(module.packageName)
+-        );
++        // CocoaPods can pass an incomplete package allowlist when regenerating
++        // the provider during an SDK 54 archive. The
++        // resolver has already applied the project's search paths and excludes,
++        // so use its complete Apple module set to avoid compiling a partial
++        // ExpoModulesProvider.
++        const filteredModules = expoModulesResolveResults;
+ 
+         await generateModulesProviderAsync(filteredModules, {
+           platform,

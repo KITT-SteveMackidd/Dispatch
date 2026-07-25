@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
-import * as AppleAuthentication from 'expo-apple-authentication';
-import * as Crypto from 'expo-crypto';
 import { Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
 import { useSession, type SocialAuthResult } from '@/context/session';
 import type { AppRole } from '@/types/dispatch';
+
+type AppleAuthenticationModule = typeof import('expo-apple-authentication');
+type CryptoModule = typeof import('expo-crypto');
 
 type SocialAuthButtonsProps = {
   mode: 'signin' | 'signup';
@@ -23,16 +23,11 @@ type ProviderButtonProps = SocialAuthButtonsProps & {
 export function SocialAuthButtons(props: SocialAuthButtonsProps) {
   const { saveProfile } = useSession();
   const [loading, setLoading] = useState(false);
-  const [appleAvailable, setAppleAvailable] = useState(false);
   const [pendingProfile, setPendingProfile] = useState<{ displayName: string } | null>(null);
   const [savingRole, setSavingRole] = useState(false);
   const googleConfigured = Boolean(getGoogleClientId());
+  const appleAvailable = Platform.OS === 'ios';
   const disabled = Boolean(props.disabled || loading || pendingProfile);
-
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    AppleAuthentication.isAvailableAsync().then(setAppleAvailable).catch(() => setAppleAvailable(false));
-  }, []);
 
   if (!googleConfigured && !appleAvailable) return null;
 
@@ -74,7 +69,12 @@ export function SocialAuthButtons(props: SocialAuthButtonsProps) {
         ) : null}
 
         {appleAvailable ? (
-          <AppleProviderButton {...props} disabled={disabled} onLoadingChange={setLoading} onAuthenticated={onAuthenticated} />
+          <AppleProviderButton
+            {...props}
+            disabled={disabled}
+            onLoadingChange={setLoading}
+            onAuthenticated={onAuthenticated}
+          />
         ) : null}
       </View>
 
@@ -166,7 +166,7 @@ function GoogleProviderButton(props: ProviderButtonProps) {
         props.disabled && styles.disabled,
         pressed && !props.disabled && styles.pressed,
       ]}>
-      <GoogleIcon size={21} />
+      <GoogleIcon />
       <Text style={[styles.providerText, props.isDarkMode && styles.providerTextDark]}>
         Continue with Google
       </Text>
@@ -174,14 +174,9 @@ function GoogleProviderButton(props: ProviderButtonProps) {
   );
 }
 
-function GoogleIcon({ size }: { size: number }) {
+function GoogleIcon() {
   return (
-    <Svg width={size} height={size} viewBox="0 0 48 48" accessibilityElementsHidden importantForAccessibility="no">
-      <Path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-      <Path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-      <Path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-      <Path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-    </Svg>
+    <Text accessibilityElementsHidden importantForAccessibility="no" style={styles.googleIcon}>G</Text>
   );
 }
 
@@ -191,6 +186,14 @@ function AppleProviderButton(props: ProviderButtonProps) {
   const onApplePress = async () => {
     try {
       props.onLoadingChange(true);
+      // Keep optional native modules completely off the startup render path.
+      // Any linking problem now occurs inside this guarded user action instead
+      // of becoming a fatal production exception at the splash screen.
+      const AppleAuthentication = require('expo-apple-authentication') as AppleAuthenticationModule;
+      const Crypto = require('expo-crypto') as CryptoModule;
+      const available = await AppleAuthentication.isAvailableAsync();
+      if (!available) throw new Error('Apple authentication is not available on this device.');
+
       const rawNonce = Crypto.randomUUID();
       const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
       const result = await AppleAuthentication.signInAsync({
@@ -220,19 +223,22 @@ function AppleProviderButton(props: ProviderButtonProps) {
   };
 
   return (
-    <View pointerEvents={props.disabled ? 'none' : 'auto'} style={props.disabled && styles.disabled}>
-      <AppleAuthentication.AppleAuthenticationButton
-        buttonStyle={props.isDarkMode
-          ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
-          : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-        buttonType={props.mode === 'signup'
-          ? AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP
-          : AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-        cornerRadius={8}
-        onPress={onApplePress}
-        style={styles.appleButton}
-      />
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${props.mode === 'signup' ? 'Sign up' : 'Sign in'} with Apple`}
+      disabled={props.disabled}
+      onPress={onApplePress}
+      style={({ pressed }) => [
+        styles.appleButton,
+        props.isDarkMode ? styles.appleButtonOnDark : styles.appleButtonOnLight,
+        props.disabled && styles.disabled,
+        pressed && !props.disabled && styles.pressed,
+      ]}>
+      <Text style={[styles.appleLogo, props.isDarkMode && styles.appleContentOnDark]}></Text>
+      <Text style={[styles.appleText, props.isDarkMode && styles.appleContentOnDark]}>
+        {props.mode === 'signup' ? 'Sign up with Apple' : 'Sign in with Apple'}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -269,9 +275,25 @@ const styles = StyleSheet.create({
   },
   providerButtonLight: { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1' },
   providerButtonDark: { backgroundColor: '#12274D', borderColor: '#38517E' },
+  googleIcon: { color: '#4285F4', fontSize: 21, fontWeight: '800', lineHeight: 24 },
   providerText: { color: '#232832', fontWeight: '700' },
   providerTextDark: { color: '#F4F8FF' },
-  appleButton: { width: '100%', height: 44 },
+  appleButton: {
+    width: '100%',
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 14,
+  },
+  appleButtonOnLight: { backgroundColor: '#000000', borderColor: '#000000' },
+  appleButtonOnDark: { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' },
+  appleLogo: { color: '#FFFFFF', fontSize: 21, lineHeight: 24 },
+  appleText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
+  appleContentOnDark: { color: '#000000' },
   modalBackdrop: {
     flex: 1,
     alignItems: 'center',

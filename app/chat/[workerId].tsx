@@ -7,7 +7,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, renameCustomChat, sendChatMessage, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
+import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, renameCustomChat, sendChatMessage, updateTeamWorkerMembership, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
 import type { UserProfile } from '@/types/dispatch';
 
 type ChatMessage = {
@@ -56,10 +56,14 @@ export default function WorkerChatScreen() {
     [params.teamMemberIds]
   );
   const isCustomChat = params.chatKind === 'custom' || params.teamThreadId?.includes(':group:') === true;
+  const isTeamChat = params.chatKind === 'team' && !!teamId;
+  const canManageTeamMembers = isTeamChat && profile?.role?.toLowerCase() === 'manager';
+  const canEditMemberSelection = isCustomChat || canManageTeamMembers;
+  const usesLiveThreadParticipants = isCustomChat || isTeamChat;
   const [chatThread, setChatThread] = useState<ChatThreadHead | null>(null);
   const memberIds = useMemo(
-    () => [...new Set((isCustomChat && chatThread?.participants?.length ? chatThread.participants : initialMemberIds).filter(Boolean))],
-    [chatThread?.participants, initialMemberIds, isCustomChat]
+    () => [...new Set((usesLiveThreadParticipants && chatThread?.participants?.length ? chatThread.participants : initialMemberIds).filter(Boolean))],
+    [chatThread?.participants, initialMemberIds, usesLiveThreadParticipants]
   );
   const broadcastCount = memberIds.length;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -92,6 +96,7 @@ export default function WorkerChatScreen() {
         .join(', ');
     }
     if (isTeamBroadcast) {
+      if (isTeamChat && broadcastCount) return `${broadcastCount} team member${broadcastCount === 1 ? '' : 's'}`;
       if (params.teamThreadPath?.trim()) return params.teamThreadPath.trim();
       if (broadcastCount) return `${broadcastCount} member${broadcastCount === 1 ? '' : 's'}`;
       return 'Team chat';
@@ -100,7 +105,7 @@ export default function WorkerChatScreen() {
     if (params.teamName?.trim()) return params.teamName.trim();
     if (params.eventName?.trim()) return params.eventName.trim();
     return '';
-  }, [broadcastCount, isCustomChat, isTeamBroadcast, memberIds, organizationMemberById, params.eventName, params.teamName, params.teamThreadPath, profile]);
+  }, [broadcastCount, isCustomChat, isTeamBroadcast, isTeamChat, memberIds, organizationMemberById, params.eventName, params.teamName, params.teamThreadPath, profile]);
 
   const headerInitial = headerTitle.trim().slice(0, 1).toUpperCase() || 'C';
 
@@ -116,12 +121,12 @@ export default function WorkerChatScreen() {
   }, [isTeamBroadcast, params.teamThreadId, profile, teamId, workerId]);
 
   useEffect(() => {
-    if (!isCustomChat || !threadId) {
+    if (!usesLiveThreadParticipants || !threadId) {
       setChatThread(null);
       return;
     }
     return watchChatThread(threadId, setChatThread);
-  }, [isCustomChat, threadId]);
+  }, [threadId, usesLiveThreadParticipants]);
 
   useEffect(() => {
     if (!profile?.organizationId) {
@@ -274,7 +279,10 @@ export default function WorkerChatScreen() {
   }, [memberSearch, organizationMembers]);
 
   const openMemberPicker = () => {
-    setSelectedMemberIds(memberIds);
+    const organizationManagerIds = canManageTeamMembers
+      ? organizationMembers.filter((member) => member.role === 'manager').map((member) => member.uid)
+      : [];
+    setSelectedMemberIds([...new Set([...memberIds, ...organizationManagerIds])]);
     setMemberSearch('');
     setMemberPickerOpen(true);
   };
@@ -287,16 +295,23 @@ export default function WorkerChatScreen() {
   };
 
   const toggleMemberSelection = (memberId: string) => {
-    if (!isCustomChat || memberIds.includes(memberId)) return;
+    const member = organizationMemberById.get(memberId);
+    const canToggleCustomMember = isCustomChat && !memberIds.includes(memberId);
+    const canToggleTeamWorker = canManageTeamMembers && member?.role === 'worker';
+    if (!canToggleCustomMember && !canToggleTeamWorker) return;
     setSelectedMemberIds((current) => current.includes(memberId)
       ? current.filter((id) => id !== memberId)
       : [...current, memberId]);
   };
 
   const toggleSelectAllMembers = () => {
-    if (!isCustomChat) return;
-    const visibleIds = selectableOrganizationMembers.map((member) => member.uid);
-    const selectableIds = visibleIds.filter((id) => !memberIds.includes(id));
+    if (!canEditMemberSelection) return;
+    const visibleIds = selectableOrganizationMembers
+      .filter((member) => isCustomChat || member.role === 'worker')
+      .map((member) => member.uid);
+    const selectableIds = isCustomChat
+      ? visibleIds.filter((id) => !memberIds.includes(id))
+      : visibleIds;
     const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedMemberIds.includes(id));
     setSelectedMemberIds((current) => allSelected
       ? current.filter((id) => !selectableIds.includes(id))
@@ -319,6 +334,29 @@ export default function WorkerChatScreen() {
       setSelectedMemberIds([]);
     } catch (error) {
       Alert.alert('Unable to add people', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setAddingMembers(false);
+    }
+  };
+
+  const handleSaveTeamMembers = async () => {
+    if (!canManageTeamMembers || !teamId || !profile || addingMembers) return;
+    const workerIds = selectedMemberIds.filter(
+      (memberId) => organizationMemberById.get(memberId)?.role === 'worker'
+    );
+
+    try {
+      setAddingMembers(true);
+      await updateTeamWorkerMembership({
+        managerId: profile.uid,
+        teamId,
+        workerIds,
+      });
+      setMemberPickerOpen(false);
+      setMemberSearch('');
+      setSelectedMemberIds([]);
+    } catch (error) {
+      Alert.alert('Unable to update Team', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setAddingMembers(false);
     }
@@ -443,7 +481,10 @@ export default function WorkerChatScreen() {
               </Text>
               {headerSubtitle ? (
                 <View style={styles.headerSubtitleRow}>
-                  <Pressable accessibilityLabel={isCustomChat ? 'Add people to chat' : 'View people in chat'} hitSlop={8} onPress={openMemberPicker}>
+                  <Pressable
+                    accessibilityLabel={isCustomChat ? 'Add people to chat' : canManageTeamMembers ? 'Manage Team members' : 'View people in chat'}
+                    hitSlop={8}
+                    onPress={openMemberPicker}>
                     <MaterialIcons name="add-circle" size={15} color="#0EC3C9" />
                   </Pressable>
                   <Text style={[styles.headerSubtitle, styles.headerSubtitleNames, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]} numberOfLines={1}>
@@ -521,7 +562,7 @@ export default function WorkerChatScreen() {
           <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.memberPickerKeyboardView}>
             <Pressable style={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
               <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>
-                {isCustomChat ? 'Add People' : 'People in Chat'}
+                {isCustomChat ? 'Add People' : canManageTeamMembers ? 'Manage Team' : 'People in Chat'}
               </Text>
               <TextInput
                 value={memberSearch}
@@ -530,9 +571,17 @@ export default function WorkerChatScreen() {
                 placeholderTextColor={isDarkMode ? '#9fb0cf' : '#64748b'}
                 style={[styles.memberSearchInput, isDarkMode ? styles.memberSearchInputDark : styles.memberSearchInputLight]}
               />
-              <Pressable style={[styles.selectAllRow, !isCustomChat && styles.disabledControl]} disabled={!isCustomChat} onPress={toggleSelectAllMembers}>
+              <Pressable
+                style={[styles.selectAllRow, !canEditMemberSelection && styles.disabledControl]}
+                disabled={!canEditMemberSelection}
+                onPress={toggleSelectAllMembers}>
                 <MaterialIcons
-                  name={selectableOrganizationMembers.length > 0 && selectableOrganizationMembers.every((member) => selectedMemberIds.includes(member.uid)) ? 'check-box' : 'check-box-outline-blank'}
+                  name={selectableOrganizationMembers.some((member) => isCustomChat || member.role === 'worker')
+                    && selectableOrganizationMembers
+                      .filter((member) => isCustomChat || member.role === 'worker')
+                      .every((member) => selectedMemberIds.includes(member.uid))
+                    ? 'check-box'
+                    : 'check-box-outline-blank'}
                   size={23}
                   color="#0EC3C9"
                 />
@@ -541,11 +590,22 @@ export default function WorkerChatScreen() {
               <ScrollView style={styles.memberPickerList} keyboardShouldPersistTaps="handled">
                 {selectableOrganizationMembers.map((member) => {
                   const alreadyInChat = memberIds.includes(member.uid);
+                  const canToggleTeamWorker = canManageTeamMembers && member.role === 'worker';
+                  const locked = isCustomChat ? alreadyInChat : !canToggleTeamWorker;
+                  const memberMeta = canManageTeamMembers
+                    ? member.role === 'manager'
+                      ? 'Manager - always included'
+                      : selectedMemberIds.includes(member.uid)
+                        ? 'Team member'
+                        : member.email || 'Worker'
+                    : alreadyInChat
+                      ? 'Already in chat'
+                      : member.email || (member.role === 'manager' ? 'Manager' : 'Worker');
                   return (
                     <Pressable
                       key={member.uid}
-                      style={[styles.memberPickerRow, (alreadyInChat || !isCustomChat) && styles.memberPickerRowLocked]}
-                      disabled={!isCustomChat || alreadyInChat}
+                      style={[styles.memberPickerRow, locked && styles.memberPickerRowLocked]}
+                      disabled={locked}
                       onPress={() => toggleMemberSelection(member.uid)}>
                       <MaterialIcons
                         name={selectedMemberIds.includes(member.uid) ? 'check-box' : 'check-box-outline-blank'}
@@ -555,7 +615,7 @@ export default function WorkerChatScreen() {
                       <View style={styles.memberPickerCopy}>
                         <Text style={[styles.memberPickerName, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>{member.displayName}</Text>
                         <Text style={[styles.memberPickerMeta, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]}>
-                          {alreadyInChat ? 'Already in chat' : member.email || (member.role === 'manager' ? 'Manager' : 'Worker')}
+                          {memberMeta}
                         </Text>
                       </View>
                     </Pressable>
@@ -563,10 +623,12 @@ export default function WorkerChatScreen() {
                 })}
               </ScrollView>
               <Pressable
-                style={[styles.memberPickerButton, (!isCustomChat || addingMembers) && styles.sendButtonDisabled]}
-                disabled={!isCustomChat || addingMembers}
-                onPress={handleAddMembers}>
-                <Text style={styles.memberPickerButtonText}>{addingMembers ? 'Adding...' : 'Chat'}</Text>
+                style={[styles.memberPickerButton, (!canEditMemberSelection || addingMembers) && styles.sendButtonDisabled]}
+                disabled={!canEditMemberSelection || addingMembers}
+                onPress={canManageTeamMembers ? handleSaveTeamMembers : handleAddMembers}>
+                <Text style={styles.memberPickerButtonText}>
+                  {addingMembers ? (canManageTeamMembers ? 'Saving...' : 'Adding...') : canManageTeamMembers ? 'Save Team' : 'Chat'}
+                </Text>
               </Pressable>
               <Pressable style={styles.memberPickerCloseButton} disabled={addingMembers} onPress={closeMemberPicker}>
                 <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>

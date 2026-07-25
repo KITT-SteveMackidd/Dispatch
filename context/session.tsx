@@ -183,47 +183,60 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }, SESSION_STARTUP_TIMEOUT_MS);
 
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      markStartup('auth_state_received', {
-        hasUser: Boolean(user),
-        emailVerified: Boolean(user?.emailVerified),
+    let unsub: () => void = () => undefined;
+
+    try {
+      unsub = onAuthStateChanged(auth, async (user) => {
+        markStartup('auth_state_received', {
+          hasUser: Boolean(user),
+          emailVerified: Boolean(user?.emailVerified),
+        });
+        authStateReceived = true;
+        clearTimeout(timeout);
+        setAuthUser(user);
+
+        if (!user) {
+          setProfile(null);
+          setNeedsProfile(false);
+          setLoading(false);
+          return;
+        }
+
+        try {
+          markStartup('profile_load_started', { uid: user.uid });
+          const p = await withTimeout(
+            loadProfile(user.uid),
+            PROFILE_STARTUP_TIMEOUT_MS,
+            'Timed out loading profile.'
+          );
+          markStartup('profile_load_finished', {
+            hasProfile: Boolean(p),
+            role: p?.role,
+            hasOrganization: Boolean(p?.organizationId),
+          });
+          setProfile(p);
+          setNeedsProfile(!p);
+        } catch (profileError) {
+          captureStartupIssue('Dispatch profile startup load failed', {
+            uid: user.uid,
+            message: profileError instanceof Error ? profileError.message : String(profileError),
+          });
+          setProfile(null);
+          setNeedsProfile(true);
+        } finally {
+          setLoading(false);
+        }
       });
-      authStateReceived = true;
+    } catch (authSubscriptionError) {
       clearTimeout(timeout);
-      setAuthUser(user);
-
-      if (!user) {
-        setProfile(null);
-        setNeedsProfile(false);
-        setLoading(false);
-        return;
-      }
-
-      try {
-        markStartup('profile_load_started', { uid: user.uid });
-        const p = await withTimeout(
-          loadProfile(user.uid),
-          PROFILE_STARTUP_TIMEOUT_MS,
-          'Timed out loading profile.'
-        );
-        markStartup('profile_load_finished', {
-          hasProfile: Boolean(p),
-          role: p?.role,
-          hasOrganization: Boolean(p?.organizationId),
-        });
-        setProfile(p);
-        setNeedsProfile(!p);
-      } catch (profileError) {
-        captureStartupIssue('Dispatch profile startup load failed', {
-          uid: user.uid,
-          message: profileError instanceof Error ? profileError.message : String(profileError),
-        });
-        setProfile(null);
-        setNeedsProfile(true);
-      } finally {
-        setLoading(false);
-      }
-    });
+      captureStartupIssue('Dispatch auth subscription failed during startup', {
+        message: authSubscriptionError instanceof Error ? authSubscriptionError.message : String(authSubscriptionError),
+      });
+      setAuthUser(null);
+      setProfile(null);
+      setNeedsProfile(false);
+      setLoading(false);
+    }
 
     return () => {
       clearTimeout(timeout);
@@ -234,41 +247,50 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (firebaseConfigError || !authUser) return undefined;
 
-    return onSnapshot(
-      doc(db, 'users', authUser.uid),
-      (snap) => {
-        if (!snap.exists()) {
+    try {
+      return onSnapshot(
+        doc(db, 'users', authUser.uid),
+        (snap) => {
+          if (!snap.exists()) {
+            setProfile(null);
+            setNeedsProfile(true);
+            return;
+          }
+
+          const data = snap.data() as Partial<UserProfile>;
+          const role = normalizeRole(data.role);
+          if (!role) {
+            setProfile(null);
+            setNeedsProfile(true);
+            return;
+          }
+
+          setProfile({
+            uid: authUser.uid,
+            displayName: data.displayName || 'Dispatch User',
+            role,
+            organizationId: data.organizationId || null,
+            organizationName: data.organizationName || null,
+            email: data.email || null,
+            canonicalEmail: data.canonicalEmail || null,
+            phoneNumber: data.phoneNumber,
+            scheduledEventReminderKeys: data.scheduledEventReminderKeys || [],
+          });
+          setNeedsProfile(false);
+        },
+        () => {
           setProfile(null);
           setNeedsProfile(true);
-          return;
         }
-
-        const data = snap.data() as Partial<UserProfile>;
-        const role = normalizeRole(data.role);
-        if (!role) {
-          setProfile(null);
-          setNeedsProfile(true);
-          return;
-        }
-
-        setProfile({
-          uid: authUser.uid,
-          displayName: data.displayName || 'Dispatch User',
-          role,
-          organizationId: data.organizationId || null,
-          organizationName: data.organizationName || null,
-          email: data.email || null,
-          canonicalEmail: data.canonicalEmail || null,
-          phoneNumber: data.phoneNumber,
-          scheduledEventReminderKeys: data.scheduledEventReminderKeys || [],
-        });
-        setNeedsProfile(false);
-      },
-      () => {
-        setProfile(null);
-        setNeedsProfile(true);
-      }
-    );
+      );
+    } catch (profileSubscriptionError) {
+      captureStartupIssue('Dispatch profile subscription failed', {
+        message: profileSubscriptionError instanceof Error ? profileSubscriptionError.message : String(profileSubscriptionError),
+      });
+      setProfile(null);
+      setNeedsProfile(true);
+      return undefined;
+    }
   }, [authUser]);
 
   const signIn = async (email: string, password: string) => {

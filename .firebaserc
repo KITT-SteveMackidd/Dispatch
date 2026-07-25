@@ -1,5 +1,7 @@
 {
-  "projects": {},
+  "projects": {
+    "default": "dispatch-eb63a"
+  },
   "targets": {},
   "etags": {
     "dispatch-eb63a": {
