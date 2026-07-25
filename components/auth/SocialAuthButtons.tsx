@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
-import { Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession, type SocialAuthResult } from '@/context/session';
-import type { AppRole } from '@/types/dispatch';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
 type CryptoModule = typeof import('expo-crypto');
@@ -12,7 +11,7 @@ type SocialAuthButtonsProps = {
   displayName?: string;
   isDarkMode: boolean;
   disabled?: boolean;
-  onSuccess: () => void;
+  onSuccess: (result: SocialAuthResult) => void;
 };
 
 type ProviderButtonProps = SocialAuthButtonsProps & {
@@ -21,93 +20,36 @@ type ProviderButtonProps = SocialAuthButtonsProps & {
 };
 
 export function SocialAuthButtons(props: SocialAuthButtonsProps) {
-  const { saveProfile } = useSession();
   const [loading, setLoading] = useState(false);
-  const [pendingProfile, setPendingProfile] = useState<{ displayName: string } | null>(null);
-  const [savingRole, setSavingRole] = useState(false);
   const googleConfigured = Boolean(getGoogleClientId());
   const appleAvailable = Platform.OS === 'ios';
-  const disabled = Boolean(props.disabled || loading || pendingProfile);
+  const disabled = Boolean(props.disabled || loading);
 
   if (!googleConfigured && !appleAvailable) return null;
 
-  const onAuthenticated = (result: SocialAuthResult) => {
-    if (result.needsRoleSelection) {
-      setPendingProfile({ displayName: result.displayName });
-      return;
-    }
-
-    props.onSuccess();
-  };
-
-  const selectRole = async (role: AppRole) => {
-    if (!pendingProfile || savingRole) return;
-
-    try {
-      setSavingRole(true);
-      await saveProfile({ displayName: pendingProfile.displayName, role });
-      setPendingProfile(null);
-      props.onSuccess();
-    } catch (error) {
-      Alert.alert('Unable to save role', error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setSavingRole(false);
-    }
-  };
+  const onAuthenticated = (result: SocialAuthResult) => props.onSuccess(result);
 
   return (
-    <>
-      <View style={styles.container}>
-        <View style={styles.dividerRow}>
-          <View style={[styles.divider, props.isDarkMode && styles.dividerDark]} />
-          <Text style={[styles.dividerText, props.isDarkMode && styles.dividerTextDark]}>or</Text>
-          <View style={[styles.divider, props.isDarkMode && styles.dividerDark]} />
-        </View>
-
-        {googleConfigured ? (
-          <GoogleProviderButton {...props} disabled={disabled} onLoadingChange={setLoading} onAuthenticated={onAuthenticated} />
-        ) : null}
-
-        {appleAvailable ? (
-          <AppleProviderButton
-            {...props}
-            disabled={disabled}
-            onLoadingChange={setLoading}
-            onAuthenticated={onAuthenticated}
-          />
-        ) : null}
+    <View style={styles.container}>
+      <View style={styles.dividerRow}>
+        <View style={[styles.divider, props.isDarkMode && styles.dividerDark]} />
+        <Text style={[styles.dividerText, props.isDarkMode && styles.dividerTextDark]}>or</Text>
+        <View style={[styles.divider, props.isDarkMode && styles.dividerDark]} />
       </View>
 
-      <Modal visible={Boolean(pendingProfile)} transparent animationType="fade" onRequestClose={() => undefined}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.roleModal, props.isDarkMode ? styles.roleModalDark : styles.roleModalLight]}>
-            <Text style={[styles.roleTitle, props.isDarkMode && styles.roleTitleDark]}>Select your role</Text>
-            <Text style={[styles.roleDescription, props.isDarkMode && styles.roleDescriptionDark]}>
-              How will you use Dispatch? You can change this later in Account Settings.
-            </Text>
-            <View style={styles.roleActions}>
-              {(['manager', 'worker'] as AppRole[]).map((role) => (
-                <Pressable
-                  key={role}
-                  accessibilityRole="button"
-                  disabled={savingRole}
-                  onPress={() => selectRole(role)}
-                  style={({ pressed }) => [
-                    styles.roleButton,
-                    props.isDarkMode ? styles.roleButtonDark : styles.roleButtonLight,
-                    savingRole && styles.disabled,
-                    pressed && !savingRole && styles.pressed,
-                  ]}>
-                  <Text style={[styles.roleButtonText, props.isDarkMode && styles.roleButtonTextDark]}>
-                    {savingRole ? 'Saving...' : role === 'manager' ? 'Manager' : 'Worker'}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </>
+      {googleConfigured ? (
+        <GoogleProviderButton {...props} disabled={disabled} onLoadingChange={setLoading} onAuthenticated={onAuthenticated} />
+      ) : null}
+
+      {appleAvailable ? (
+        <AppleProviderButton
+          {...props}
+          disabled={disabled}
+          onLoadingChange={setLoading}
+          onAuthenticated={onAuthenticated}
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -294,40 +236,6 @@ const styles = StyleSheet.create({
   appleLogo: { color: '#FFFFFF', fontSize: 21, lineHeight: 24 },
   appleText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
   appleContentOnDark: { color: '#000000' },
-  modalBackdrop: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(6, 18, 41, 0.68)',
-    padding: 24,
-  },
-  roleModal: {
-    width: '100%',
-    maxWidth: 390,
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: 22,
-  },
-  roleModalLight: { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1' },
-  roleModalDark: { backgroundColor: '#12274D', borderColor: '#38517E' },
-  roleTitle: { color: '#121212', fontSize: 22, fontWeight: '800', textAlign: 'center' },
-  roleTitleDark: { color: '#F4F8FF' },
-  roleDescription: { color: '#64748B', fontSize: 15, lineHeight: 21, marginTop: 8, textAlign: 'center' },
-  roleDescriptionDark: { color: '#CBD5E1' },
-  roleActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  roleButton: {
-    flex: 1,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-  },
-  roleButtonLight: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
-  roleButtonDark: { backgroundColor: '#0EC3C9', borderColor: '#0EC3C9' },
-  roleButtonText: { color: '#061229', fontSize: 16, fontWeight: '800' },
-  roleButtonTextDark: { color: '#061229' },
   disabled: { opacity: 0.55 },
   pressed: { opacity: 0.78 },
 });

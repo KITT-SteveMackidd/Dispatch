@@ -46,17 +46,18 @@ function RootLayout() {
 function RootNavigator({ modules }: { modules: StartupModules }) {
   const { useSession, useThemeMode } = modules;
   const { resolvedThemeMode } = useThemeMode();
-  const { authUser, profile, needsProfile, loading, requiresEmailVerification } = useSession();
+  const { authUser, profile, needsProfile, needsOnboarding, loading, requiresEmailVerification } = useSession();
 
   useEffect(() => {
     markStartup('root_navigator_state', {
       hasAuthUser: Boolean(authUser),
       hasProfile: Boolean(profile),
       needsProfile,
+      needsOnboarding,
       loading,
       requiresEmailVerification,
     });
-  }, [authUser, profile, needsProfile, loading, requiresEmailVerification]);
+  }, [authUser, profile, needsProfile, needsOnboarding, loading, requiresEmailVerification]);
 
   return (
     <ThemeProvider value={resolvedThemeMode === 'dark' ? DarkTheme : DefaultTheme}>
@@ -67,7 +68,7 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signin" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/signup" options={{ headerShown: false }} />
-        <Stack.Screen name="(auth)/setup" options={{ title: 'Complete Profile' }} />
+        <Stack.Screen name="(auth)/setup" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/verify-email" options={{ title: 'Verify Email' }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="account-settings" options={{ title: 'Account Settings' }} />

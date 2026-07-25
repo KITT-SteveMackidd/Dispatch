@@ -3,7 +3,7 @@ import { Image, StyleSheet, View } from 'react-native';
 import { useSession } from '@/context/session';
 
 export default function Index() {
-  const { authUser, loading, needsProfile, profile, requiresEmailVerification } = useSession();
+  const { authUser, loading, needsOnboarding, requiresEmailVerification } = useSession();
 
   if (loading) {
     return (
@@ -21,7 +21,7 @@ export default function Index() {
     return <Redirect href="/(auth)/verify-email" />;
   }
 
-  if (authUser && needsProfile && !profile) {
+  if (authUser && needsOnboarding) {
     return <Redirect href="/(auth)/setup" />;
   }
 

@@ -13,7 +13,6 @@ import {
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import { AppRole } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
@@ -32,7 +31,6 @@ export default function SignUpScreen() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<AppRole>('manager');
   const [loading, setLoading] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -72,7 +70,7 @@ export default function SignUpScreen() {
 
     setLoading(true);
     try {
-      await signUp({ displayName: displayName.trim(), email, password, role });
+      await signUp({ displayName: displayName.trim(), email, password });
       Alert.alert('Verify your email', 'We sent a verification link to your inbox. Verify your email to continue.');
       router.replace('/(auth)/verify-email');
     } catch (error) {
@@ -165,31 +163,6 @@ export default function SignUpScreen() {
         </View>
 
         <View style={authStyles.lightActionGroup}>
-          <View style={authStyles.lightRoleRow}>
-            {(['manager', 'worker'] as AppRole[]).map((r) => {
-              const active = role === r;
-              return (
-                <Pressable
-                  key={r}
-                  onPress={() => setRole(r)}
-                  style={[
-                    authStyles.lightRolePill,
-                    active
-                      ? { backgroundColor: '#F98D2F', borderColor: '#F98D2F' }
-                      : { backgroundColor: '#FEEAE2', borderColor: '#F98D2F' },
-                  ]}>
-                  <Text
-                    style={[
-                      authStyles.lightRolePillText,
-                      { color: active ? '#FEF4F1' : '#F98D2F', fontFamily: active ? 'Inter-Bold' : 'Inter' },
-                    ]}>
-                    {r === 'manager' ? 'Manager' : 'Worker'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
           <Pressable
             style={({ pressed }) => [
               authStyles.lightButton,
@@ -206,7 +179,7 @@ export default function SignUpScreen() {
             displayName={displayName}
             isDarkMode={false}
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={() => router.replace('/(tabs)')}
+            onSuccess={(result) => router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
           />
 
           <View style={authStyles.lightFooterRow}>
@@ -283,31 +256,6 @@ export default function SignUpScreen() {
             style={authStyles.darkInput}
           />
 
-          <View style={authStyles.darkRoleRow}>
-            {(['manager', 'worker'] as AppRole[]).map((r) => {
-              const active = role === r;
-              return (
-                <Pressable
-                  key={r}
-                  onPress={() => setRole(r)}
-                  style={[
-                    authStyles.darkRolePill,
-                    active
-                      ? { backgroundColor: '#F98D2F', borderColor: '#F98D2F' }
-                      : { backgroundColor: '#203E75', borderColor: '#F98D2F' },
-                  ]}>
-                  <Text
-                    style={[
-                      authStyles.darkRolePillText,
-                      { color: active ? '#FEF4F1' : '#F98D2F', fontFamily: active ? 'Inter-Bold' : 'Inter' },
-                    ]}>
-                    {r === 'manager' ? 'Manager' : 'Worker'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
           <Pressable
             style={({ pressed }) => [
               authStyles.darkButton,
@@ -324,7 +272,7 @@ export default function SignUpScreen() {
             displayName={displayName}
             isDarkMode
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={() => router.replace('/(tabs)')}
+            onSuccess={(result) => router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
           />
 
           <View style={authStyles.darkFooterRow}>

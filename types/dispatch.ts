@@ -4,6 +4,7 @@ export type UserProfile = {
   uid: string;
   displayName: string;
   role: AppRole;
+  onboardingCompleted?: boolean;
   organizationId?: string | null;
   organizationName?: string | null;
   email?: string | null;

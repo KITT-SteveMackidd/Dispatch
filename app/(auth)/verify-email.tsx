@@ -39,7 +39,7 @@ export default function VerifyEmailScreen() {
     try {
       const isVerified = await refreshAuthUser();
       if (isVerified) {
-        router.replace('/(tabs)');
+        router.replace('/');
       } else {
         Alert.alert('Not verified yet', 'We still show this account as unverified. Open the link from your email, then try again.');
       }

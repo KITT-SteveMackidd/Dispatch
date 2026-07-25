@@ -23,12 +23,14 @@ type SessionContextType = {
   authUser: User | null;
   loading: boolean;
   needsProfile: boolean;
+  needsOnboarding: boolean;
   requiresEmailVerification: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: (params: { idToken: string; accessToken?: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
   signInWithApple: (params: { idToken: string; rawNonce: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
-  signUp: (params: { email: string; password: string; displayName: string; role: AppRole }) => Promise<void>;
-  saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string }) => Promise<void>;
+  signUp: (params: { email: string; password: string; displayName: string }) => Promise<void>;
+  saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => Promise<void>;
+  completeOnboarding: () => Promise<UserProfile | null>;
   refreshProfile: () => Promise<UserProfile | null>;
   sendPasswordReset: (email: string) => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
@@ -71,6 +73,7 @@ async function loadProfile(uid: string): Promise<UserProfile | null> {
     uid,
     displayName: data.displayName || 'Dispatch User',
     role,
+    onboardingCompleted: data.onboardingCompleted !== false,
     organizationId: data.organizationId || null,
     organizationName: data.organizationName || null,
     email: data.email || null,
@@ -147,11 +150,12 @@ function assertFirebaseConfigured() {
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [emailVerified, setEmailVerified] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsProfile, setNeedsProfile] = useState(false);
 
-  const requiresEmailVerification = Boolean(authUser && !authUser.emailVerified);
+  const requiresEmailVerification = Boolean(authUser && !emailVerified);
 
   useEffect(() => {
     markStartup('session_effect_started', {
@@ -163,6 +167,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         firebaseConfigError,
       });
       setAuthUser(null);
+      setEmailVerified(false);
       setProfile(null);
       setNeedsProfile(false);
       setLoading(false);
@@ -178,6 +183,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         hasCurrentUser: Boolean(currentUser),
       });
       setAuthUser(currentUser);
+      setEmailVerified(Boolean(currentUser?.emailVerified));
       setProfile(null);
       setNeedsProfile(Boolean(currentUser));
       setLoading(false);
@@ -194,6 +200,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         authStateReceived = true;
         clearTimeout(timeout);
         setAuthUser(user);
+        setEmailVerified(Boolean(user?.emailVerified));
 
         if (!user) {
           setProfile(null);
@@ -233,6 +240,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         message: authSubscriptionError instanceof Error ? authSubscriptionError.message : String(authSubscriptionError),
       });
       setAuthUser(null);
+      setEmailVerified(false);
       setProfile(null);
       setNeedsProfile(false);
       setLoading(false);
@@ -269,6 +277,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             uid: authUser.uid,
             displayName: data.displayName || 'Dispatch User',
             role,
+            onboardingCompleted: data.onboardingCompleted !== false,
             organizationId: data.organizationId || null,
             organizationName: data.organizationName || null,
             email: data.email || null,
@@ -399,7 +408,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (params: { email: string; password: string; displayName: string; role: AppRole }) => {
+  const signUp = async (params: { email: string; password: string; displayName: string }) => {
     assertFirebaseConfigured();
     const normalizedEmail = params.email.trim();
     const trimmedName = params.displayName.trim();
@@ -407,17 +416,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, params.password);
     await updateProfile(cred.user, { displayName: trimmedName });
     await sendEmailVerification(cred.user);
-
-    await upsertProfile({
-      uid: cred.user.uid,
-      displayName: trimmedName,
-      role: params.role,
-      email: normalizedEmail,
-      merge: false,
-    });
   };
 
-  const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string }) => {
+  const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => {
     assertFirebaseConfigured();
     if (!auth.currentUser) throw new Error('Not authenticated');
     const user = auth.currentUser;
@@ -432,6 +433,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         canonicalEmail: canonicalizeEmail(user.email) || null,
         phoneNumber: params.phoneNumber?.trim() || null,
         updatedAt: serverTimestamp(),
+        ...(params.onboardingCompleted === undefined
+          ? {}
+          : params.onboardingCompleted
+            ? { onboardingCompleted: true, onboardingCompletedAt: serverTimestamp() }
+            : { onboardingCompleted: false, onboardingStartedAt: serverTimestamp() }),
       },
       { merge: true }
     );
@@ -444,8 +450,39 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
 
     const nextProfile = await loadProfile(user.uid);
-    setProfile(nextProfile || { uid: user.uid, displayName: params.displayName.trim(), role: params.role, organizationId: null, organizationName: null, phoneNumber: params.phoneNumber?.trim() || undefined });
+    setProfile(nextProfile || {
+      uid: user.uid,
+      displayName: params.displayName.trim(),
+      role: params.role,
+      onboardingCompleted: params.onboardingCompleted ?? true,
+      organizationId: null,
+      organizationName: null,
+      email: normalizeEmail(user.email) || null,
+      canonicalEmail: canonicalizeEmail(user.email) || null,
+      phoneNumber: params.phoneNumber?.trim() || undefined,
+    });
     setNeedsProfile(false);
+  };
+
+  const completeOnboarding = async () => {
+    assertFirebaseConfigured();
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not authenticated');
+
+    await setDoc(
+      doc(db, 'users', user.uid),
+      {
+        onboardingCompleted: true,
+        onboardingCompletedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    const nextProfile = await loadProfile(user.uid);
+    setProfile(nextProfile);
+    setNeedsProfile(!nextProfile);
+    return nextProfile;
   };
 
   const refreshProfile = async () => {
@@ -476,18 +513,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const user = auth.currentUser;
     if (!user) {
       setAuthUser(null);
+      setEmailVerified(false);
       return false;
     }
 
     await user.reload();
     const refreshed = auth.currentUser;
+    const isVerified = Boolean(refreshed?.emailVerified);
+    if (isVerified) {
+      await refreshed?.getIdToken(true);
+    }
     setAuthUser(refreshed);
-    return Boolean(refreshed?.emailVerified);
+    setEmailVerified(isVerified);
+    return isVerified;
   };
 
   const revokeSession = async () => {
     assertFirebaseConfigured();
     await firebaseSignOut(auth);
+    setEmailVerified(false);
     setProfile(null);
     setNeedsProfile(false);
   };
@@ -501,6 +545,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await deleteDispatchAccount({ userId: user.uid });
     await deleteUser(user);
     setAuthUser(null);
+    setEmailVerified(false);
     setProfile(null);
     setNeedsProfile(false);
   };
@@ -508,9 +553,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     assertFirebaseConfigured();
     await firebaseSignOut(auth);
+    setEmailVerified(false);
     setProfile(null);
     setNeedsProfile(false);
   };
+
+  const needsOnboarding = Boolean(authUser && (!profile || profile.onboardingCompleted === false));
 
   const value = useMemo(
     () => ({
@@ -518,12 +566,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       authUser,
       loading,
       needsProfile,
+      needsOnboarding,
       requiresEmailVerification,
       signIn,
       signInWithGoogle,
       signInWithApple,
       signUp,
       saveProfile,
+      completeOnboarding,
       refreshProfile,
       sendPasswordReset,
       sendVerificationEmail,
@@ -532,7 +582,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       deleteAccount,
       signOut,
     }),
-    [profile, authUser, loading, needsProfile, requiresEmailVerification]
+    [profile, authUser, loading, needsProfile, needsOnboarding, requiresEmailVerification]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
