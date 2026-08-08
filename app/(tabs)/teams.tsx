@@ -19,29 +19,28 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { headerLogoSource } from '@/constants/branding';
+import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
 import {
   ChatThreadHead,
-  acceptWorkerInvite,
   buildOrganizationChatThreadId,
   buildOrganizationManagersThreadId,
   createChatGroup,
   createTeam,
-  declineWorkerInvite,
   ensureOrganizationCommunicationThreads,
   ensureTeamCommunicationThreads,
   inviteManagerByEmailToOrganisation,
   inviteWorkerByEmailToTeam,
   loadOrganizationMembers,
   loadUserProfilesByIds,
-  markUserNotificationsRead,
   watchIncomingChatThreadHeads,
   watchManagerTeams,
-  watchUserNotifications,
   watchUserTeamUnreadCounts,
   watchWorkerTeams,
 } from '@/services/dispatch';
-import type { UserNotification } from '@/services/dispatch';
+import { getWorkerInviteErrorMessage, getWorkerInviteOutcomeMessage } from '@/lib/worker-invite-validation';
 import type { Organisation, Team, UserProfile } from '@/types/dispatch';
+import { buildCurrentManagerIds, buildManagerChatParticipants, getVisibleManagerChatWorkerIds } from '@/lib/chat-list-membership';
+import { DrawerBottomFill } from '@/components/DrawerBottomFill';
 
 type DrawerMode = 'add-team' | 'invite-worker' | 'invite-manager';
 
@@ -67,6 +66,7 @@ export default function TeamsScreen() {
   const insets = useSafeAreaInsets();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [organization, setOrganization] = useState<Organisation | null>(null);
@@ -75,8 +75,6 @@ export default function TeamsScreen() {
   const [unreadCountByThreadId, setUnreadCountByThreadId] = useState<Record<string, number>>({});
   const [legacyUnreadCountByTeamId, setLegacyUnreadCountByTeamId] = useState<Record<string, number>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [workerInviteNotifications, setWorkerInviteNotifications] = useState<UserNotification[]>([]);
-  const [workerInviteBusyId, setWorkerInviteBusyId] = useState<string | null>(null);
 
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
@@ -169,16 +167,6 @@ export default function TeamsScreen() {
     }
   }, [profile, teams]);
 
-  useEffect(() => {
-    if (profile?.role !== 'worker') {
-      setWorkerInviteNotifications([]);
-      return;
-    }
-    return watchUserNotifications(profile.uid, (items) => {
-      setWorkerInviteNotifications(items.filter((item) => item.kind === 'worker_team_invite' && !item.read));
-    });
-  }, [profile]);
-
   const memberById = useMemo(() => new Map(members.map((member) => [member.uid, member])), [members]);
   const threadHeadById = useMemo(() => new Map(threadHeads.map((thread) => [thread.id, thread])), [threadHeads]);
 
@@ -186,10 +174,7 @@ export default function TeamsScreen() {
     if (!profile) return [];
     const items: ChatListItem[] = [];
     const allMemberIds = [...new Set([profile.uid, ...members.map((member) => member.uid)])];
-    const managerIds = [...new Set([
-      ...(organization?.managerIds || members.filter((member) => member.role === 'manager').map((member) => member.uid)),
-      ...(profile.role === 'manager' ? [profile.uid] : []),
-    ])];
+    const managerIds = buildCurrentManagerIds(members, profile);
     const organizationId = organization?.id || profile.organizationId;
     const managerThreadWorkerIds = threadHeads
       .filter((thread) => organizationId && thread.kind === 'manager' && thread.id.startsWith(`organization:${organizationId}:managers:`))
@@ -226,11 +211,11 @@ export default function TeamsScreen() {
       });
     });
 
-    const visibleWorkerIds = profile.role === 'worker' ? [profile.uid] : workerIds;
+    const visibleWorkerIds = getVisibleManagerChatWorkerIds(workerIds, profile);
     visibleWorkerIds.forEach((workerId) => {
       const threadId = buildOrganizationManagersThreadId(organizationId || '', workerId);
       const existingThread = threadHeadById.get(threadId);
-      const participantIds = [...new Set(existingThread?.participants?.length ? existingThread.participants : [workerId, ...managerIds])];
+      const participantIds = buildManagerChatParticipants(workerId, managerIds);
       if (!organizationId || !participantIds.includes(profile.uid)) return;
       const worker = memberById.get(workerId);
       const chatManagerIds = participantIds.filter((participantId) => participantId !== workerId && memberById.get(participantId)?.role === 'manager');
@@ -339,20 +324,6 @@ export default function TeamsScreen() {
     }
   };
 
-  const handleWorkerInviteResponse = async (notification: UserNotification, response: 'accept' | 'decline') => {
-    if (!profile?.uid || !notification.relatedRoleId || workerInviteBusyId) return;
-    try {
-      setWorkerInviteBusyId(notification.id);
-      if (response === 'accept') await acceptWorkerInvite({ userId: profile.uid, inviteId: notification.relatedRoleId });
-      else await declineWorkerInvite({ userId: profile.uid, inviteId: notification.relatedRoleId });
-      await markUserNotificationsRead({ userId: profile.uid, notificationIds: [notification.id] });
-    } catch (error) {
-      Alert.alert('Unable to respond', error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setWorkerInviteBusyId(null);
-    }
-  };
-
   const openDrawer = () => {
     setDrawerMode('add-team');
     setTeamName('');
@@ -371,9 +342,9 @@ export default function TeamsScreen() {
         setTeamName('');
         setDrawerMessage('Team created.');
       } else if (drawerMode === 'invite-worker') {
-        await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId: inviteTeamId === 'solo' ? undefined : inviteTeamId, email: inviteEmail });
+        const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId: inviteTeamId === 'solo' ? undefined : inviteTeamId, email: inviteEmail });
         setInviteEmail('');
-        setDrawerMessage('Worker invite sent.');
+        setDrawerMessage(getWorkerInviteOutcomeMessage(result));
       } else {
         await inviteManagerByEmailToOrganisation({ inviterId: profile.uid, email: inviteEmail });
         setInviteEmail('');
@@ -382,7 +353,11 @@ export default function TeamsScreen() {
       setDrawerMessageTone('success');
     } catch (error) {
       setDrawerMessageTone('error');
-      setDrawerMessage(error instanceof Error ? error.message : 'Unable to complete this action.');
+      setDrawerMessage(
+        drawerMode === 'invite-worker'
+          ? getWorkerInviteErrorMessage(error)
+          : error instanceof Error ? error.message : 'Unable to complete this action.'
+      );
     } finally {
       setSaving(false);
     }
@@ -408,37 +383,11 @@ export default function TeamsScreen() {
         data={chatItems}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={(loadError || workerInviteNotifications.length) ? (
-          <>
-            {loadError ? (
-              <View style={styles.loadErrorBanner}>
-                <MaterialIcons name="error-outline" size={18} color="#991b1b" />
-                <Text style={styles.loadErrorText}>{loadError}</Text>
-              </View>
-            ) : null}
-            {workerInviteNotifications.length ? (
-              <View style={[styles.invitePanel, isDarkMode ? styles.cardDark : styles.cardLight]}>
-            <Text style={[styles.panelTitle, isDarkMode ? styles.textDark : styles.textLight]}>Team invites</Text>
-            {workerInviteNotifications.map((notification) => {
-              const busy = workerInviteBusyId === notification.id;
-              return (
-                <View key={notification.id} style={styles.inviteRow}>
-                  <View style={styles.flex}>
-                    <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]}>{notification.title}</Text>
-                    <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]}>{notification.body}</Text>
-                  </View>
-                  <Pressable disabled={busy} style={styles.smallOutlineButton} onPress={() => handleWorkerInviteResponse(notification, 'decline')}>
-                    <Text style={styles.smallOutlineText}>Decline</Text>
-                  </Pressable>
-                  <Pressable disabled={busy} style={styles.smallButton} onPress={() => handleWorkerInviteResponse(notification, 'accept')}>
-                    <Text style={styles.smallButtonText}>{busy ? '...' : 'Accept'}</Text>
-                  </Pressable>
-                </View>
-              );
-            })}
-              </View>
-            ) : null}
-          </>
+        ListHeaderComponent={loadError ? (
+          <View style={styles.loadErrorBanner}>
+            <MaterialIcons name="error-outline" size={18} color="#991b1b" />
+            <Text style={styles.loadErrorText}>{loadError}</Text>
+          </View>
         ) : null}
         ListEmptyComponent={<Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>No conversations yet.</Text>}
         renderItem={({ item }) => {
@@ -450,8 +399,8 @@ export default function TeamsScreen() {
                 <MaterialIcons name="groups" size={22} color="#F98D2F" />
               </View>
               <View style={[styles.flex, styles.chatCopy]}>
-                <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]} numberOfLines={1}>{item.title}</Text>
-                <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]} numberOfLines={1}>
+                <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>{item.title}</Text>
+                <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>
                   {head?.lastMessageText || item.subtitle}
                 </Text>
               </View>
@@ -471,6 +420,7 @@ export default function TeamsScreen() {
       <Modal visible={chatPickerOpen} transparent animationType="slide" onRequestClose={closeChatPicker}>
         <Pressable style={styles.backdrop} onPress={closeChatPicker}>
           <Pressable style={[styles.pickerDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => undefined}>
+            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
             <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>New Chat</Text>
             <TextInput
               value={memberSearch}
@@ -489,13 +439,21 @@ export default function TeamsScreen() {
             </Pressable>
             <ScrollView style={styles.memberList} keyboardShouldPersistTaps="handled">
               {selectableMembers.map((member) => (
-                <Pressable key={member.uid} style={styles.memberRow} onPress={() => toggleMember(member.uid)}>
-                  <MaterialIcons name={selectedMemberIds.includes(member.uid) ? 'check-box' : 'check-box-outline-blank'} size={23} color="#0EC3C9" />
+                <View key={member.uid} style={styles.memberRow}>
+                  <Pressable
+                    accessibilityLabel={`Select ${member.displayName}`}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: selectedMemberIds.includes(member.uid) }}
+                    hitSlop={4}
+                    style={styles.memberSelectButton}
+                    onPress={() => toggleMember(member.uid)}>
+                    <MaterialIcons name={selectedMemberIds.includes(member.uid) ? 'check-box' : 'check-box-outline-blank'} size={23} color="#0EC3C9" />
+                  </Pressable>
                   <View style={styles.flex}>
                     <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]}>{member.displayName}</Text>
                     <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]}>{member.email || (member.role === 'manager' ? 'Manager' : 'Worker')}</Text>
                   </View>
-                </Pressable>
+                </View>
               ))}
             </ScrollView>
             <Pressable style={[styles.chatButton, (!selectedMemberIds.length || creatingChat) && styles.disabled]} disabled={!selectedMemberIds.length || creatingChat} onPress={handleCreateChat}>
@@ -509,6 +467,7 @@ export default function TeamsScreen() {
         <Pressable style={styles.backdrop} onPress={() => setDrawerOpen(false)}>
           <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })}>
             <Pressable style={[styles.actionDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => undefined}>
+              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.drawerContent}>
                 <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>Team Actions</Text>
                 <View style={styles.modeRow}>
@@ -559,7 +518,7 @@ const styles = StyleSheet.create({
   topHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 },
   logo: { width: 64, height: 64 },
   headerActions: { flexDirection: 'row', gap: 10 },
-  iconButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
+  iconButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
   listContent: { paddingBottom: 24 },
   chatCard: { minHeight: 76, borderRadius: 8, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1 },
   loadErrorBanner: { minHeight: 48, marginBottom: 10, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fecaca' },
@@ -583,13 +542,6 @@ const styles = StyleSheet.create({
   badgePlaceholder: { height: 22 },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   emptyText: { paddingTop: 24, textAlign: 'center' },
-  invitePanel: { borderRadius: 8, borderWidth: 1, padding: 14, marginBottom: 12, gap: 10 },
-  panelTitle: { fontSize: 15, fontWeight: '700' },
-  inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(100,116,139,0.25)' },
-  smallButton: { minHeight: 34, borderRadius: 7, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0EC3C9' },
-  smallButtonText: { color: '#061229', fontWeight: '700', fontSize: 12 },
-  smallOutlineButton: { minHeight: 34, borderRadius: 7, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#F98D2F' },
-  smallOutlineText: { color: '#F98D2F', fontWeight: '700', fontSize: 12 },
   backdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
   pickerDrawer: { height: '78%', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
   actionDrawer: { maxHeight: '88%', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
@@ -604,6 +556,7 @@ const styles = StyleSheet.create({
   selectLabel: { fontSize: 14, fontWeight: '700' },
   memberList: { flex: 1 },
   memberRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.2)' },
+  memberSelectButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   chatButton: { minHeight: 52, borderRadius: 8, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', marginTop: 14 },
   chatButtonText: { color: '#061229', fontSize: 16, fontWeight: '700' },
   disabled: { opacity: 0.5 },

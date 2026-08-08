@@ -1,3 +1,5 @@
+const crypto = require('node:crypto');
+
 function uniqueStrings(values) {
   return [...new Set((Array.isArray(values) ? values : []).filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
 }
@@ -25,23 +27,44 @@ function chatPushContent(message, thread = {}) {
   };
 }
 
+function documentKey(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function chatPushRecipientIds(message, thread = {}, activeViewerIds = []) {
+  const activeViewers = new Set(uniqueStrings(activeViewerIds));
+  return uniqueStrings(message.recipientIds?.length ? message.recipientIds : thread.participants)
+    .filter((userId) => userId !== message.senderId && !activeViewers.has(userId));
+}
+
 function rolePushContent(notification) {
   const roleLabel = typeof notification.roleName === 'string' && notification.roleName.trim()
     ? notification.roleName.trim()
     : 'assigned role';
+  const eventLabel = typeof notification.eventName === 'string' && notification.eventName.trim()
+    ? notification.eventName.trim()
+    : 'Event';
   const title = notification.action === 'assign' ? 'New role invite' : 'Role update';
-  const fallbackBody = `${notification.eventName || 'Event'}: ${notification.action === 'assign' ? `You were invited to ${roleLabel}.` : `You were removed from ${roleLabel}.`}`;
+  const fallbackBody = `${eventLabel}: You were removed from ${roleLabel}.`;
   return {
     title,
-    body: typeof notification.statusReason === 'string' && notification.statusReason.trim()
-      ? notification.statusReason.trim()
-      : fallbackBody,
+    body: notification.action === 'assign'
+      ? `${eventLabel}: You were invited to ${roleLabel}. Accept or decline in Dispatch.`
+      : typeof notification.statusReason === 'string' && notification.statusReason.trim()
+        ? notification.statusReason.trim()
+        : fallbackBody,
     data: {
       kind: 'user_notification',
       relatedEventId: notification.eventId,
       roleAssignmentNotificationId: notification.id,
     },
   };
+}
+
+function rolePushRecipientId(notification) {
+  const workerId = typeof notification.workerId === 'string' ? notification.workerId.trim() : '';
+  const managerId = typeof notification.managerId === 'string' ? notification.managerId.trim() : '';
+  return workerId && workerId !== managerId ? workerId : null;
 }
 
 function eventReminderTargets(event) {
@@ -58,8 +81,11 @@ function eventReminderTargets(event) {
 
 module.exports = {
   chatPushContent,
+  chatPushRecipientIds,
+  documentKey,
   eventReminderTargets,
   normalizeExpoPushTokens,
   rolePushContent,
+  rolePushRecipientId,
   uniqueStrings,
 };

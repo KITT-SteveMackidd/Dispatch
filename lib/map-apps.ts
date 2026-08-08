@@ -1,4 +1,5 @@
 import { Alert, Linking, Platform } from 'react-native';
+import { getMapLocationValidationError } from '@/lib/map-location-validation';
 
 type MapOption = {
   label: string;
@@ -8,11 +9,11 @@ type MapOption = {
 
 const encodeLocation = (location: string) => encodeURIComponent(location.trim());
 
-export async function openMapAppPicker(location: string) {
+export async function openMapAppPicker(location: string, placeId?: string | null) {
   const trimmedLocation = location.trim();
-
-  if (!trimmedLocation) {
-    Alert.alert('Location unavailable', 'This event does not have a location yet.');
+  const validationError = getMapLocationValidationError(trimmedLocation, placeId);
+  if (validationError) {
+    Alert.alert('Location unavailable', validationError);
     return;
   }
 

@@ -18,6 +18,7 @@ import { authPalettes, authStyles } from '@/components/auth/authStyles';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
 import { firebaseConfigError, firebaseConfigWarnings } from '@/lib/firebase';
+import { getAuthErrorMessage } from '@/lib/auth-error-messages';
 
 const lightSignInLogoSource = authLightLogoSource;
 const darkSignInLogoSource = authDarkLogoSource;
@@ -69,7 +70,7 @@ export default function SignInScreen() {
       await signIn(email, password);
       router.replace('/(tabs)');
     } catch (error) {
-      Alert.alert('Sign in failed', error instanceof Error ? error.message : 'Unable to sign in.');
+      Alert.alert('Sign in failed', getAuthErrorMessage(error, 'signin'));
     } finally {
       setLoading(false);
     }
@@ -88,7 +89,7 @@ export default function SignInScreen() {
       await sendPasswordReset(email);
       Alert.alert('Reset email sent', 'Check your inbox for a password reset link.');
     } catch (error) {
-      Alert.alert('Reset failed', error instanceof Error ? error.message : 'Unable to send password reset email.');
+      Alert.alert('Reset failed', getAuthErrorMessage(error, 'password-reset'));
     } finally {
       setResetting(false);
     }

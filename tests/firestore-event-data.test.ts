@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEventTaskFromTemplate, sanitizeEventRoleForFirestore } from '../lib/firestore-event-data';
+import { buildEventTaskFromTemplate, buildNewEventRoleForFirestore, sanitizeEventRoleForFirestore } from '../lib/firestore-event-data';
 
 function containsUndefined(value: unknown): boolean {
   if (value === undefined) return true;
@@ -72,5 +72,19 @@ describe('sanitizeEventRoleForFirestore', () => {
       expectedOffsetMinutes: 90,
       dueAt: '2026-07-15T12:00:00.000Z',
     });
+  });
+
+  it('builds an assignable open role without changing template-shaped task input', () => {
+    const tasks = [{ id: 'task-1', name: 'Briefing', expectedOffsetMinutes: 15 }];
+    const role = buildNewEventRoleForFirestore('role-new', ' Floor Crew ', tasks, Date.parse('2026-07-31T10:00:00.000Z'));
+
+    expect(role).toMatchObject({
+      id: 'role-new',
+      name: 'Floor Crew',
+      assignedWorkerIds: [],
+      openSlots: 1,
+      tasks: [{ dueAt: '2026-07-31T10:15:00.000Z' }],
+    });
+    expect(tasks[0]).not.toHaveProperty('dueAt');
   });
 });

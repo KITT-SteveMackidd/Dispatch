@@ -26,10 +26,13 @@ export function sortEventsByDate(items: DispatchEvent[]) {
 export function computeRoleTaskProgress(role: EventRole, workerId?: string) {
   const tasks = role.tasks || [];
   const total = tasks.length;
+  const assignedWorkerIds = new Set(role.assignedWorkerIds || []);
 
   const done = tasks.filter((task: EventTask) => {
     const completedBy = task.completedBy || [];
-    return workerId ? completedBy.includes(workerId) : completedBy.length > 0;
+    return workerId
+      ? assignedWorkerIds.has(workerId) && completedBy.includes(workerId)
+      : completedBy.some((completedWorkerId) => assignedWorkerIds.has(completedWorkerId));
   }).length;
 
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -41,10 +44,70 @@ export function computeEventTaskProgress(event: DispatchEvent, options?: { exclu
     ? event.roles.filter((role) => (role.assignedWorkerIds?.length ?? 0) > 0)
     : event.roles;
 
-  const tasks = roles.flatMap((role) => role.tasks || []);
-  const total = tasks.length;
-  const done = tasks.filter((task) => (task.completedBy?.length ?? 0) > 0).length;
+  const total = roles.reduce((sum, role) => sum + (role.tasks || []).length, 0);
+  const done = roles.reduce((sum, role) => sum + computeRoleTaskProgress(role).done, 0);
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
 
   return { total, done, percent };
+}
+
+export function clearWorkerTaskCompletions(role: EventRole, workerId: string): EventRole {
+  return {
+    ...role,
+    tasks: (role.tasks || []).map((task) => ({
+      ...task,
+      completedBy: (task.completedBy || []).filter((completedWorkerId) => completedWorkerId !== workerId),
+    })),
+  };
+}
+
+export function getEventOperationalWindow(event: DispatchEvent, leadMinutes = 120, trailMinutes = 120) {
+  const startsAtMs = new Date(event.startsAt).getTime();
+  if (!Number.isFinite(startsAtMs)) return null;
+
+  const candidateEndTimes = [startsAtMs];
+  const endsAtMs = event.endsAt ? new Date(event.endsAt).getTime() : Number.NaN;
+  if (Number.isFinite(endsAtMs)) candidateEndTimes.push(endsAtMs);
+
+  event.roles.forEach((role) => {
+    (role.tasks || []).forEach((task) => {
+      const dueAtMs = task.dueAt ? new Date(task.dueAt).getTime() : Number.NaN;
+      if (Number.isFinite(dueAtMs)) {
+        candidateEndTimes.push(dueAtMs);
+        return;
+      }
+      if (Number.isFinite(task.expectedOffsetMinutes)) {
+        candidateEndTimes.push(startsAtMs + Math.max(0, task.expectedOffsetMinutes as number) * 60 * 1000);
+      }
+    });
+  });
+
+  return {
+    startsAtMs: startsAtMs - Math.max(0, leadMinutes) * 60 * 1000,
+    endsAtMs: Math.max(...candidateEndTimes) + Math.max(0, trailMinutes) * 60 * 1000,
+  };
+}
+
+export function isEventOperationalAt(event: DispatchEvent, timestamp: number, leadMinutes = 120, trailMinutes = 120) {
+  const window = getEventOperationalWindow(event, leadMinutes, trailMinutes);
+  return Boolean(window && timestamp >= window.startsAtMs && timestamp <= window.endsAtMs);
+}
+
+function localCalendarDayNumber(timestamp: number) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return null;
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / (24 * 60 * 60 * 1000);
+}
+
+export function isEventVisibleOnToday(event: DispatchEvent, timestamp: number) {
+  const eventStartsAtMs = new Date(event.startsAt).getTime();
+  const eventDay = localCalendarDayNumber(eventStartsAtMs);
+  const currentDay = localCalendarDayNumber(timestamp);
+  if (eventDay === null || currentDay === null) return false;
+
+  const dayDifference = eventDay - currentDay;
+  if (dayDifference === 0) return true;
+  if (Math.abs(dayDifference) !== 1) return false;
+
+  return isEventOperationalAt(event, timestamp);
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Alert, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
@@ -10,6 +10,8 @@ import { useThemeMode } from '@/context/theme';
 import { headerLogoSource } from '@/constants/branding';
 import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
 import { canResetDispatchDatabase, resetDispatchDatabase } from '@/lib/admin-database-reset';
+import { DISPATCH_PRIVACY_URL, DISPATCH_SUPPORT_URL } from '@/constants/legal';
+import { DrawerBottomFill } from '@/components/DrawerBottomFill';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
@@ -20,6 +22,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
   const canManageTemplates = profile?.role === 'manager';
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
@@ -81,7 +84,13 @@ export default function ProfileScreen() {
     }
   };
 
-  const stub = (label: string) => Alert.alert(label, 'This panel is a UI placeholder for now.');
+  const openPublicPage = async (label: string, url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(`Unable to open ${label}`, url);
+    }
+  };
 
   const createOrganisation = async () => {
     if (!profile?.uid || !organisationName.trim()) {
@@ -112,7 +121,7 @@ export default function ProfileScreen() {
 
     Alert.alert(
       'Delete account?',
-      `This permanently deletes your Dispatch account.${managerSoleOrgMessage}`,
+      `This permanently deletes your Dispatch account, messages, invitations, notifications, assignments, and uploaded files. This cannot be undone.${managerSoleOrgMessage}${usesAppleProvider(authUser) ? ' Apple will ask you to confirm your identity before deletion begins.' : ''}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -282,8 +291,11 @@ export default function ProfileScreen() {
           Notifications {unreadIds.length ? `(${unreadIds.length} new)` : ''}
         </Text>
       </Pressable>
-      <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => stub('Help & Support')}>
+      <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => void openPublicPage('Help & Support', DISPATCH_SUPPORT_URL)}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Help & Support</Text>
+      </Pressable>
+      <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => void openPublicPage('Privacy Policy', DISPATCH_PRIVACY_URL)}>
+        <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Privacy Policy</Text>
       </Pressable>
       {canResetDatabase ? (
         <Pressable
@@ -310,6 +322,7 @@ export default function ProfileScreen() {
       <Modal visible={notificationsOpen} animationType="slide" transparent onRequestClose={() => setNotificationsOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setNotificationsOpen(false)}>
           <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
+            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Notifications</Text>
             <ScrollView style={styles.modalScroll}>
               {notifications.length ? notifications.map((notification) => (
@@ -329,6 +342,7 @@ export default function ProfileScreen() {
       <Modal visible={organisationModalOpen} animationType="slide" transparent onRequestClose={() => setOrganisationModalOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setOrganisationModalOpen(false)}>
           <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
+            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Create Organization</Text>
             <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
               Create a new organization for your managers, workers, and teams.
@@ -353,6 +367,7 @@ export default function ProfileScreen() {
       <Modal visible={exportModalOpen} animationType="slide" transparent onRequestClose={closeExportModal}>
         <Pressable style={styles.modalBackdrop} onPress={closeExportModal}>
           <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
+            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Export Worker Roles</Text>
             <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
               Choose the event date range to include in the spreadsheet.
@@ -531,4 +546,8 @@ function displayNameFromEmail(email?: string | null) {
   const words = withoutAlias.split(/[._-]+/).filter(Boolean);
   if (!words.length) return '';
   return words.map((word) => word.slice(0, 1).toUpperCase() + word.slice(1)).join(' ');
+}
+
+function usesAppleProvider(user?: { providerData?: Array<{ providerId?: string }> } | null) {
+  return Boolean(user?.providerData?.some((provider) => provider.providerId === 'apple.com'));
 }

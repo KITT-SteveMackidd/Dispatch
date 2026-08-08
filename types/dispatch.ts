@@ -55,8 +55,11 @@ export type DispatchEvent = {
   id: string;
   managerId: string;
   organizationId?: string | null;
+  revision?: number;
   name: string;
   location: string;
+  locationPlaceId?: string;
+  description?: string;
   startsAt: string;
   endsAt?: string;
   teamIds: string[];
@@ -97,6 +100,7 @@ export type WorkerInvite = {
   organizationName?: string | null;
   email: string;
   normalizedEmail?: string;
+  canonicalEmail?: string;
   workerId?: string | null;
   inviteTokenId?: string | null;
   tokenPreview?: string;
@@ -176,6 +180,7 @@ export type EventTemplate = {
   name: string;
   roles: EventTemplateRole[];
   defaultLocation?: string;
+  defaultLocationPlaceId?: string;
   defaultTime?: string;
   defaultDescription?: string;
   createdAt?: { toDate?: () => Date } | Date | null;

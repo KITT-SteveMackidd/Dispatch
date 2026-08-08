@@ -8,19 +8,24 @@ import {
   saveUserPushToken,
 } from '@/services/dispatch';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
+import { shouldPresentForegroundNotification } from '@/lib/foreground-chat-notifications';
+import { rememberRegisteredDeviceToken } from '@/services/push-token-session';
 
 let notificationHandlerConfigured = false;
 
 function ensureNotificationHandler() {
   if (notificationHandlerConfigured) return;
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
+    handleNotification: async (notification) => {
+      const shouldPresent = shouldPresentForegroundNotification(notification.request.content.data as NotificationRouteData);
+      return {
+        shouldShowAlert: shouldPresent,
+        shouldShowBanner: shouldPresent,
+        shouldShowList: shouldPresent,
+        shouldPlaySound: shouldPresent,
+        shouldSetBadge: shouldPresent,
+      };
+    },
   });
   notificationHandlerConfigured = true;
 }
@@ -98,6 +103,7 @@ export function usePushNotificationBridge() {
         platform: Platform.OS === 'ios' || Platform.OS === 'android' || Platform.OS === 'web' ? Platform.OS : 'unknown',
         permissionStatus: 'granted',
       }).catch(() => undefined);
+      await rememberRegisteredDeviceToken(profile.uid, expoToken.data);
       return true;
     };
 

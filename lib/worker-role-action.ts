@@ -63,6 +63,17 @@ export function getWorkerRoleActionFromNotification(
   }, workerId);
 }
 
+export function getWorkerVisibleRoles(roles: EventRole[], workerId: string, pendingRoleIds: Iterable<string> = []) {
+  const pending = new Set(pendingRoleIds);
+  return roles.filter((role) => (
+    (role.assignedWorkerIds || []).includes(workerId)
+    || (role.waitlistWorkerIds || []).includes(workerId)
+    || (role.eligibleWaitlistWorkerIds || []).includes(workerId)
+    || (role.waitlistInviteWorkerIds || []).includes(workerId)
+    || pending.has(role.id)
+  ));
+}
+
 export function keepLatestWorkerRoleNotifications<T extends WorkerRoleNotificationSnapshot>(
   notifications: T[]
 ): T[] {

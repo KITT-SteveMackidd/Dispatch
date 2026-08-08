@@ -9,11 +9,19 @@ const {
   deleteAllFirestoreCollections,
   isAuthorizedAdminEmail,
 } = require('./lib/admin-reset');
+const { deleteDispatchUserData } = require('./lib/account-deletion');
+const {
+  firebaseIdTokenFromAuthorizationHeader,
+  revokeAppleAuthorization,
+} = require('./lib/apple-account-revocation');
 const {
   chatPushContent,
+  chatPushRecipientIds,
+  documentKey,
   eventReminderTargets,
   normalizeExpoPushTokens,
   rolePushContent,
+  rolePushRecipientId,
   uniqueStrings,
 } = require('./lib/push-content');
 const {
@@ -21,29 +29,31 @@ const {
   roleNotificationStateChanged,
   roleStateFingerprint,
 } = require('./lib/role-state');
+const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
 let db;
 let FieldValue;
 let adminAuth;
+let storageBucket;
+
+const RECENT_AUTH_MAX_AGE_SECONDS = 5 * 60;
 
 onInit(() => {
   const { initializeApp } = require('firebase-admin/app');
   const { getAuth } = require('firebase-admin/auth');
+  const { getStorage } = require('firebase-admin/storage');
   const firestore = require('firebase-admin/firestore');
-  initializeApp();
-  adminAuth = getAuth();
-  db = firestore.getFirestore();
+  const app = initializeApp();
+  adminAuth = getAuth(app);
+  db = firestore.getFirestore(app);
+  storageBucket = getStorage(app).bucket();
   FieldValue = firestore.FieldValue;
 });
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const PROCESSING_LEASE_MS = 5 * 60 * 1000;
-
-function documentKey(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
-}
 
 function chunks(values, size) {
   const result = [];
@@ -83,6 +93,101 @@ exports.resetDispatchDatabase = onCall({
   });
 
   return { firestoreCollectionsDeleted, authUsersDeleted };
+});
+
+exports.deleteDispatchAccount = onCall({
+  maxInstances: 5,
+  timeoutSeconds: 540,
+  memory: '1GiB',
+}, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'You must be signed in to delete your Dispatch account.');
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const authTime = Number(request.auth.token.auth_time);
+  if (!Number.isFinite(authTime)
+    || authTime > nowSeconds + 60
+    || nowSeconds - authTime > RECENT_AUTH_MAX_AGE_SECONDS) {
+    throw new HttpsError(
+      'failed-precondition',
+      'A recent sign-in is required. Sign out, sign back in, and then try deleting your account again.'
+    );
+  }
+
+  const authUser = await adminAuth.getUser(request.auth.uid);
+  const appleProvider = authUser.providerData.find((provider) => provider.providerId === 'apple.com');
+  let appleAuthorizationRevoked = false;
+
+  if (appleProvider) {
+    const authorizationCode = typeof request.data?.appleAuthorizationCode === 'string'
+      ? request.data.appleAuthorizationCode.trim()
+      : '';
+    const firebaseApiKey = typeof request.data?.firebaseApiKey === 'string'
+      ? request.data.firebaseApiKey.trim()
+      : '';
+    if (!authorizationCode || !firebaseApiKey) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Confirm your identity with Apple before deleting this account.'
+      );
+    }
+
+    try {
+      await revokeAppleAuthorization({
+        authorizationCode,
+        firebaseIdToken: firebaseIdTokenFromAuthorizationHeader(
+          request.rawRequest?.headers?.authorization
+        ),
+        apiKey: firebaseApiKey,
+      });
+      appleAuthorizationRevoked = true;
+    } catch (error) {
+      logger.error('Sign in with Apple revocation failed before account deletion.', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw new HttpsError(
+        'failed-precondition',
+        'Apple authorization could not be revoked, so no account data was deleted. Please try again.'
+      );
+    }
+  }
+
+  let cleanup;
+  try {
+    cleanup = await deleteDispatchUserData({
+      db,
+      bucket: storageBucket,
+      FieldValue,
+      authUser,
+    });
+  } catch (error) {
+    logger.error('Dispatch account data cleanup failed.', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw new HttpsError(
+      'internal',
+      'Account deletion could not be completed. Your sign-in account remains active; please try again.'
+    );
+  }
+
+  try {
+    await adminAuth.deleteUser(authUser.uid);
+  } catch (error) {
+    logger.error('Firebase Auth deletion failed after Dispatch data cleanup.', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw new HttpsError(
+      'internal',
+      'Your Dispatch data was removed, but sign-in cleanup needs another attempt. Please try deleting the account again.'
+    );
+  }
+
+  logger.info('Dispatch account deletion completed.', {
+    appleAuthorizationRevoked,
+    ...cleanup,
+  });
+  return { deleted: true, appleAuthorizationRevoked, ...cleanup };
 });
 
 async function expoRequest(url, body) {
@@ -225,8 +330,15 @@ exports.pushChatMessage = onDocumentCreated('chatThreads/{threadId}/messages/{me
   const threadRef = db.collection('chatThreads').doc(event.params.threadId);
   const threadSnapshot = await threadRef.get();
   const thread = threadSnapshot.exists ? { id: threadSnapshot.id, ...threadSnapshot.data() } : { id: event.params.threadId };
-  const recipientIds = uniqueStrings(message.recipientIds?.length ? message.recipientIds : thread.participants)
-    .filter((userId) => userId !== message.senderId);
+  const candidateRecipientIds = chatPushRecipientIds(message, thread);
+  const viewerSnapshots = candidateRecipientIds.length
+    ? await db.getAll(...candidateRecipientIds.map((userId) => threadRef.collection('activeViewers').doc(userId)))
+    : [];
+  const nowMs = Date.now();
+  const activeViewerIds = viewerSnapshots
+    .filter((viewerSnapshot) => viewerSnapshot.exists && Number(viewerSnapshot.data().expiresAtMs) > nowMs)
+    .map((viewerSnapshot) => viewerSnapshot.id);
+  const recipientIds = chatPushRecipientIds(message, thread, activeViewerIds);
   const content = chatPushContent(message, thread);
 
   await Promise.all(recipientIds.map((userId) => sendPushToUser({
@@ -259,10 +371,17 @@ exports.pushRoleAssignmentNotification = onDocumentCreated('roleAssignmentNotifi
   const snapshot = event.data;
   if (!snapshot) return;
   const notification = { id: event.params.notificationId, ...snapshot.data() };
+  const recipientId = rolePushRecipientId(notification);
+  if (!recipientId) {
+    logger.info('Skipped Manager or invalid role invite push recipient.', {
+      notificationId: event.params.notificationId,
+    });
+    return;
+  }
   const content = rolePushContent(notification);
   await sendPushToUser({
-    deliveryId: `role-notification:${event.params.notificationId}:${notification.workerId}`,
-    userId: notification.workerId,
+    deliveryId: `role-notification:${event.params.notificationId}:${recipientId}`,
+    userId: recipientId,
     ...content,
     sourceRef: snapshot.ref,
   });
@@ -337,6 +456,59 @@ exports.pushTwoHourEventReminders = onSchedule({
       });
     }
   }
+});
+
+exports.pushLateTaskNotifications = onSchedule({
+  schedule: 'every 1 minutes',
+  timeZone: 'America/Edmonton',
+  maxInstances: 1,
+}, async () => {
+  const nowMs = Date.now();
+  const earliestStart = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const latestStart = new Date(nowMs).toISOString();
+  const eventsSnapshot = await db.collection('events')
+    .where('startsAt', '>=', earliestStart)
+    .where('startsAt', '<=', latestStart)
+    .limit(500)
+    .get();
+
+  const events = eventsSnapshot.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }));
+  const organizationIds = uniqueStrings(events.map((event) => event.organizationId));
+  const organizationSnapshots = await Promise.all(
+    organizationIds.map((organizationId) => db.collection('organizations').doc(organizationId).get())
+  );
+  const managerIdsByOrganization = new Map(organizationSnapshots.map((snapshot) => [
+    snapshot.id,
+    snapshot.exists ? uniqueStrings(snapshot.data().managerIds) : [],
+  ]));
+
+  const notificationsById = new Map(events.flatMap((event) =>
+    lateTaskNotificationDocuments({
+      event,
+      nowMs,
+      organizationManagerIds: managerIdsByOrganization.get(event.organizationId) || [],
+    })
+  ).map((notification) => [notification.id, notification]));
+
+  let createdCount = 0;
+  for (const notificationChunk of chunks([...notificationsById.values()], 400)) {
+    const refs = notificationChunk.map((notification) => db.collection('userNotifications').doc(notification.id));
+    const existing = await db.getAll(...refs);
+    const batch = db.batch();
+    existing.forEach((snapshot, index) => {
+      if (snapshot.exists) return;
+      const { id: _id, ...notification } = notificationChunk[index];
+      batch.create(snapshot.ref, { ...notification, createdAt: FieldValue.serverTimestamp() });
+      createdCount += 1;
+    });
+    if (existing.some((snapshot) => !snapshot.exists)) await batch.commit();
+  }
+
+  logger.info('Created overdue task notifications.', {
+    eventCount: events.length,
+    candidateCount: notificationsById.size,
+    createdCount,
+  });
 });
 
 exports.checkExpoPushReceipts = onSchedule({ schedule: 'every 15 minutes' }, async () => {

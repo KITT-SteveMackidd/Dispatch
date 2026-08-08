@@ -18,6 +18,7 @@ import { authPalettes, authStyles } from '@/components/auth/authStyles';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 import { authDarkLogoSource, authLightLogoSource } from '@/constants/branding';
 import { firebaseConfigError, firebaseConfigWarnings } from '@/lib/firebase';
+import { getAuthErrorMessage } from '@/lib/auth-error-messages';
 
 const lightSignUpLogoSource = authLightLogoSource;
 const darkSignUpLogoSource = authDarkLogoSource;
@@ -74,7 +75,7 @@ export default function SignUpScreen() {
       Alert.alert('Verify your email', 'We sent a verification link to your inbox. Verify your email to continue.');
       router.replace('/(auth)/verify-email');
     } catch (error) {
-      Alert.alert('Sign up failed', error instanceof Error ? error.message : 'Unable to create account.');
+      Alert.alert('Sign up failed', getAuthErrorMessage(error, 'signup'));
     } finally {
       setLoading(false);
     }

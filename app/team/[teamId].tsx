@@ -6,6 +6,8 @@ import { buildChatThreadId, ChatThreadHead, loadUserProfilesByIds, watchIncoming
 import { useSession } from '@/context/session';
 import { UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
+import { DrawerBottomFill } from '@/components/DrawerBottomFill';
 
 type MemberInfo = Pick<UserProfile, 'uid' | 'displayName' | 'phoneNumber'>;
 
@@ -14,6 +16,7 @@ export default function TeamMemberListScreen() {
   const { profile } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const drawerSurfaceColor = isDarkMode ? '#101A2F' : '#FFFFFF';
   const params = useLocalSearchParams<{ teamId?: string; teamName?: string; memberIds?: string }>();
 
   const teamId = params.teamId ?? 'team';
@@ -242,6 +245,7 @@ export default function TeamMemberListScreen() {
       <Modal visible={createChatOpen} animationType="slide" transparent onRequestClose={closeCreateChatDrawer}>
         <Pressable style={styles.drawerBackdrop} onPress={closeCreateChatDrawer}>
           <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
+            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
             <Text style={[styles.drawerTitle, isDarkMode ? styles.titleDark : styles.titleLight]}>Create Chat</Text>
             <TextInput
               value={chatNameDraft}
@@ -297,7 +301,7 @@ const styles = StyleSheet.create({
   subhead: { fontWeight: '500' },
   subheadLight: { color: '#475569' },
   subheadDark: { color: '#F4F8FF' },
-  createChatButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  createChatButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   createChatButtonLight: { backgroundColor: '#fff', borderColor: '#bfdbfe' },
   createChatButtonDark: { backgroundColor: '#1A2540', borderColor: '#001A4D' },
   listContent: { paddingTop: 10, paddingBottom: 12, gap: 10 },

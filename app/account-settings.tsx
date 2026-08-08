@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useThemeMode } from '@/context/theme';
 import { useSession } from '@/context/session';
@@ -7,6 +8,7 @@ import { AppRole } from '@/types/dispatch';
 export default function AccountSettingsScreen() {
   const { themeMode, resolvedThemeMode, setThemeMode } = useThemeMode();
   const { profile, saveProfile } = useSession();
+  const router = useRouter();
 
   const isDarkMode = resolvedThemeMode === 'dark';
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
@@ -23,6 +25,7 @@ export default function AccountSettingsScreen() {
     setSavingProfile(true);
     try {
       await saveProfile({ displayName: displayName.trim(), phoneNumber: phoneNumber.trim(), role });
+      router.replace('/(tabs)/profile');
       Alert.alert('Profile updated', 'Your profile details were saved.');
     } catch (error) {
       Alert.alert('Unable to update profile', error instanceof Error ? error.message : 'Try again in a moment.');

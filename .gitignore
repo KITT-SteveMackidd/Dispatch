@@ -25,6 +25,7 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+.expo-tunnel.*.log
 
 # macOS
 .DS_Store
@@ -36,6 +37,8 @@ yarn-error.*
 .env.*
 !.env.example
 /extensions/*.env
+.secret.local
+functions/.secret.local
 
 # typescript
 *.tsbuildinfo

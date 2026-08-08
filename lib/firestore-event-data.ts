@@ -61,3 +61,21 @@ export function buildEventTaskFromTemplate(
     completedBy: [],
   }, index);
 }
+
+export function buildNewEventRoleForFirestore(
+  id: string,
+  name: string,
+  tasks: EventTaskTemplateInput[],
+  eventStartsAtMs: number
+): EventRole {
+  return sanitizeEventRoleForFirestore({
+    id,
+    name,
+    assignedWorkerIds: [],
+    waitlistWorkerIds: [],
+    eligibleWaitlistWorkerIds: [],
+    waitlistInviteWorkerIds: [],
+    openSlots: 1,
+    tasks: tasks.map((task, index) => buildEventTaskFromTemplate(task, eventStartsAtMs, index)),
+  });
+}

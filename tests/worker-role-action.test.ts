@@ -3,6 +3,7 @@ import {
   getAvailableRoleSlots,
   getWorkerRoleAction,
   getWorkerRoleActionFromNotification,
+  getWorkerVisibleRoles,
   keepLatestWorkerRoleNotifications,
   mergeWorkerRoleAvailability,
 } from '../lib/worker-role-action';
@@ -67,5 +68,17 @@ describe('getWorkerRoleAction', () => {
 
     expect(keepLatestWorkerRoleNotifications(notifications).map((item) => item.id))
       .toEqual(['new', 'other']);
+  });
+
+  it('shows only roles the worker is invited to, assigned to, or waitlisted for', () => {
+    const roles = [
+      { id: 'assigned', name: 'Assigned', assignedWorkerIds: ['worker-1'], openSlots: 0, tasks: [] },
+      { id: 'pending', name: 'Pending', assignedWorkerIds: [], openSlots: 1, tasks: [] },
+      { id: 'waitlisted', name: 'Waitlisted', assignedWorkerIds: ['worker-2'], waitlistWorkerIds: ['worker-1'], openSlots: 0, tasks: [] },
+      { id: 'unrelated', name: 'Unrelated', assignedWorkerIds: ['worker-2'], openSlots: 0, tasks: [] },
+    ] satisfies EventRole[];
+
+    expect(getWorkerVisibleRoles(roles, 'worker-1', ['pending']).map((role) => role.id))
+      .toEqual(['assigned', 'pending', 'waitlisted']);
   });
 });

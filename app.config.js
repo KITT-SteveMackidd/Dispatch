@@ -125,6 +125,8 @@ module.exports = ({ config: baseConfig }) => {
 
   config.extra = {
     ...(config.extra || {}),
+    privacyPolicyUrl: 'https://dispatchcrewmanager.com/privacy',
+    supportUrl: 'https://dispatchcrewmanager.com/support',
     eas: {
       ...(config.extra?.eas || {}),
       ...(projectId ? { projectId } : {}),

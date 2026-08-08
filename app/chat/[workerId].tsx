@@ -1,14 +1,18 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, renameCustomChat, sendChatMessage, updateTeamWorkerMembership, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
+import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, renameCustomChat, sendChatMessage, setChatThreadViewerPresence, updateTeamWorkerMembership, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
 import type { UserProfile } from '@/types/dispatch';
+import { clearActiveChatThread, setActiveChatThread } from '@/lib/foreground-chat-notifications';
+import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
+import { DrawerBottomFill } from '@/components/DrawerBottomFill';
+import { isChatMemberChecked } from '@/lib/custom-chat-membership';
 
 type ChatMessage = {
   id: string;
@@ -32,6 +36,7 @@ export default function WorkerChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
   const [draft, setDraft] = useState('');
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const params = useLocalSearchParams<{
@@ -80,6 +85,7 @@ export default function WorkerChatScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatNameDraft, setChatNameDraft] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
 
   const organizationMemberById = useMemo(
     () => new Map(organizationMembers.map((member) => [member.uid, member])),
@@ -119,6 +125,32 @@ export default function WorkerChatScreen() {
       isTeamBroadcast,
     });
   }, [isTeamBroadcast, params.teamThreadId, profile, teamId, workerId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!threadId || !profile?.uid) return undefined;
+      const userId = profile.uid;
+      const writePresence = (active: boolean) => {
+        setChatThreadViewerPresence({ threadId, userId, active }).catch(() => undefined);
+      };
+
+      setActiveChatThread(threadId);
+      writePresence(AppState.currentState === 'active');
+      const heartbeat = setInterval(() => {
+        if (AppState.currentState === 'active') writePresence(true);
+      }, 45 * 1000);
+      const appStateSubscription = AppState.addEventListener('change', (state) => {
+        writePresence(state === 'active');
+      });
+
+      return () => {
+        clearActiveChatThread(threadId);
+        clearInterval(heartbeat);
+        appStateSubscription.remove();
+        writePresence(false);
+      };
+    }, [profile?.uid, threadId])
+  );
 
   useEffect(() => {
     if (!usesLiveThreadParticipants || !threadId) {
@@ -365,11 +397,13 @@ export default function WorkerChatScreen() {
   const openSettings = () => {
     if (!isCustomChat) return;
     setChatNameDraft(headerTitle);
+    setConfirmingLeave(false);
     setSettingsOpen(true);
   };
 
   const closeSettings = () => {
     if (savingSettings) return;
+    setConfirmingLeave(false);
     setSettingsOpen(false);
   };
 
@@ -386,31 +420,20 @@ export default function WorkerChatScreen() {
     }
   };
 
-  const confirmLeaveChat = () => {
+  const handleLeaveChat = async () => {
     if (!profile || !threadId || savingSettings) return;
-    Alert.alert(
-      'Leave chat?',
-      `You will no longer receive messages from ${headerTitle}.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave Chat',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setSavingSettings(true);
-              await leaveCustomChat({ threadId, userId: profile.uid });
-              setSettingsOpen(false);
-              router.replace('/(tabs)/teams');
-            } catch (error) {
-              Alert.alert('Unable to leave chat', error instanceof Error ? error.message : 'Please try again.');
-            } finally {
-              setSavingSettings(false);
-            }
-          },
-        },
-      ]
-    );
+    try {
+      setSavingSettings(true);
+      await leaveCustomChat({ threadId, userId: profile.uid });
+      setChatThread((current) => current ? { ...current, participants: current.participants?.filter((id) => id !== profile.uid) } : current);
+      setSettingsOpen(false);
+      setConfirmingLeave(false);
+      router.replace('/(tabs)/teams');
+    } catch (error) {
+      Alert.alert('Unable to leave chat', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setSavingSettings(false);
+    }
   };
 
   const sendMessage = async () => {
@@ -467,7 +490,7 @@ export default function WorkerChatScreen() {
 
       <View style={[styles.headerShell, isDarkMode ? styles.headerShellDark : styles.headerShellLight, { paddingTop: insets.top }]}>
         <View style={[styles.headerRow, isDarkMode ? styles.headerRowDark : styles.headerRowLight]}>
-          <Pressable style={styles.backButton} onPress={goBack} hitSlop={8}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Go back" style={styles.backButton} onPress={goBack} hitSlop={8}>
             <MaterialIcons name="arrow-back-ios" size={28} color={isDarkMode ? '#F7F7F7' : '#121212'} />
           </Pressable>
 
@@ -476,7 +499,7 @@ export default function WorkerChatScreen() {
               <Text style={[styles.headerAvatarText, isDarkMode ? styles.headerAvatarTextDark : styles.headerAvatarTextLight]}>{headerInitial}</Text>
             </View>
             <View style={styles.headerCopy}>
-              <Text style={[styles.headerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]} numberOfLines={1}>
+              <Text style={[styles.headerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>
                 {headerTitle}
               </Text>
               {headerSubtitle ? (
@@ -487,7 +510,7 @@ export default function WorkerChatScreen() {
                     onPress={openMemberPicker}>
                     <MaterialIcons name="add-circle" size={15} color="#0EC3C9" />
                   </Pressable>
-                  <Text style={[styles.headerSubtitle, styles.headerSubtitleNames, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]} numberOfLines={1}>
+                  <Text style={[styles.headerSubtitle, styles.headerSubtitleNames, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>
                     {headerSubtitle}
                   </Text>
                 </View>
@@ -561,6 +584,7 @@ export default function WorkerChatScreen() {
         <Pressable style={styles.memberPickerBackdrop} onPress={closeMemberPicker}>
           <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.memberPickerKeyboardView}>
             <Pressable style={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
+              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
               <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>
                 {isCustomChat ? 'Add People' : canManageTeamMembers ? 'Manage Team' : 'People in Chat'}
               </Text>
@@ -592,6 +616,12 @@ export default function WorkerChatScreen() {
                   const alreadyInChat = memberIds.includes(member.uid);
                   const canToggleTeamWorker = canManageTeamMembers && member.role === 'worker';
                   const locked = isCustomChat ? alreadyInChat : !canToggleTeamWorker;
+                  const checked = isChatMemberChecked({
+                    alreadyInChat,
+                    canManageTeamMembers,
+                    selectedMemberIds,
+                    memberId: member.uid,
+                  });
                   const memberMeta = canManageTeamMembers
                     ? member.role === 'manager'
                       ? 'Manager - always included'
@@ -602,23 +632,33 @@ export default function WorkerChatScreen() {
                       ? 'Already in chat'
                       : member.email || (member.role === 'manager' ? 'Manager' : 'Worker');
                   return (
-                    <Pressable
-                      key={member.uid}
-                      style={[styles.memberPickerRow, locked && styles.memberPickerRowLocked]}
-                      disabled={locked}
-                      onPress={() => toggleMemberSelection(member.uid)}>
-                      <MaterialIcons
-                        name={selectedMemberIds.includes(member.uid) ? 'check-box' : 'check-box-outline-blank'}
-                        size={23}
-                        color="#0EC3C9"
-                      />
+                    <View key={member.uid} style={[styles.memberPickerRow, locked && styles.memberPickerRowLocked]}>
+                      {locked ? (
+                        <View
+                          accessibilityLabel={`${member.displayName} is ${checked ? '' : 'not '}in this chat`}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked, disabled: true }}
+                          style={styles.memberPickerCheckbox}>
+                          <MaterialIcons name={checked ? 'check-box' : 'check-box-outline-blank'} size={23} color="#0EC3C9" />
+                        </View>
+                      ) : (
+                        <Pressable
+                          accessibilityLabel={`${checked ? 'Deselect' : 'Select'} ${member.displayName}`}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked }}
+                          hitSlop={4}
+                          style={styles.memberPickerCheckbox}
+                          onPress={() => toggleMemberSelection(member.uid)}>
+                          <MaterialIcons name={checked ? 'check-box' : 'check-box-outline-blank'} size={23} color="#0EC3C9" />
+                        </Pressable>
+                      )}
                       <View style={styles.memberPickerCopy}>
                         <Text style={[styles.memberPickerName, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>{member.displayName}</Text>
                         <Text style={[styles.memberPickerMeta, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]}>
                           {memberMeta}
                         </Text>
                       </View>
-                    </Pressable>
+                    </View>
                   );
                 })}
               </ScrollView>
@@ -642,6 +682,7 @@ export default function WorkerChatScreen() {
         <Pressable style={styles.memberPickerBackdrop} onPress={closeSettings}>
           <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.settingsKeyboardView}>
             <Pressable style={[styles.settingsDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
+              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
               <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat Settings</Text>
               <Text style={[styles.settingsLabel, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat name</Text>
               <TextInput
@@ -658,10 +699,27 @@ export default function WorkerChatScreen() {
                 onPress={handleRenameChat}>
                 <Text style={styles.memberPickerButtonText}>{savingSettings ? 'Saving...' : 'Rename Chat'}</Text>
               </Pressable>
-              <Pressable style={[styles.leaveChatButton, savingSettings && styles.sendButtonDisabled]} disabled={savingSettings} onPress={confirmLeaveChat}>
-                <MaterialIcons name="logout" size={19} color="#b91c1c" />
-                <Text style={styles.leaveChatText}>Leave Chat</Text>
-              </Pressable>
+              {confirmingLeave ? (
+                <View style={styles.leaveChatConfirmation}>
+                  <Text style={[styles.leaveChatConfirmationText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>
+                    Leave {headerTitle}? You will no longer receive its messages.
+                  </Text>
+                  <View style={styles.leaveChatConfirmationActions}>
+                    <Pressable style={styles.memberPickerCloseButton} disabled={savingSettings} onPress={() => setConfirmingLeave(false)}>
+                      <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Cancel</Text>
+                    </Pressable>
+                    <Pressable style={[styles.leaveChatButton, savingSettings && styles.sendButtonDisabled]} disabled={savingSettings} onPress={handleLeaveChat}>
+                      <MaterialIcons name="logout" size={19} color="#b91c1c" />
+                      <Text style={styles.leaveChatText}>{savingSettings ? 'Leaving...' : 'Leave Chat'}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <Pressable style={[styles.leaveChatButton, savingSettings && styles.sendButtonDisabled]} disabled={savingSettings} onPress={() => setConfirmingLeave(true)}>
+                  <MaterialIcons name="logout" size={19} color="#b91c1c" />
+                  <Text style={styles.leaveChatText}>Leave Chat</Text>
+                </Pressable>
+              )}
               <Pressable style={styles.memberPickerCloseButton} disabled={savingSettings} onPress={closeSettings}>
                 <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
               </Pressable>
@@ -707,6 +765,8 @@ export default function WorkerChatScreen() {
 
         <View style={styles.inputRow}>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add an attachment"
             style={styles.plusButton}
             hitSlop={8}
             onPress={() => {
@@ -727,6 +787,9 @@ export default function WorkerChatScreen() {
               onSubmitEditing={sendMessage}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Choose an emoji"
+              style={styles.emojiButton}
               hitSlop={8}
               onPress={() => {
                 setShowEmojiPicker((prev) => !prev);
@@ -736,7 +799,7 @@ export default function WorkerChatScreen() {
             </Pressable>
           </View>
 
-          <Pressable style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend || sending} hitSlop={8}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Send message" style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]} onPress={sendMessage} disabled={!canSend || sending} hitSlop={8}>
             <MaterialIcons name="send" size={32} color="#0EC3C9" />
           </Pressable>
         </View>
@@ -762,7 +825,7 @@ const styles = StyleSheet.create({
   },
   headerRowLight: { backgroundColor: '#F7F7F7' },
   headerRowDark: { backgroundColor: '#12274D' },
-  backButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  backButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   headerCenter: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center', marginHorizontal: 8 },
   headerAvatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   headerAvatarLight: { backgroundColor: '#F7F7F7', borderColor: '#F98D2F' },
@@ -780,7 +843,7 @@ const styles = StyleSheet.create({
   headerSubtitleLight: { color: '#121212', opacity: 0.75 },
   headerSubtitleDark: { color: '#F7F7F7', opacity: 0.75 },
   headerSpacer: { width: 36, height: 29 },
-  headerMenuButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerMenuButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   memberPickerBackdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
   memberPickerKeyboardView: { height: '75%', justifyContent: 'flex-end' },
   memberPickerDrawer: { flex: 1, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
@@ -795,6 +858,7 @@ const styles = StyleSheet.create({
   memberPickerList: { flex: 1 },
   memberPickerRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.2)' },
   memberPickerRowLocked: { opacity: 0.65 },
+  memberPickerCheckbox: { width: 31, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   disabledControl: { opacity: 0.5 },
   memberPickerCopy: { flex: 1, minWidth: 0 },
   memberPickerName: { fontSize: 14, fontWeight: '700' },
@@ -808,6 +872,9 @@ const styles = StyleSheet.create({
   settingsLabel: { marginBottom: 6, fontSize: 13, fontWeight: '700' },
   leaveChatButton: { minHeight: 48, marginTop: 12, borderWidth: 1, borderColor: '#fecaca', borderRadius: 8, backgroundColor: '#fef2f2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   leaveChatText: { color: '#b91c1c', fontSize: 15, fontWeight: '700' },
+  leaveChatConfirmation: { marginTop: 12, gap: 10 },
+  leaveChatConfirmationText: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  leaveChatConfirmationActions: { gap: 4 },
   thread: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 8, gap: 8 },
   loadErrorBanner: { minHeight: 48, marginHorizontal: 16, marginTop: 10, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fecaca' },
   loadErrorText: { flex: 1, color: '#991b1b', fontSize: 13, fontWeight: '600' },
@@ -886,10 +953,10 @@ const styles = StyleSheet.create({
   pendingAttachmentTextLight: { color: '#121212' },
   pendingAttachmentTextDark: { color: '#F7F7F7' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  plusButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  plusButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   inputShell: {
     flex: 1,
-    minHeight: 32,
+    minHeight: MINIMUM_TOUCH_TARGET,
     borderWidth: 1,
     borderRadius: 24,
     paddingLeft: 12,
@@ -904,6 +971,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, minHeight: 22, fontSize: 12, lineHeight: 16, fontWeight: '600', paddingVertical: 0 },
   inputLight: { color: '#121212' },
   inputDark: { color: '#F7F7F7' },
-  sendButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  emojiButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
+  sendButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   sendButtonDisabled: { opacity: 0.35 },
 });

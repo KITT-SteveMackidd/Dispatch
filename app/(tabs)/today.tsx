@@ -4,6 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
+import { computeEventTaskProgress, isEventVisibleOnToday } from '@/services/event-logic';
 import {
   buildOrganizationManagersThreadId,
   deleteDispatchEvent,
@@ -18,6 +19,7 @@ import {
 } from '@/services/dispatch';
 import { AppRole, DispatchEvent, EventTask, Team } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { headerLogoSource } from '@/constants/branding';
 import { openMapAppPicker } from '@/lib/map-apps';
@@ -109,7 +111,7 @@ export default function TodayScreen() {
 
   useEffect(() => {
     if (!profile) return;
-    return profile.role === 'manager' ? watchManagerEvents(profile.uid, setEvents) : watchWorkerEvents(profile.uid, setEvents);
+    return profile.role === 'manager' ? watchManagerEvents(profile.uid, setEvents, profile.organizationId) : watchWorkerEvents(profile.uid, setEvents);
   }, [profile]);
 
   useEffect(() => {
@@ -243,19 +245,9 @@ export default function TodayScreen() {
     };
   }, [events, profile]);
 
-  const occursToday = (event: DispatchEvent, timestamp: number) => {
-    const now = new Date(timestamp);
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - 1;
-    const startsAtMs = +new Date(event.startsAt);
-    const endsAtMs = event.endsAt ? +new Date(event.endsAt) : startsAtMs;
-
-    return startsAtMs <= dayEnd && endsAtMs >= dayStart;
-  };
-
   const today = useMemo(() => {
     return events
-      .filter((event) => occursToday(event, nowMs))
+      .filter((event) => isEventVisibleOnToday(event, nowMs))
       .filter((event) => profile?.role !== 'worker' || event.roles.some((role) => (role.assignedWorkerIds || []).includes(profile.uid)))
       .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
   }, [events, nowMs, profile]);
@@ -280,6 +272,7 @@ export default function TodayScreen() {
       behindScheduleNotificationCache.current[cacheKey] = true;
       ensureTaskBehindScheduleNotification({
         managerId: event.managerId,
+        organizationId: event.organizationId,
         eventId: event.id,
         eventName: event.name,
         roleId: role.id,
@@ -287,21 +280,22 @@ export default function TodayScreen() {
         taskId: task.id,
         taskName: task.name,
         dueAt: new Date(dueAtMs).toISOString(),
-      }).catch(() => {
-        delete behindScheduleNotificationCache.current[cacheKey];
-      });
+      })
+        .then((createdManagerIds) => {
+          if (!createdManagerIds.includes(profile.uid)) return;
+          Alert.alert(
+            'Task behind schedule',
+            `${event.name}: ${role.name} is behind on "${task.name}".`
+          );
+        })
+        .catch(() => {
+          delete behindScheduleNotificationCache.current[cacheKey];
+        });
     });
   }, [profile, today, nowMs]);
 
   const getProgress = (event: DispatchEvent, options?: { excludeUnfilledRoles?: boolean }): TaskProgress => {
-    const roles = options?.excludeUnfilledRoles
-      ? event.roles.filter((role) => (role.assignedWorkerIds?.length ?? 0) > 0)
-      : event.roles;
-    const tasks = roles.flatMap((r) => r.tasks);
-    const total = tasks.length;
-    const done = tasks.filter((t) => (t.completedBy?.length ?? 0) > 0).length;
-    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-    return { total, done, percent };
+    return computeEventTaskProgress(event, options);
   };
 
   const getWorkerProgress = (event: DispatchEvent, workerId: string): TaskProgress => {
@@ -534,6 +528,7 @@ export default function TodayScreen() {
 
   const renderLocationMeta = (
     location: string,
+    locationPlaceId: string | undefined,
     eventDate: string,
     eventTime: string,
     textStyle: any,
@@ -546,7 +541,7 @@ export default function TodayScreen() {
         hitSlop={8}
         onPress={(event) => {
           event.stopPropagation();
-          openMapAppPicker(location);
+          openMapAppPicker(location, locationPlaceId);
         }}
         style={styles.locationMetaText}>
         <Text style={textStyle}>{location} - {eventDate} - {eventTime}</Text>
@@ -557,7 +552,7 @@ export default function TodayScreen() {
         hitSlop={8}
         onPress={(event) => {
           event.stopPropagation();
-          openMapAppPicker(location);
+          openMapAppPicker(location, locationPlaceId);
         }}
         style={styles.mapIconButton}
       >
@@ -747,13 +742,13 @@ export default function TodayScreen() {
       <Pressable style={styles.figmaCardLight} onPress={() => toggleExpand(item.id)}>
         <View style={styles.figmaCardTop}>
           <View style={styles.figmaCardTitleWrap}>
-            <Text style={styles.figmaCardTitleLight} numberOfLines={1}>{item.name}</Text>
-            <Text style={styles.eventDateTimeSubtitleLight}>{eventDate} - {eventTime}</Text>
+            <Text style={styles.figmaCardTitleLight} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>{item.name}</Text>
+            <Text style={styles.eventDateTimeSubtitleLight} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>{eventDate} - {eventTime}</Text>
           </View>
           <Text style={styles.figmaExpandLight}>{isExpanded ? 'Hide' : 'Expand'}</Text>
         </View>
 
-        {renderLocationMeta(item.location, eventDate, eventTime, styles.figmaCardMetaLight, '#F98D2F')}
+        {renderLocationMeta(item.location, item.locationPlaceId, eventDate, eventTime, styles.figmaCardMetaLight, '#F98D2F')}
 
         <View style={styles.figmaProgressSection}>
           <View style={styles.figmaProgressHeader}>
@@ -790,6 +785,8 @@ export default function TodayScreen() {
               return (
                 <View key={worker.workerId} style={styles.figmaWorkerCardLight}>
                   <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open chat with ${workerInfo?.displayName || worker.workerId}`}
                     onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
                     style={styles.figmaAvatarLight}
                     hitSlop={8}>
@@ -803,7 +800,7 @@ export default function TodayScreen() {
                         <Text style={styles.figmaWorkerMetaLight}>Worker: {workerInfo?.displayName || worker.workerId}</Text>
                         <Text style={styles.figmaWorkerMetaLight}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
                       </View>
-                      <Pressable onPress={() => openPhoneDialer(workerInfo?.phoneNumber)} hitSlop={8}>
+                      <Pressable accessibilityRole="button" accessibilityLabel={`Call ${workerInfo?.displayName || worker.workerId}`} style={styles.workerIconButton} onPress={() => openPhoneDialer(workerInfo?.phoneNumber)} hitSlop={8}>
                         <MaterialIcons name="phone-enabled" size={24} color="#121212" />
                       </Pressable>
                     </View>
@@ -855,13 +852,13 @@ export default function TodayScreen() {
       <Pressable style={styles.figmaCardDark} onPress={() => toggleExpand(item.id)}>
         <View style={styles.figmaCardTop}>
           <View style={styles.figmaCardTitleWrap}>
-            <Text style={styles.figmaCardTitleDark} numberOfLines={1}>{item.name}</Text>
-            <Text style={styles.eventDateTimeSubtitleDark}>{eventDate} - {eventTime}</Text>
+            <Text style={styles.figmaCardTitleDark} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>{item.name}</Text>
+            <Text style={styles.eventDateTimeSubtitleDark} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>{eventDate} - {eventTime}</Text>
           </View>
           <Text style={styles.figmaExpandDark}>{isExpanded ? 'Hide' : 'Expand'}</Text>
         </View>
 
-        {renderLocationMeta(item.location, eventDate, eventTime, styles.figmaCardMetaDark, '#F98D2F')}
+        {renderLocationMeta(item.location, item.locationPlaceId, eventDate, eventTime, styles.figmaCardMetaDark, '#F98D2F')}
 
         <View style={styles.figmaProgressSection}>
           <View style={styles.figmaProgressHeader}>
@@ -898,6 +895,8 @@ export default function TodayScreen() {
               return (
                 <View key={worker.workerId} style={styles.figmaWorkerCardDark}>
                   <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open chat with ${workerInfo?.displayName || worker.workerId}`}
                     onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
                     style={styles.figmaAvatarDark}
                     hitSlop={8}>
@@ -911,7 +910,7 @@ export default function TodayScreen() {
                         <Text style={styles.figmaWorkerMetaDark}>Worker: {workerInfo?.displayName || worker.workerId}</Text>
                         <Text style={styles.figmaWorkerMetaDark}>Phone: {workerInfo?.phoneNumber || 'Not available'}</Text>
                       </View>
-                      <Pressable onPress={() => openPhoneDialer(workerInfo?.phoneNumber)} hitSlop={8}>
+                      <Pressable accessibilityRole="button" accessibilityLabel={`Call ${workerInfo?.displayName || worker.workerId}`} style={styles.workerIconButton} onPress={() => openPhoneDialer(workerInfo?.phoneNumber)} hitSlop={8}>
                         <MaterialIcons name="phone-enabled" size={24} color="#F7F7F7" />
                       </Pressable>
                     </View>
@@ -978,7 +977,7 @@ export default function TodayScreen() {
           </View>
         </View>
       ) : (
-        <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} active dispatches.</Text>
+        <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} dispatches for today.</Text>
       )}
       <FlatList
         data={today}
@@ -1026,6 +1025,7 @@ export default function TodayScreen() {
 
               {renderLocationMeta(
                 item.location,
+                item.locationPlaceId,
                 eventDate,
                 eventTime,
                 [styles.meta, isDarkMode ? styles.metaDark : styles.metaLight],
@@ -1083,6 +1083,8 @@ export default function TodayScreen() {
                       return (
                         <View key={worker.workerId} style={[styles.workerCard, isDarkMode ? styles.workerCardDark : styles.workerCardLight]}>
                           <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Open chat with ${workerInfo?.displayName || worker.workerId}`}
                             onPress={() => openWorkerTeamChat(item, worker.workerId, workerInfo?.displayName || worker.workerId)}
                             style={[styles.avatar, isDarkMode ? styles.avatarDark : styles.avatarLight]}
                             hitSlop={8}
@@ -1205,7 +1207,8 @@ const styles = StyleSheet.create({
   figmaCardMetaDark: { color: '#F7F7F7', fontSize: 12, fontWeight: '200' },
   locationMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   locationMetaText: { flex: 1 },
-  mapIconButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  mapIconButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, alignItems: 'center', justifyContent: 'center' },
+  workerIconButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   figmaProgressSection: { gap: 8 },
   figmaProgressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   figmaProgressLabelLight: { color: '#121212', fontSize: 10, fontWeight: '700' },
@@ -1227,9 +1230,9 @@ const styles = StyleSheet.create({
   figmaWorkerSection: { gap: 8 },
   figmaWorkerCardLight: { backgroundColor: '#EDF0FC', borderRadius: 8, padding: 8, flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   figmaWorkerCardDark: { backgroundColor: '#203E75', borderRadius: 8, padding: 8, flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  figmaAvatarLight: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EDF0FC' },
+  figmaAvatarLight: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EDF0FC' },
   figmaAvatarTextLight: { color: 'rgba(14,195,201,0.25)', fontSize: 16, fontWeight: '700' },
-  figmaAvatarDark: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#203E75' },
+  figmaAvatarDark: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', backgroundColor: '#203E75' },
   figmaAvatarTextDark: { color: 'rgba(14,195,201,0.25)', fontSize: 16, fontWeight: '700' },
   figmaWorkerDetails: { flex: 1, gap: 8 },
   figmaWorkerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
@@ -1303,7 +1306,7 @@ const styles = StyleSheet.create({
   workerCard: { borderWidth: 1, borderRadius: 8, padding: 8, flexDirection: 'row', alignItems: 'flex-start' },
   workerCardLight: { backgroundColor: '#EDF0FC', borderColor: '#EDF0FC' },
   workerCardDark: { backgroundColor: '#203E75', borderColor: '#203E75' },
-  avatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  avatar: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, borderWidth: 2, borderColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
   avatarLight: { backgroundColor: '#F7F7F7' },
   avatarDark: { backgroundColor: '#12274D' },
   avatarText: { fontWeight: '700', fontSize: 16 },

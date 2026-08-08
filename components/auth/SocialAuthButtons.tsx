@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession, type SocialAuthResult } from '@/context/session';
+import { getAuthErrorMessage } from '@/lib/auth-error-messages';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
 type CryptoModule = typeof import('expo-crypto');
@@ -90,7 +91,7 @@ function GoogleProviderButton(props: ProviderButtonProps) {
       });
       props.onAuthenticated(result);
     } catch (error) {
-      Alert.alert('Google authentication failed', error instanceof Error ? error.message : 'Unable to continue with Google.');
+      Alert.alert('Google authentication failed', getAuthErrorMessage(error, 'google'));
     } finally {
       props.onLoadingChange(false);
     }
@@ -158,7 +159,7 @@ function AppleProviderButton(props: ProviderButtonProps) {
       props.onAuthenticated(authResult);
     } catch (error) {
       if (isAppleCancellation(error)) return;
-      Alert.alert('Apple authentication failed', error instanceof Error ? error.message : 'Unable to continue with Apple.');
+      Alert.alert('Apple authentication failed', getAuthErrorMessage(error, 'apple'));
     } finally {
       props.onLoadingChange(false);
     }

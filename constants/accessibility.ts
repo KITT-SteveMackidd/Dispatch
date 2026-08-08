@@ -1,0 +1,2 @@
+export const ACCESSIBLE_TEXT_MAX_MULTIPLIER = 2;
+export const MINIMUM_TOUCH_TARGET = 44;

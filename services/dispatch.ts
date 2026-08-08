@@ -23,9 +23,16 @@ import {
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
-import { buildEventTaskFromTemplate, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
+import { buildEventTaskFromTemplate, buildNewEventRoleForFirestore, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
 import { normalizeTeamMemberRole, validateTeamWorkerSelection } from '@/lib/team-membership';
 import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
+import { canManagerManageEvent, hasConcurrentEventChange, mergeManagerEventScopes } from '@/lib/event-manager-access';
+import { preserveTemplateTaskOrder } from '@/lib/template-task-order';
+import { buildEventDetailsUpdate, type EventDetailsDraft } from '@/lib/event-schedule-edit';
+import { clearWorkerTaskCompletions } from '@/services/event-logic';
+import { buildLateTaskNotificationTargets } from '@/lib/task-notification-targets';
+import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
+import { removeEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 export type { InviteToken, InviteTokenStatus, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
@@ -115,6 +122,7 @@ export type UpsertEventTemplateInput = {
   name: string;
   roles: EventTemplateRole[];
   defaultLocation?: string;
+  defaultLocationPlaceId?: string;
   defaultTime?: string;
   defaultDescription?: string;
 };
@@ -187,6 +195,25 @@ export function watchChatThread(
       onError?.(error);
     }
   );
+}
+
+export async function setChatThreadViewerPresence(params: {
+  threadId: string;
+  userId: string;
+  active: boolean;
+}) {
+  const viewerRef = doc(db, 'chatThreads', params.threadId, 'activeViewers', params.userId);
+  if (!params.active) {
+    await deleteDoc(viewerRef);
+    return;
+  }
+
+  await setDoc(viewerRef, {
+    userId: params.userId,
+    threadId: params.threadId,
+    expiresAtMs: Date.now() + 90 * 1000,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
 
 export function watchIncomingChatThreadHeads(
@@ -494,10 +521,14 @@ async function expireInviteIfNeeded(inviteRef: ReturnType<typeof doc>, invite: W
 }
 
 async function loadActiveInvite(params: { managerId: string; teamId?: string; email: string }) {
-  const invitesSnap = await getDocs(query(collection(db, 'workerInvites'), where('managerId', '==', params.managerId), where('email', '==', params.email)));
+  const canonicalEmail = canonicalizeEmail(params.email);
+  const invitesSnap = await getDocs(query(collection(db, 'workerInvites'), where('managerId', '==', params.managerId)));
   const matches = invitesSnap.docs
     .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<WorkerInvite, 'id'>) }))
-    .filter((invite) => (invite.teamId || null) === (params.teamId || null));
+    .filter((invite) => (
+      (invite.teamId || null) === (params.teamId || null)
+      && canonicalizeEmail(invite.canonicalEmail || invite.normalizedEmail || invite.email) === canonicalEmail
+    ));
 
   for (const invite of matches) {
     const inviteRef = doc(db, 'workerInvites', invite.id);
@@ -508,7 +539,7 @@ async function loadActiveInvite(params: { managerId: string; teamId?: string; em
 }
 
 function getInviteAppLink() {
-  return process.env.EXPO_PUBLIC_APP_INVITE_URL?.trim() || 'https://dispatchapp.ca/download';
+  return process.env.EXPO_PUBLIC_DISPATCH_APP_LINK?.trim() || 'https://dispatch.app/download';
 }
 
 async function loadOrganisationManagerIds(organizationId?: string | null) {
@@ -604,9 +635,38 @@ export async function ensureTeamCommunicationThreads(team: Team) {
   });
 }
 
-export function watchManagerEvents(managerId: string, cb: (items: DispatchEvent[]) => void) {
-  const q = query(collection(db, 'events'), where('managerId', '==', managerId));
-  return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
+export function watchManagerEvents(
+  managerId: string,
+  cb: (items: DispatchEvent[]) => void,
+  organizationId?: string | null
+) {
+  if (!organizationId) {
+    const ownEventsQuery = query(collection(db, 'events'), where('managerId', '==', managerId));
+    return onSnapshot(ownEventsQuery, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
+  }
+
+  let organizationEvents: DispatchEvent[] = [];
+  let legacyOwnEvents: DispatchEvent[] = [];
+  const emit = () => cb(sortDispatchEvents(mergeManagerEventScopes(organizationEvents, legacyOwnEvents)));
+  const unsubscribeOrganization = onSnapshot(
+    query(collection(db, 'events'), where('organizationId', '==', organizationId)),
+    (snap) => {
+      organizationEvents = mapEvents(snap);
+      emit();
+    }
+  );
+  const unsubscribeOwn = onSnapshot(
+    query(collection(db, 'events'), where('managerId', '==', managerId)),
+    (snap) => {
+      legacyOwnEvents = mapEvents(snap);
+      emit();
+    }
+  );
+
+  return () => {
+    unsubscribeOrganization();
+    unsubscribeOwn();
+  };
 }
 
 export async function updateTeamWorkerMembership(params: {
@@ -732,13 +792,19 @@ export async function renameCustomChat(params: { threadId: string; userId: strin
 
 export async function leaveCustomChat(params: { threadId: string; userId: string }) {
   const threadRef = doc(db, 'chatThreads', params.threadId);
-  const threadSnapshot = await getDoc(threadRef);
-  if (!threadSnapshot.exists()) throw new Error('Chat not found.');
-  const thread = threadSnapshot.data() as Partial<ChatThreadHead>;
-  if (thread.kind !== 'custom') throw new Error('Only custom chats can be left.');
-  if (!(thread.participants || []).includes(params.userId)) return;
+  await runTransaction(db, async (transaction) => {
+    const threadSnapshot = await transaction.get(threadRef);
+    if (!threadSnapshot.exists()) throw new Error('Chat not found.');
+    const thread = threadSnapshot.data() as Partial<ChatThreadHead>;
+    if (thread.kind !== 'custom') throw new Error('Only custom chats can be left.');
 
-  await updateDoc(threadRef, { participants: arrayRemove(params.userId) });
+    const participants = thread.participants || [];
+    if (!participants.includes(params.userId)) return;
+    transaction.update(threadRef, {
+      participants: removeCustomChatParticipant(participants, params.userId),
+      updatedAt: serverTimestamp(),
+    });
+  });
   await deleteDoc(doc(db, 'chatUnread', `${params.userId}__${params.threadId}`)).catch(() => undefined);
 }
 
@@ -822,7 +888,13 @@ export function watchManagerTeams(
 }
 
 function mapEventTemplates(snap: { docs: Array<{ id: string; data: () => unknown }> }): EventTemplate[] {
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EventTemplate, 'id'>) }));
+  return snap.docs.map((d) => {
+    const template = { id: d.id, ...(d.data() as Omit<EventTemplate, 'id'>) };
+    return {
+      ...template,
+      roles: (template.roles || []).map((role) => ({ ...role, tasks: preserveTemplateTaskOrder(role.tasks || []) })),
+    };
+  });
 }
 
 function toTemplateUpdateTime(value: EventTemplate['updatedAt']) {
@@ -871,6 +943,7 @@ export async function createEventTemplate(managerId: string, input: UpsertEventT
     name: input.name,
     roles: input.roles,
     defaultLocation: input.defaultLocation || null,
+    defaultLocationPlaceId: input.defaultLocationPlaceId || null,
     defaultTime: input.defaultTime || null,
     defaultDescription: input.defaultDescription || null,
     createdAt: serverTimestamp(),
@@ -892,6 +965,7 @@ export async function updateEventTemplate(params: { managerId: string; templateI
     name: params.input.name,
     roles: params.input.roles,
     defaultLocation: params.input.defaultLocation || null,
+    defaultLocationPlaceId: params.input.defaultLocationPlaceId || null,
     defaultTime: params.input.defaultTime || null,
     defaultDescription: params.input.defaultDescription || null,
     updatedAt: serverTimestamp(),
@@ -1043,12 +1117,16 @@ export async function createDispatchEvent(params: {
   date: string;
   time: string;
   location: string;
+  locationPlaceId: string;
   description: string;
   roles: CreateEventRoleInput[];
 }): Promise<DispatchEvent> {
   const startsAt = new Date(`${params.date.trim()}T${params.time.trim()}:00`);
   if (Number.isNaN(startsAt.getTime())) {
     throw new Error('Enter a valid event date and time.');
+  }
+  if (!params.locationPlaceId.trim()) {
+    throw new Error('Choose an event location from the Google Places suggestions.');
   }
 
   const endsAt = new Date(startsAt.getTime() + 2 * 60 * 60 * 1000);
@@ -1070,9 +1148,11 @@ export async function createDispatchEvent(params: {
   const eventPayload = {
     managerId: params.managerId,
     organizationId: manager.organizationId || null,
+    revision: 0,
     workerIds,
     name: params.name.trim(),
     location: params.location.trim(),
+    locationPlaceId: params.locationPlaceId.trim(),
     description: params.description.trim(),
     startsAt: startsAt.toISOString(),
     endsAt: endsAt.toISOString(),
@@ -1099,11 +1179,46 @@ export async function createDispatchEvent(params: {
     organizationId: eventPayload.organizationId,
     name: eventPayload.name,
     location: eventPayload.location,
+    locationPlaceId: eventPayload.locationPlaceId,
     startsAt: eventPayload.startsAt,
     endsAt: eventPayload.endsAt,
     teamIds: eventPayload.teamIds,
     roles: eventPayload.roles,
   };
+}
+
+export async function updateDispatchEventDetails(params: {
+  eventId: string;
+  managerId: string;
+  draft: EventDetailsDraft;
+  expectedRevision?: number;
+}) {
+  await runTransaction(db, async (tx) => {
+    const eventRef = doc(db, 'events', params.eventId);
+    const managerRef = doc(db, 'users', params.managerId);
+    const [eventSnap, managerSnap] = await Promise.all([tx.get(eventRef), tx.get(managerRef)]);
+    if (!eventSnap.exists()) throw new Error('Event not found');
+
+    const event = { id: eventSnap.id, ...(eventSnap.data() as Omit<DispatchEvent, 'id'>) };
+    const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+    if (!canManagerManageEvent({
+      eventManagerId: event.managerId,
+      eventOrganizationId: event.organizationId,
+      managerId: params.managerId,
+      managerOrganizationId: manager.organizationId,
+      managerRole: manager.role,
+    })) throw new Error('Only a Manager in this event organization can edit it');
+    if (hasConcurrentEventChange(event.revision, params.expectedRevision)) {
+      throw new Error('This event changed on another device. Review the latest version, then try your edit again.');
+    }
+
+    const update = buildEventDetailsUpdate(event, params.draft);
+    tx.update(eventRef, {
+      ...update,
+      revision: (event.revision ?? 0) + 1,
+      updatedAt: serverTimestamp(),
+    });
+  });
 }
 
 export async function deleteDispatchEvent(params: { eventId: string; managerId: string }) {
@@ -1112,7 +1227,15 @@ export async function deleteDispatchEvent(params: { eventId: string; managerId: 
   if (!snap.exists()) return;
 
   const event = snap.data() as Omit<DispatchEvent, 'id'>;
-  if (event.managerId !== params.managerId) throw new Error('Only the event manager can delete this event');
+  const managerSnap = await getDoc(doc(db, 'users', params.managerId));
+  const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+  if (!canManagerManageEvent({
+    eventManagerId: event.managerId,
+    eventOrganizationId: event.organizationId,
+    managerId: params.managerId,
+    managerOrganizationId: manager.organizationId,
+    managerRole: manager.role,
+  })) throw new Error('Only a Manager in this event organization can delete it');
 
   const [roleNotificationsSnap, userNotificationsSnap] = await Promise.all([
     getDocs(query(collection(db, 'roleAssignmentNotifications'), where('eventId', '==', params.eventId))),
@@ -1241,6 +1364,17 @@ export async function saveUserPushToken(params: {
   );
 }
 
+export async function removeUserPushToken(params: { userId: string; token: string }) {
+  await setDoc(
+    doc(db, 'users', params.userId),
+    {
+      pushTokens: arrayRemove(params.token),
+      pushTokenUpdatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
 export function watchUserNotifications(userId: string, cb: (items: UserNotification[]) => void) {
   const withOrderQuery = query(collection(db, 'userNotifications'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
 
@@ -1306,6 +1440,7 @@ export async function markUserNotificationsRead(params: { userId: string; notifi
 
 export async function ensureTaskBehindScheduleNotification(params: {
   managerId: string;
+  organizationId?: string | null;
   eventId: string;
   eventName: string;
   roleId: string;
@@ -1314,26 +1449,41 @@ export async function ensureTaskBehindScheduleNotification(params: {
   taskName: string;
   dueAt: string;
 }) {
-  const notificationId = `behind_schedule__${params.eventId}__${params.roleId}__${params.taskId}`;
+  const organizationManagerIds = params.organizationId
+    ? await loadOrganisationManagerIds(params.organizationId)
+    : [];
+  const targets = buildLateTaskNotificationTargets({
+    eventManagerId: params.managerId,
+    organizationManagerIds,
+    eventId: params.eventId,
+    roleId: params.roleId,
+    taskId: params.taskId,
+  });
 
-  await runTransaction(db, async (tx) => {
-    const ref = doc(db, 'userNotifications', notificationId);
-    const snap = await tx.get(ref);
-    if (snap.exists()) return;
+  return runTransaction(db, async (tx) => {
+    const refs = targets.map((target) => doc(db, 'userNotifications', target.notificationId));
+    const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+    const createdManagerIds: string[] = [];
 
-    tx.set(ref, {
-      userId: params.managerId,
-      kind: 'task_behind_schedule',
-      title: 'Task behind schedule',
-      body: `${params.eventName}: ${params.roleName} is behind on "${params.taskName}".`,
-      relatedEventId: params.eventId,
-      relatedRoleId: params.roleId,
-      relatedTaskId: params.taskId,
-      dueAt: params.dueAt,
-      read: false,
-      createdAt: serverTimestamp(),
-      statusReason: `Task due at ${params.dueAt} passed before completion.`,
+    targets.forEach((target, index) => {
+      if (snapshots[index].exists()) return;
+      createdManagerIds.push(target.managerId);
+      tx.set(refs[index], {
+        userId: target.managerId,
+        kind: 'task_behind_schedule',
+        title: 'Task behind schedule',
+        body: `${params.eventName}: ${params.roleName} is behind on "${params.taskName}".`,
+        relatedEventId: params.eventId,
+        relatedRoleId: params.roleId,
+        relatedTaskId: params.taskId,
+        dueAt: params.dueAt,
+        read: false,
+        createdAt: serverTimestamp(),
+        statusReason: `Task due at ${params.dueAt} passed before completion.`,
+      });
     });
+
+    return createdManagerIds;
   });
 }
 
@@ -1378,116 +1528,6 @@ export async function createOrganisationForManager(params: { managerId: string; 
   });
 
   return { id: organisationRef.id, ...organisation };
-}
-
-export async function deleteDispatchAccount(params: { userId: string }): Promise<{ deletedOrganization: boolean }> {
-  const userRef = doc(db, 'users', params.userId);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) return { deletedOrganization: false };
-
-  const user = userSnap.data() as Partial<UserProfile>;
-  const organizationId = user.organizationId || null;
-  const normalizedUserRole = user.role?.toLowerCase();
-  let deletedOrganization = false;
-
-  if (organizationId) {
-    const organisationRef = doc(db, 'organizations', organizationId);
-    const organisationSnap = await getDoc(organisationRef);
-    const organisation = organisationSnap.exists() ? organisationSnap.data() as Partial<Organisation> : null;
-
-    if (normalizedUserRole === 'manager' && organisation) {
-      const [organizationUsersSnap, organizationTeamsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'users'), where('organizationId', '==', organizationId))),
-        getDocs(query(collection(db, 'teams'), where('organizationId', '==', organizationId))),
-      ]);
-      const nextManagerIds = organizationUsersSnap.docs
-        .filter((memberDoc) => {
-          const member = memberDoc.data() as Partial<UserProfile>;
-          return memberDoc.id !== params.userId && member.role?.toLowerCase() === 'manager';
-        })
-        .map((memberDoc) => memberDoc.id);
-
-      if (!nextManagerIds.length) {
-        const currentManagerIds = organisation.managerIds || [];
-        if (currentManagerIds.length !== 1 || currentManagerIds[0] !== params.userId) {
-          await updateDoc(organisationRef, {
-            managerIds: [params.userId],
-            updatedAt: serverTimestamp(),
-          });
-        }
-
-        const cleanupBatch = writeBatch(db);
-        organizationUsersSnap.docs.forEach((memberDoc) => {
-          if (memberDoc.id === params.userId) return;
-          cleanupBatch.update(memberDoc.ref, {
-            organizationId: null,
-            organizationName: null,
-            updatedAt: serverTimestamp(),
-          });
-        });
-
-        organizationTeamsSnap.docs.forEach((teamDoc) => {
-          cleanupBatch.delete(teamDoc.ref);
-        });
-
-        cleanupBatch.delete(organisationRef);
-        await cleanupBatch.commit();
-        deletedOrganization = true;
-      } else {
-        const cleanupBatch = writeBatch(db);
-        cleanupBatch.update(organisationRef, {
-          managerIds: nextManagerIds,
-          updatedAt: serverTimestamp(),
-        });
-
-        organizationTeamsSnap.docs.forEach((teamDoc) => {
-          const team = teamDoc.data() as Partial<Team>;
-          const nextPrimaryManagerId = team.managerId && nextManagerIds.includes(team.managerId)
-            ? team.managerId
-            : nextManagerIds[0];
-          cleanupBatch.update(teamDoc.ref, {
-            managerId: nextPrimaryManagerId,
-            managerIds: nextManagerIds,
-            updatedAt: serverTimestamp(),
-          });
-        });
-
-        await cleanupBatch.commit();
-      }
-    }
-
-    if (normalizedUserRole === 'worker' && organisation) {
-      const workerIds = organisation.workerIds || [];
-      const workerTeamsSnap = await getDocs(query(collection(db, 'teams'), where('workerIds', 'array-contains', params.userId)));
-      const cleanupBatch = writeBatch(db);
-      let hasCleanupWrites = false;
-
-      if (workerIds.includes(params.userId)) {
-        cleanupBatch.update(organisationRef, {
-          workerIds: workerIds.filter((workerId) => workerId !== params.userId),
-          updatedAt: serverTimestamp(),
-        });
-        hasCleanupWrites = true;
-      }
-
-      workerTeamsSnap.docs.forEach((teamDoc) => {
-        const team = teamDoc.data() as Partial<Team>;
-        cleanupBatch.update(teamDoc.ref, {
-          workerIds: (team.workerIds || []).filter((workerId) => workerId !== params.userId),
-          updatedAt: serverTimestamp(),
-        });
-        hasCleanupWrites = true;
-      });
-
-      if (hasCleanupWrites) {
-        await cleanupBatch.commit();
-      }
-    }
-  }
-
-  await deleteDoc(userRef);
-
-  return { deletedOrganization };
 }
 
 export async function createTeam(managerId: string, name: string) {
@@ -1588,6 +1628,7 @@ async function createWorkerInviteRecord(params: {
     appLink: params.appLink,
     email: params.email,
     normalizedEmail: params.email,
+    canonicalEmail: canonicalizeEmail(params.email),
     workerId: params.workerId || null,
     inviteTokenId: null,
     tokenPreview: getInviteTokenPreview(token),
@@ -2182,29 +2223,16 @@ export async function inviteWorkerByEmailToTeam(params: {
   if (!normalizedEmail) throw new Error('Worker email is required');
   if (!isValidEmail(normalizedEmail)) throw new Error('Enter a valid email address');
 
-  const existingInvite = await loadActiveInvite({ managerId, teamId, email: normalizedEmail });
-  if (existingInvite) {
-    if (existingInvite.status === 'delivery_failed') {
-      await retryWorkerInviteDelivery({ managerId, inviteId: existingInvite.id });
-      return { linked: !!existingInvite.workerId, reused: true };
-    }
-    return { linked: !!existingInvite.workerId, reused: true };
-  }
-
-  const usersSnap = await getDocs(query(
-    collection(db, 'users'),
-    where('email', '==', normalizedEmail),
-    where('role', '==', 'worker')
-  )).catch(() => null);
-
-  const foundWorker = usersSnap?.docs[0];
-  const foundWorkerId = foundWorker?.id;
   const managerSnap = await getDoc(doc(db, 'users', managerId));
   const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+  if (normalizeTeamMemberRole(manager.role) !== 'manager') {
+    throw new Error('Only Managers can invite Workers. Refresh your profile if your role recently changed.');
+  }
 
   let teamName = 'Solo worker';
   let organizationId: string | null = null;
   let organizationName: string | null = null;
+  let teamWorkerIds: string[] = [];
   if (teamId) {
     const teamRef = doc(db, 'teams', teamId);
     const teamSnap = await getDoc(teamRef);
@@ -2217,9 +2245,34 @@ export async function inviteWorkerByEmailToTeam(params: {
     teamName = team.name || 'Dispatch Team';
     organizationId = team.organizationId || null;
     organizationName = team.organizationName || null;
+    teamWorkerIds = team.workerIds || [];
   } else {
     organizationId = manager.organizationId || null;
     organizationName = manager.organizationName || null;
+  }
+
+  const existingInvite = await loadActiveInvite({ managerId, teamId, email: normalizedEmail });
+  if (existingInvite) {
+    if (existingInvite.status === 'delivery_failed') {
+      await retryWorkerInviteDelivery({ managerId, inviteId: existingInvite.id });
+      return { linked: !!existingInvite.workerId, reused: true };
+    }
+    return { linked: !!existingInvite.workerId, reused: true };
+  }
+
+  const canonicalEmail = canonicalizeEmail(normalizedEmail);
+  const organizationUsersSnap = organizationId
+    ? await getDocs(query(collection(db, 'users'), where('organizationId', '==', organizationId))).catch(() => null)
+    : null;
+  const foundWorker = organizationUsersSnap?.docs.find((userDoc) => {
+    const data = userDoc.data() as Partial<UserProfile>;
+    return normalizeTeamMemberRole(data.role) === 'worker'
+      && canonicalizeEmail(data.canonicalEmail || data.email || '') === canonicalEmail;
+  });
+  const foundWorkerId = foundWorker?.id;
+
+  if (foundWorkerId && teamWorkerIds.includes(foundWorkerId)) {
+    throw new Error('This worker is already an active member of this team.');
   }
 
   const appLink = getInviteAppLink();
@@ -2602,11 +2655,19 @@ export async function updateEventRoleAssignment(params: {
 
   await runTransaction(db, async (tx) => {
     const ref = doc(db, 'events', eventId);
-    const snap = await tx.get(ref);
+    const managerRef = doc(db, 'users', managerId);
+    const [snap, managerSnap] = await Promise.all([tx.get(ref), tx.get(managerRef)]);
     if (!snap.exists()) throw new Error('Event not found');
 
     const event = snap.data() as Omit<DispatchEvent, 'id'>;
-    if (event.managerId !== managerId) throw new Error('Only the event manager can change role assignments');
+    const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+    if (!canManagerManageEvent({
+      eventManagerId: event.managerId,
+      eventOrganizationId: event.organizationId,
+      managerId,
+      managerOrganizationId: manager.organizationId,
+      managerRole: manager.role,
+    })) throw new Error('Only a Manager in this event organization can change role assignments');
 
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === roleId);
@@ -2646,6 +2707,7 @@ export async function updateEventRoleAssignment(params: {
       tx.update(ref, {
         roles: nextRoles,
         workerIds,
+        revision: (event.revision ?? 0) + 1,
         updatedAt: serverTimestamp(),
       });
 
@@ -2695,7 +2757,7 @@ export async function updateEventRoleAssignment(params: {
       roleWaitlistInviteWorkerIds: role.waitlistInviteWorkerIds || [],
       action,
       status: 'pending',
-      statusReason: 'Worker must accept or decline this role assignment before it is finalized.',
+      statusReason: `${event.name}: You were invited to ${role.name}. Accept or decline in Dispatch.`,
       responseOptions: ['accept', 'decline'],
       createdAt: serverTimestamp(),
     });
@@ -2768,6 +2830,7 @@ export async function updateEventRoleDetails(params: {
   managerId: string;
   name: string;
   tasks?: EventRole['tasks'];
+  expectedRevision?: number;
 }) {
   const { eventId, roleId, managerId, name } = params;
   const nextName = name.trim();
@@ -2775,11 +2838,22 @@ export async function updateEventRoleDetails(params: {
 
   await runTransaction(db, async (tx) => {
     const ref = doc(db, 'events', eventId);
-    const snap = await tx.get(ref);
+    const managerRef = doc(db, 'users', managerId);
+    const [snap, managerSnap] = await Promise.all([tx.get(ref), tx.get(managerRef)]);
     if (!snap.exists()) throw new Error('Event not found');
 
     const event = snap.data() as Omit<DispatchEvent, 'id'>;
-    if (event.managerId !== managerId) throw new Error('Only the event manager can edit roles');
+    const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+    if (!canManagerManageEvent({
+      eventManagerId: event.managerId,
+      eventOrganizationId: event.organizationId,
+      managerId,
+      managerOrganizationId: manager.organizationId,
+      managerRole: manager.role,
+    })) throw new Error('Only a Manager in this event organization can edit roles');
+    if (hasConcurrentEventChange(event.revision, params.expectedRevision)) {
+      throw new Error('This event changed on another device. Review the latest version, then try your edit again.');
+    }
 
     const roles = (event.roles || []) as EventRole[];
     if (!roles.some((role) => role.id === roleId)) throw new Error('Role not found');
@@ -2791,9 +2865,57 @@ export async function updateEventRoleDetails(params: {
 
     tx.update(ref, {
       roles: nextRoles,
+      revision: (event.revision ?? 0) + 1,
       updatedAt: serverTimestamp(),
     });
   });
+}
+
+export async function addEventRole(params: {
+  eventId: string;
+  managerId: string;
+  name: string;
+  tasks?: EventRole['tasks'];
+  expectedRevision?: number;
+}) {
+  const name = params.name.trim();
+  if (!name) throw new Error('Role name is required');
+  const roleId = doc(collection(db, 'events')).id;
+
+  await runTransaction(db, async (tx) => {
+    const eventRef = doc(db, 'events', params.eventId);
+    const managerRef = doc(db, 'users', params.managerId);
+    const [eventSnap, managerSnap] = await Promise.all([tx.get(eventRef), tx.get(managerRef)]);
+    if (!eventSnap.exists()) throw new Error('Event not found');
+
+    const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+    const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+    if (!canManagerManageEvent({
+      eventManagerId: event.managerId,
+      eventOrganizationId: event.organizationId,
+      managerId: params.managerId,
+      managerOrganizationId: manager.organizationId,
+      managerRole: manager.role,
+    })) throw new Error('Only a Manager in this event organization can add roles');
+    if (hasConcurrentEventChange(event.revision, params.expectedRevision)) {
+      throw new Error('This event changed on another device. Review the latest version, then add the role again.');
+    }
+
+    const startsAtMs = new Date(event.startsAt).getTime();
+    const role = buildNewEventRoleForFirestore(
+      roleId,
+      name,
+      params.tasks || [],
+      Number.isFinite(startsAtMs) ? startsAtMs : Date.now()
+    );
+    tx.update(eventRef, {
+      roles: [...(event.roles || []), role],
+      revision: (event.revision ?? 0) + 1,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  return roleId;
 }
 
 export async function deleteEventRole(params: {
@@ -2805,50 +2927,37 @@ export async function deleteEventRole(params: {
 
   await runTransaction(db, async (tx) => {
     const ref = doc(db, 'events', eventId);
-    const snap = await tx.get(ref);
+    const managerRef = doc(db, 'users', managerId);
+    const [snap, managerSnap] = await Promise.all([tx.get(ref), tx.get(managerRef)]);
     if (!snap.exists()) throw new Error('Event not found');
 
     const event = snap.data() as Omit<DispatchEvent, 'id'>;
-    if (event.managerId !== managerId) throw new Error('Only the event manager can delete roles');
+    const manager = managerSnap.exists() ? managerSnap.data() as Partial<UserProfile> : {};
+    if (!canManagerManageEvent({
+      eventManagerId: event.managerId,
+      eventOrganizationId: event.organizationId,
+      managerId,
+      managerOrganizationId: manager.organizationId,
+      managerRole: manager.role,
+    })) throw new Error('Only a Manager in this event organization can delete roles');
 
     const roles = (event.roles || []) as EventRole[];
     if (!roles.some((role) => role.id === roleId)) throw new Error('Role not found');
 
-    const nextRoles = roles.filter((role) => role.id !== roleId);
-    const workerIds = [...new Set(nextRoles.flatMap((role) => [
-      ...(role.assignedWorkerIds || []),
-      ...(role.waitlistWorkerIds || []),
-      ...(role.eligibleWaitlistWorkerIds || []),
-      ...(role.waitlistInviteWorkerIds || []),
-    ]))];
+    const { roles: nextRoles, workerIds } = removeEventRoleAndRebuildWorkers(roles, roleId);
 
     tx.update(ref, {
       roles: nextRoles,
       workerIds,
+      revision: (event.revision ?? 0) + 1,
       updatedAt: serverTimestamp(),
     });
   });
 
-  const notifications = await getDocs(
-    query(
-      collection(db, 'roleAssignmentNotifications'),
-      where('eventId', '==', eventId),
-      where('roleId', '==', roleId)
-    )
-  );
-  if (!notifications.empty) {
-    const batch = writeBatch(db);
-    notifications.docs.forEach((notificationDoc) => {
-      batch.update(notificationDoc.ref, {
-        status: 'declined',
-        statusReason: 'This role was deleted from the event.',
-        respondedAt: serverTimestamp(),
-        response: 'decline',
-        updatedAt: serverTimestamp(),
-      });
-    });
-    await batch.commit();
-  }
+  // Assignment notifications whose role no longer exists are filtered from
+  // worker views by watchWorkerRoleAssignmentNotifications. Leaving the audit
+  // records untouched avoids an unauthorized client-side update after the
+  // role itself has already been removed successfully.
 }
 
 export async function cancelWorkerEventRole(params: {
@@ -2879,7 +2988,7 @@ export async function cancelWorkerEventRole(params: {
       const eligibleWaitlistWorkerIds = item.eligibleWaitlistWorkerIds || [];
 
       return {
-        ...item,
+        ...clearWorkerTaskCompletions(item, workerId),
         assignedWorkerIds: assignedWorkerIds.filter((id) => id !== workerId),
         openSlots: (item.openSlots || 0) + 1,
         waitlistWorkerIds: waitlistWorkerIds.filter((id) => id !== workerId),
@@ -2902,6 +3011,7 @@ export async function cancelWorkerEventRole(params: {
     tx.update(ref, {
       roles: nextRoles,
       workerIds,
+      revision: (event.revision ?? 0) + 1,
       updatedAt: serverTimestamp(),
     });
 
@@ -2979,7 +3089,7 @@ export async function joinRoleWaitlist(params: {
       ...(item.waitlistInviteWorkerIds || []),
     ]))];
 
-    tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+    tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
 
     tx.update(notificationRef, {
       status: 'waitlisted',
@@ -3027,7 +3137,7 @@ export async function joinEventRoleWaitlist(params: {
       ...(item.waitlistInviteWorkerIds || []),
     ]))];
 
-    tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+    tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
   });
 }
 
@@ -3081,7 +3191,7 @@ export async function acceptEventRoleWaitlistInvite(params: {
         ...(item.waitlistInviteWorkerIds || []),
       ]))];
 
-      tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
       return;
     }
 
@@ -3110,7 +3220,7 @@ export async function acceptEventRoleWaitlistInvite(params: {
       ...(item.waitlistInviteWorkerIds || []),
     ]))];
 
-    tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+    tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
 
     const managerNotificationRef = doc(collection(db, 'userNotifications'));
     tx.set(managerNotificationRef, {
@@ -3198,7 +3308,7 @@ export async function respondToRoleAssignmentNotification(params: {
         ...(role.eligibleWaitlistWorkerIds || []),
         ...(role.waitlistInviteWorkerIds || []),
       ]))];
-      tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
     }
 
     if (notification.action === 'assign' && params.response === 'decline') {
@@ -3224,7 +3334,7 @@ export async function respondToRoleAssignmentNotification(params: {
         ...(role.eligibleWaitlistWorkerIds || []),
         ...(role.waitlistInviteWorkerIds || []),
       ]))];
-      tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
     }
 
     if (notification.action === 'remove' && params.response === 'decline') {
@@ -3242,7 +3352,7 @@ export async function respondToRoleAssignmentNotification(params: {
       });
 
       const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
-      tx.update(eventRef, { roles: nextRoles, workerIds, updatedAt: serverTimestamp() });
+      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
     }
 
     tx.update(notificationRef, {
@@ -3329,7 +3439,7 @@ export async function toggleTaskCompletion(params: {
       return { ...role, tasks: nextTasks };
     });
 
-    tx.update(ref, { roles: nextRoles });
+    tx.update(ref, { roles: nextRoles, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
   });
 }
 

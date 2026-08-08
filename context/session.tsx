@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 import { User } from 'firebase/auth';
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   GoogleAuthProvider,
   OAuthProvider,
   createUserWithEmailAndPassword,
-  deleteUser,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithCredential,
@@ -17,6 +18,16 @@ import {
 import { auth, db, firebaseConfigError } from '@/lib/firebase';
 import { captureStartupIssue, markStartup } from '@/lib/sentry';
 import { AppRole, UserProfile } from '@/types/dispatch';
+import {
+  clearDispatchNotificationState,
+  forgetRegisteredDevicePushToken,
+  unregisterCurrentDevicePushToken,
+} from '@/services/push-token-session';
+import { shouldLinkPendingWorkerInvites } from '@/lib/chat-list-membership';
+import { requestDispatchAccountDeletion } from '@/lib/account-deletion';
+
+type AppleAuthenticationModule = typeof import('expo-apple-authentication');
+type CryptoModule = typeof import('expo-crypto');
 
 type SessionContextType = {
   profile: UserProfile | null;
@@ -145,6 +156,42 @@ async function syncInviteLinking(userId: string, email?: string | null, role?: A
 function assertFirebaseConfigured() {
   if (firebaseConfigError) {
     throw new Error(`${firebaseConfigError}. Rebuild the app with the required Firebase environment variables.`);
+  }
+}
+
+function usesAppleSignIn(user: User) {
+  return user.providerData.some((provider) => provider.providerId === 'apple.com');
+}
+
+async function getAppleDeletionAuthorizationCode(user: User) {
+  if (!usesAppleSignIn(user)) return undefined;
+  if (Platform.OS !== 'ios') {
+    throw new Error('Sign in with Apple account deletion must be confirmed on an iPhone or iPad.');
+  }
+
+  const AppleAuthentication = require('expo-apple-authentication') as AppleAuthenticationModule;
+  const Crypto = require('expo-crypto') as CryptoModule;
+  const available = await AppleAuthentication.isAvailableAsync();
+  if (!available) throw new Error('Apple authentication is not available on this device.');
+
+  try {
+    const rawNonce = Crypto.randomUUID();
+    const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
+    const result = await AppleAuthentication.signInAsync({ nonce });
+    if (!result.identityToken || !result.authorizationCode) {
+      throw new Error('Apple did not return the authorization needed to delete this account.');
+    }
+
+    const provider = new OAuthProvider('apple.com');
+    const credential = provider.credential({ idToken: result.identityToken, rawNonce });
+    await reauthenticateWithCredential(user, credential);
+    await user.getIdToken(true);
+    return result.authorizationCode;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ERR_REQUEST_CANCELED') {
+      throw new Error('Account deletion was cancelled. Nothing was deleted.');
+    }
+    throw error;
   }
 }
 
@@ -422,6 +469,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     assertFirebaseConfigured();
     if (!auth.currentUser) throw new Error('Not authenticated');
     const user = auth.currentUser;
+    const previousRole = profile?.role || null;
     await updateProfile(user, { displayName: params.displayName.trim() });
     await setDoc(
       doc(db, 'users', user.uid),
@@ -443,10 +491,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     );
 
     if (params.role === 'worker') {
-      const { acceptPendingWorkerInvitesForUser } = getDispatchServices();
-      await acceptPendingWorkerInvitesForUser({ userId: user.uid, email: user.email || '' }).catch(() => null);
+      if (shouldLinkPendingWorkerInvites(previousRole, params.role)) {
+        const { acceptPendingWorkerInvitesForUser } = getDispatchServices();
+        await acceptPendingWorkerInvitesForUser({ userId: user.uid, email: user.email || '' }).catch(() => null);
+      }
     } else {
-      await syncInviteLinking(user.uid, user.email);
+      await syncInviteLinking(user.uid, user.email, 'manager');
     }
 
     const nextProfile = await loadProfile(user.uid);
@@ -530,7 +580,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const revokeSession = async () => {
     assertFirebaseConfigured();
+    if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid).catch(() => undefined);
     await firebaseSignOut(auth);
+    forgetRegisteredDevicePushToken();
     setEmailVerified(false);
     setProfile(null);
     setNeedsProfile(false);
@@ -541,9 +593,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
 
-    const { deleteDispatchAccount } = getDispatchServices();
-    await deleteDispatchAccount({ userId: user.uid });
-    await deleteUser(user);
+    const appleAuthorizationCode = await getAppleDeletionAuthorizationCode(user);
+    if (!appleAuthorizationCode) await user.getIdToken(true);
+    await requestDispatchAccountDeletion({
+      appleAuthorizationCode,
+      firebaseApiKey: auth.app.options.apiKey,
+    });
+    await clearDispatchNotificationState();
+    await firebaseSignOut(auth).catch(() => undefined);
+    forgetRegisteredDevicePushToken();
     setAuthUser(null);
     setEmailVerified(false);
     setProfile(null);
@@ -552,7 +610,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     assertFirebaseConfigured();
+    if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid).catch(() => undefined);
     await firebaseSignOut(auth);
+    forgetRegisteredDevicePushToken();
     setEmailVerified(false);
     setProfile(null);
     setNeedsProfile(false);
