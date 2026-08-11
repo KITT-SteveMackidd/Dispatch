@@ -64,6 +64,7 @@ import {
 } from '@/lib/worker-role-action';
 import { preserveTemplateTaskOrder } from '@/lib/template-task-order';
 import { buildCreateEventRoleDrafts, type CreateEventRoleDraft } from '@/lib/create-event-role-drafts';
+import { resolveNativePickerChangeAction } from '@/lib/native-picker';
 import {
   buildEventInviteTeamOptions,
   buildEditInviteChanges,
@@ -582,8 +583,19 @@ export default function EventsScreen() {
   };
 
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    if (event.type === 'dismissed' || !selectedDate) return;
-    setEventDatePickerDraft(normalizeEventDate(selectedDate));
+    const action = resolveNativePickerChangeAction(Platform.OS, event.type, Boolean(selectedDate));
+    if (action === 'dismiss') {
+      setShowDatePicker(false);
+      return;
+    }
+    if (action === 'ignore' || !selectedDate) return;
+
+    const normalizedDate = normalizeEventDate(selectedDate);
+    setEventDatePickerDraft(normalizedDate);
+    if (action === 'commit') {
+      setEventDateDraft(formatEventDateDraft(normalizedDate));
+      setShowDatePicker(false);
+    }
   };
 
   const handleSelectEventDate = () => {
@@ -592,10 +604,17 @@ export default function EventsScreen() {
   };
 
   const handleTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
-    if (event.type === 'dismissed' || !selectedTime) return;
+    const action = resolveNativePickerChangeAction(Platform.OS, event.type, Boolean(selectedTime));
+    if (action === 'dismiss') {
+      setShowTimePicker(false);
+      return;
+    }
+    if (action === 'ignore' || !selectedTime) return;
+
     const hours = String(selectedTime.getHours()).padStart(2, '0');
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
     setEventTimeDraft(`${hours}:${minutes}`);
+    if (action === 'commit') setShowTimePicker(false);
   };
 
   const parseTemplateDefaultTime = () => {
@@ -610,10 +629,17 @@ export default function EventsScreen() {
   };
 
   const handleTemplateDefaultTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
-    if (event.type === 'dismissed' || !selectedTime) return;
+    const action = resolveNativePickerChangeAction(Platform.OS, event.type, Boolean(selectedTime));
+    if (action === 'dismiss') {
+      setShowTemplateDefaultTimePicker(false);
+      return;
+    }
+    if (action === 'ignore' || !selectedTime) return;
+
     const hours = String(selectedTime.getHours()).padStart(2, '0');
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
     setTemplateDefaultTimeDraft(`${hours}:${minutes}`);
+    if (action === 'commit') setShowTemplateDefaultTimePicker(false);
   };
 
   const pickerSharedProps = {

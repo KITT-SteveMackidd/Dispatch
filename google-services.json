@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "94634534771",
+    "project_id": "dispatch-eb63a",
+    "storage_bucket": "dispatch-eb63a.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:94634534771:android:7a0833a638f1523cb64706",
+        "android_client_info": {
+          "package_name": "com.smackidd.dispatch"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "94634534771-karkfl9acls7c7gal71qpfh2cb6qtlau.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDchghHwQ7O9sSFhoNzfqEWDTmome80OaA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "94634534771-karkfl9acls7c7gal71qpfh2cb6qtlau.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "94634534771-9uh1rfef4u7famv2mvsvf4e6bhpdd355.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.smackidd.dispatch"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -38,6 +38,7 @@ module.exports = ({ config: baseConfig }) => {
   config.android = {
     ...(config.android || {}),
     package: config.android?.package || 'com.smackidd.dispatch',
+    googleServicesFile: config.android?.googleServicesFile || './google-services.json',
   };
 
   config.runtimeVersion = 'dispatch-sdk54-rn081-newarch-delegate-v4';
@@ -108,9 +109,23 @@ module.exports = ({ config: baseConfig }) => {
       },
     ]);
   }
-  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-notifications')) {
-    plugins.push('expo-notifications');
-  }
+  const notificationsPluginIndex = plugins.findIndex(
+    (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-notifications'
+  );
+  const existingNotificationsPlugin = notificationsPluginIndex >= 0 ? plugins[notificationsPluginIndex] : null;
+  const existingNotificationsOptions = Array.isArray(existingNotificationsPlugin)
+    ? existingNotificationsPlugin[1] || {}
+    : {};
+  const notificationsPlugin = [
+    'expo-notifications',
+    {
+      ...existingNotificationsOptions,
+      color: '#0EC3C9',
+      defaultChannel: 'dispatch-default',
+    },
+  ];
+  if (notificationsPluginIndex >= 0) plugins[notificationsPluginIndex] = notificationsPlugin;
+  else plugins.push(notificationsPlugin);
   config.plugins = plugins;
 
   config.updates = updatesEnabled
