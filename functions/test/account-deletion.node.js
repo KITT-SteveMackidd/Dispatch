@@ -21,6 +21,8 @@ test('account deletion audits every Dispatch collection that can retain user dat
     'workerInvites',
     'managerInvites',
     'inviteTokens',
+    'secureInvites',
+    'secureInviteCodes',
     'roleAssignmentNotifications',
     'userNotifications',
     'chatThreads',
@@ -32,7 +34,7 @@ test('account deletion audits every Dispatch collection that can retain user dat
   ]);
 });
 
-test('buildDeletionIdentity includes normalized and canonical email aliases', () => {
+test('buildDeletionIdentity preserves a plus-addressed account as a distinct identity', () => {
   const identity = buildDeletionIdentity({
     uid: 'user-123',
     email: 'Steve+Dispatch@Gmail.com',
@@ -41,9 +43,24 @@ test('buildDeletionIdentity includes normalized and canonical email aliases', ()
   }, { pushTokens: ['ExponentPushToken[token]'] });
 
   assert.equal(identityMatchesEmail('steve+dispatch@gmail.com', identity), true);
-  assert.equal(identityMatchesEmail('steve@gmail.com', identity), true);
+  assert.equal(identityMatchesEmail('steve@gmail.com', identity), false);
+  assert.equal(identityMatchesEmail('steve+worker@gmail.com', identity), false);
   assert.deepEqual(identity.names, ['Steve Mackidd']);
   assert.deepEqual(identity.pushTokens, ['ExponentPushToken[token]']);
+});
+
+test('buildDeletionIdentity ignores a conflicting legacy canonical email', () => {
+  const identity = buildDeletionIdentity({
+    uid: 'user-123',
+    email: 'steve+dispatch@gmail.com',
+    providerData: [],
+  }, {
+    email: 'steve+dispatch@gmail.com',
+    canonicalEmail: 'steve@gmail.com',
+  });
+
+  assert.deepEqual(identity.emails, ['steve+dispatch@gmail.com']);
+  assert.equal(identityMatchesEmail('steve@gmail.com', identity), false);
 });
 
 test('sanitizeEventRoles removes all worker references, completions, and user-owned attachments', () => {

@@ -70,6 +70,8 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
         <Stack.Screen name="(auth)/signup" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/setup" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)/verify-email" options={{ title: 'Verify Email' }} />
+        <Stack.Screen name="invite/index" options={{ headerShown: false }} />
+        <Stack.Screen name="invite/[token]" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="account-settings" options={{ title: 'Account Settings' }} />
         <Stack.Screen name="team/[teamId]" options={{ title: 'Team' }} />

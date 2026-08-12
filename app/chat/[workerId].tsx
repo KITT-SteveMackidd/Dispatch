@@ -581,9 +581,15 @@ export default function WorkerChatScreen() {
       />
 
       <Modal visible={memberPickerOpen} transparent animationType="slide" onRequestClose={closeMemberPicker}>
-        <Pressable style={styles.memberPickerBackdrop} onPress={closeMemberPicker}>
+        <View style={styles.memberPickerBackdrop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close people drawer"
+            style={styles.memberPickerBackdropDismiss}
+            onPress={closeMemberPicker}
+          />
           <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.memberPickerKeyboardView}>
-            <Pressable style={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
+            <View style={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]}>
               <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
               <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>
                 {isCustomChat ? 'Add People' : canManageTeamMembers ? 'Manage Team' : 'People in Chat'}
@@ -611,7 +617,13 @@ export default function WorkerChatScreen() {
                 />
                 <Text style={[styles.selectAllText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Select all</Text>
               </Pressable>
-              <ScrollView style={styles.memberPickerList} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                style={styles.memberPickerList}
+                contentContainerStyle={styles.memberPickerListContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                nestedScrollEnabled
+                showsVerticalScrollIndicator>
                 {selectableOrganizationMembers.map((member) => {
                   const alreadyInChat = memberIds.includes(member.uid);
                   const canToggleTeamWorker = canManageTeamMembers && member.role === 'worker';
@@ -673,9 +685,9 @@ export default function WorkerChatScreen() {
               <Pressable style={styles.memberPickerCloseButton} disabled={addingMembers} onPress={closeMemberPicker}>
                 <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
               </Pressable>
-            </Pressable>
+            </View>
           </KeyboardAvoidingView>
-        </Pressable>
+        </View>
       </Modal>
 
       <Modal visible={isCustomChat && settingsOpen} transparent animationType="slide" onRequestClose={closeSettings}>
@@ -845,8 +857,9 @@ const styles = StyleSheet.create({
   headerSpacer: { width: 36, height: 29 },
   headerMenuButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   memberPickerBackdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
+  memberPickerBackdropDismiss: { ...StyleSheet.absoluteFillObject },
   memberPickerKeyboardView: { height: '75%', justifyContent: 'flex-end' },
-  memberPickerDrawer: { flex: 1, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
+  memberPickerDrawer: { flex: 1, minHeight: 0, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
   memberPickerDrawerLight: { backgroundColor: '#F7F7F7' },
   memberPickerDrawerDark: { backgroundColor: '#12274D' },
   memberPickerTitle: { marginBottom: 12, fontSize: 19, fontWeight: '700' },
@@ -855,7 +868,8 @@ const styles = StyleSheet.create({
   memberSearchInputDark: { backgroundColor: '#203E75', borderColor: 'rgba(247,247,247,0.15)', color: '#F7F7F7' },
   selectAllRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.25)' },
   selectAllText: { fontSize: 14, fontWeight: '700' },
-  memberPickerList: { flex: 1 },
+  memberPickerList: { flex: 1, minHeight: 0 },
+  memberPickerListContent: { paddingBottom: 8 },
   memberPickerRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.2)' },
   memberPickerRowLocked: { opacity: 0.65 },
   memberPickerCheckbox: { width: 31, minHeight: 44, alignItems: 'center', justifyContent: 'center' },

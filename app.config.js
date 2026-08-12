@@ -28,6 +28,12 @@ module.exports = ({ config: baseConfig }) => {
     ...(config.ios || {}),
     bundleIdentifier: config.ios?.bundleIdentifier || 'com.smackidd.dispatch',
     usesAppleSignIn: true,
+    associatedDomains: [
+      ...new Set([
+        ...(config.ios?.associatedDomains || []),
+        'applinks:dispatchcrewmanager.com',
+      ]),
+    ],
     infoPlist: {
       ...(config.ios?.infoPlist || {}),
       ITSAppUsesNonExemptEncryption:
@@ -39,6 +45,21 @@ module.exports = ({ config: baseConfig }) => {
     ...(config.android || {}),
     package: config.android?.package || 'com.smackidd.dispatch',
     googleServicesFile: config.android?.googleServicesFile || './google-services.json',
+    intentFilters: [
+      ...(config.android?.intentFilters || []),
+      {
+        action: 'VIEW',
+        autoVerify: true,
+        data: [
+          {
+            scheme: 'https',
+            host: 'dispatchcrewmanager.com',
+            pathPrefix: '/invite',
+          },
+        ],
+        category: ['BROWSABLE', 'DEFAULT'],
+      },
+    ],
   };
 
   config.runtimeVersion = 'dispatch-sdk54-rn081-newarch-delegate-v4';

@@ -241,7 +241,12 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
     'workerInvites/invite-in': {
       managerId: 'manager-keep',
       organizationId: 'org-1',
-      email: 'steve@example.com',
+      email: 'steve+dispatch@example.com',
+    },
+    'workerInvites/invite-other-alias': {
+      managerId: 'manager-keep',
+      organizationId: 'org-1',
+      email: 'steve+worker@example.com',
     },
     'managerInvites/manager-invite': {
       inviterId: deletingUid,
@@ -258,8 +263,14 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
     'inviteTokens/invite-in': {
       inviteId: 'invite-in',
       managerId: 'manager-keep',
-      email: 'steve@example.com',
+      email: 'steve+dispatch@example.com',
       token: 'incoming-token',
+    },
+    'inviteTokens/invite-other-alias': {
+      inviteId: 'invite-other-alias',
+      managerId: 'manager-keep',
+      email: 'steve+worker@example.com',
+      token: 'other-alias-token',
     },
     'roleAssignmentNotifications/role-note': {
       workerId: 'worker-1',
@@ -356,9 +367,11 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
   assert.equal(db.documents.get('workerInvites/invite-out').managerId, 'manager-keep');
   assert.equal(db.documents.get('workerInvites/invite-out').statusReason, 'Invited by Deleted user');
   assert.equal(db.documents.has('workerInvites/invite-in'), false);
+  assert.equal(db.documents.has('workerInvites/invite-other-alias'), true);
   assert.equal(db.documents.get('managerInvites/manager-invite').inviterId, 'manager-keep');
   assert.equal(db.documents.get('inviteTokens/invite-out').managerId, 'manager-keep');
   assert.equal(db.documents.has('inviteTokens/invite-in'), false);
+  assert.equal(db.documents.has('inviteTokens/invite-other-alias'), true);
   assert.equal(db.documents.get('roleAssignmentNotifications/role-note').managerId, 'manager-keep');
   assert.equal(db.documents.get('roleAssignmentNotifications/role-note').eventName, 'Deleted user Launch');
   assert.equal(db.documents.has('userNotifications/delete-note'), false);

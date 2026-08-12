@@ -34,6 +34,7 @@ import { buildLateTaskNotificationTargets } from '@/lib/task-notification-target
 import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
 import { removeEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
+import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 export type { InviteToken, InviteTokenStatus, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 
@@ -465,21 +466,6 @@ export function sortDispatchEvents(items: DispatchEvent[]) {
   });
 }
 
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
-}
-
-function canonicalizeEmail(email: string) {
-  const normalized = normalizeEmail(email);
-  const atIndex = normalized.indexOf('@');
-  if (atIndex <= 0) return normalized;
-
-  const local = normalized.slice(0, atIndex);
-  const domain = normalized.slice(atIndex + 1);
-  const plusIndex = local.indexOf('+');
-  return `${plusIndex >= 0 ? local.slice(0, plusIndex) : local}@${domain}`;
-}
-
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -527,7 +513,7 @@ async function loadActiveInvite(params: { managerId: string; teamId?: string; em
     .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<WorkerInvite, 'id'>) }))
     .filter((invite) => (
       (invite.teamId || null) === (params.teamId || null)
-      && canonicalizeEmail(invite.canonicalEmail || invite.normalizedEmail || invite.email) === canonicalEmail
+      && canonicalizeEmail(invite.normalizedEmail || invite.email || invite.canonicalEmail) === canonicalEmail
     ));
 
   for (const invite of matches) {
@@ -1987,7 +1973,7 @@ async function setInvitePendingAcceptance(params: { userId: string; email: strin
 
     for (const inviteDoc of invitesSnap.docs) {
       const invite = { id: inviteDoc.id, ...(inviteDoc.data() as Omit<WorkerInvite, 'id'>) };
-      if (!invite.managerId) continue;
+      if (!invite.managerId || invite.claimRequired) continue;
       if (await expireInviteIfNeeded(inviteDoc.ref, invite)) continue;
 
       let managerName = 'A manager';
@@ -2046,6 +2032,7 @@ export async function acceptPendingWorkerInvitesForUser(params: { userId: string
   }
 
   for (const invite of inviteDocsById.values()) {
+    if (invite.claimRequired) continue;
     if (invite.workerId && invite.workerId !== params.userId) continue;
     await acceptWorkerInvite({ userId: params.userId, inviteId: invite.id }).catch(() => null);
   }
@@ -2111,6 +2098,7 @@ export async function linkPendingManagerInvites(params: { userId: string; email:
 
   for (const inviteDoc of inviteDocsById.values()) {
     const invite = { id: inviteDoc.id, ...(inviteDoc.data() as Omit<ManagerInvite, 'id'>) };
+    if (invite.claimRequired) continue;
     const batch = writeBatch(db);
     batch.update(userRef, {
       organizationId: invite.organizationId,
@@ -2267,7 +2255,7 @@ export async function inviteWorkerByEmailToTeam(params: {
   const foundWorker = organizationUsersSnap?.docs.find((userDoc) => {
     const data = userDoc.data() as Partial<UserProfile>;
     return normalizeTeamMemberRole(data.role) === 'worker'
-      && canonicalizeEmail(data.canonicalEmail || data.email || '') === canonicalEmail;
+      && canonicalizeEmail(data.email || data.canonicalEmail) === canonicalEmail;
   });
   const foundWorkerId = foundWorker?.id;
 

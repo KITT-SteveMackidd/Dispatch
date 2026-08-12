@@ -30,6 +30,17 @@ const {
   roleStateFingerprint,
 } = require('./lib/role-state');
 const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications');
+const {
+  INVITE_TTL_MS,
+  buildInviteUrls,
+  buildSecureInviteEmail,
+  generateInviteSecrets,
+  hashInviteCode,
+  hashInviteToken,
+  isValidEmail,
+  maskEmail,
+  normalizeEmail,
+} = require('./lib/secure-invites');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
@@ -60,6 +71,474 @@ function chunks(values, size) {
   for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
   return result;
 }
+
+function normalizedRole(value) {
+  const role = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return role === 'manager' || role === 'worker' ? role : null;
+}
+
+function timestampMillis(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  return 0;
+}
+
+function invitationPreview(invite, currentUserId = null) {
+  return {
+    inviteKind: invite.inviteKind,
+    organizationName: invite.organizationName || 'Dispatch organization',
+    teamName: invite.teamName || null,
+    deliveryEmailHint: maskEmail(invite.deliveryEmail),
+    status: invite.status,
+    canClaim: invite.status === 'active'
+      || (invite.status === 'claimed' && Boolean(currentUserId) && invite.claimedBy === currentUserId),
+    expiresAt: timestampMillis(invite.expiresAt) || null,
+  };
+}
+
+async function resolveSecureInvite(lookupValue) {
+  const value = typeof lookupValue === 'string' ? lookupValue.trim() : '';
+  if (value.length < 8 || value.length > 256) return null;
+
+  const tokenHash = hashInviteToken(value);
+  const tokenRef = db.collection('secureInvites').doc(tokenHash);
+  const tokenSnapshot = await tokenRef.get();
+  if (tokenSnapshot.exists) {
+    return { ref: tokenRef, snapshot: tokenSnapshot, inviteHash: tokenHash };
+  }
+
+  const codeHash = hashInviteCode(value);
+  const codeSnapshot = await db.collection('secureInviteCodes').doc(codeHash).get();
+  if (!codeSnapshot.exists || !codeSnapshot.data()?.inviteHash) return null;
+  const inviteHash = codeSnapshot.data().inviteHash;
+  const inviteRef = db.collection('secureInvites').doc(inviteHash);
+  const inviteSnapshot = await inviteRef.get();
+  return inviteSnapshot.exists
+    ? { ref: inviteRef, snapshot: inviteSnapshot, inviteHash }
+    : null;
+}
+
+function communicationThreadIds(organizationId, workerId) {
+  return {
+    organization: `organization:${organizationId}:all`,
+    managers: `organization:${organizationId}:managers:${workerId}`,
+  };
+}
+
+async function syncClaimedInvitationChats(organizationId) {
+  const organizationRef = db.collection('organizations').doc(organizationId);
+  const [organizationSnapshot, usersSnapshot, teamsSnapshot] = await Promise.all([
+    organizationRef.get(),
+    db.collection('users').where('organizationId', '==', organizationId).get(),
+    db.collection('teams').where('organizationId', '==', organizationId).get(),
+  ]);
+  if (!organizationSnapshot.exists) return;
+
+  const organization = organizationSnapshot.data();
+  const users = usersSnapshot.docs.map((userDocument) => ({ id: userDocument.id, ...userDocument.data() }));
+  const managerIds = [...new Set([
+    ...(Array.isArray(organization.managerIds) ? organization.managerIds : []),
+    ...users.filter((user) => normalizedRole(user.role) === 'manager').map((user) => user.id),
+  ])];
+  const workerIds = [...new Set([
+    ...(Array.isArray(organization.workerIds) ? organization.workerIds : []),
+    ...users.filter((user) => normalizedRole(user.role) === 'worker').map((user) => user.id),
+  ])];
+  const participantIds = [...new Set([...managerIds, ...workerIds])];
+  const writes = [];
+
+  if (participantIds.length) {
+    const organizationThreadId = communicationThreadIds(organizationId, '').organization;
+    writes.push(db.collection('chatThreads').doc(organizationThreadId).set({
+      id: organizationThreadId,
+      organizationId,
+      title: organization.name || 'Organization',
+      kind: 'organization',
+      participants: participantIds,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true }));
+  }
+
+  for (const workerId of workerIds) {
+    const threadId = communicationThreadIds(organizationId, workerId).managers;
+    const worker = users.find((user) => user.id === workerId);
+    writes.push(db.collection('chatThreads').doc(threadId).set({
+      id: threadId,
+      organizationId,
+      title: worker?.displayName || 'Worker',
+      kind: 'manager',
+      participants: [...new Set([workerId, ...managerIds])],
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true }));
+  }
+
+  for (const teamDocument of teamsSnapshot.docs) {
+    const team = teamDocument.data();
+    const teamWorkerIds = Array.isArray(team.workerIds) ? team.workerIds : [];
+    const teamParticipants = [...new Set([...managerIds, ...teamWorkerIds])];
+    const threadId = `team:${teamDocument.id}:all`;
+    writes.push(teamDocument.ref.set({
+      managerIds,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true }));
+    writes.push(db.collection('chatThreads').doc(threadId).set({
+      id: threadId,
+      teamId: teamDocument.id,
+      organizationId,
+      teamName: team.name || null,
+      title: team.name || 'Team',
+      kind: 'team',
+      participants: teamParticipants,
+      createdByTeamSync: true,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true }));
+  }
+
+  await Promise.all(writes);
+}
+
+exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'You must be signed in to send a Dispatch invitation.');
+  }
+
+  const inviteKind = request.data?.inviteKind === 'manager' ? 'manager' : request.data?.inviteKind === 'worker' ? 'worker' : null;
+  const deliveryEmail = normalizeEmail(request.data?.deliveryEmail);
+  const teamId = typeof request.data?.teamId === 'string' && request.data.teamId.trim()
+    ? request.data.teamId.trim()
+    : null;
+  if (!inviteKind) throw new HttpsError('invalid-argument', 'Choose whether this invitation is for a Worker or Manager.');
+  if (!isValidEmail(deliveryEmail)) throw new HttpsError('invalid-argument', 'Enter a valid delivery email address.');
+  if (inviteKind === 'manager' && teamId) throw new HttpsError('invalid-argument', 'Managers join the organization rather than one Team.');
+
+  const callerRef = db.collection('users').doc(request.auth.uid);
+  const callerSnapshot = await callerRef.get();
+  if (!callerSnapshot.exists || normalizedRole(callerSnapshot.data().role) !== 'manager') {
+    throw new HttpsError('permission-denied', 'Only a Dispatch Manager can send invitations.');
+  }
+
+  const caller = callerSnapshot.data();
+  const organizationId = caller.organizationId;
+  if (!organizationId) throw new HttpsError('failed-precondition', 'Create or join an organization before inviting people.');
+  const organizationRef = db.collection('organizations').doc(organizationId);
+  const organizationSnapshot = await organizationRef.get();
+  if (!organizationSnapshot.exists) throw new HttpsError('not-found', 'Organization not found.');
+  const organization = organizationSnapshot.data();
+  if (!Array.isArray(organization.managerIds) || !organization.managerIds.includes(request.auth.uid)) {
+    throw new HttpsError('permission-denied', 'You are not an active Manager in this organization.');
+  }
+
+  let team = null;
+  if (teamId) {
+    const teamSnapshot = await db.collection('teams').doc(teamId).get();
+    if (!teamSnapshot.exists || teamSnapshot.data().organizationId !== organizationId) {
+      throw new HttpsError('permission-denied', 'That Team is not part of your organization.');
+    }
+    team = { id: teamSnapshot.id, ...teamSnapshot.data() };
+  }
+
+  const { token, code } = generateInviteSecrets();
+  const inviteHash = hashInviteToken(token);
+  const codeHash = hashInviteCode(code);
+  const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+  const { webUrl, appUrl } = buildInviteUrls(token, process.env.DISPATCH_INVITE_BASE_URL);
+  const inviteRef = db.collection('secureInvites').doc(inviteHash);
+  const codeRef = db.collection('secureInviteCodes').doc(codeHash);
+  const sourceRef = db.collection(inviteKind === 'worker' ? 'workerInvites' : 'managerInvites').doc();
+  const mailRef = db.collection('mail').doc();
+  const now = FieldValue.serverTimestamp();
+  const organizationName = organization.name || caller.organizationName || 'Dispatch organization';
+  const teamName = team?.name || null;
+
+  const previousInvites = await db.collection('secureInvites').where('inviterId', '==', request.auth.uid).get();
+  const batch = db.batch();
+  previousInvites.docs
+    .filter((document) => {
+      const data = document.data();
+      return data.status === 'active'
+        && data.inviteKind === inviteKind
+        && data.deliveryEmail === deliveryEmail
+        && (data.teamId || null) === teamId;
+    })
+    .forEach((document) => {
+      const previous = document.data();
+      const revokedState = {
+        status: 'revoked',
+        statusReason: 'Replaced by a newer invitation.',
+        revokedAt: now,
+        updatedAt: now,
+      };
+      batch.set(document.ref, revokedState, { merge: true });
+      if (previous.sourceCollection && previous.sourceInviteId) {
+        batch.set(
+          db.collection(previous.sourceCollection).doc(previous.sourceInviteId),
+          revokedState,
+          { merge: true }
+        );
+      }
+      if (previous.codeHash) {
+        batch.set(db.collection('secureInviteCodes').doc(previous.codeHash), revokedState, { merge: true });
+      }
+    });
+
+  batch.set(inviteRef, {
+    inviteKind,
+    inviterId: request.auth.uid,
+    inviterName: caller.displayName || 'A Dispatch manager',
+    organizationId,
+    organizationName,
+    teamId,
+    teamName,
+    deliveryEmail,
+    sourceInviteId: sourceRef.id,
+    sourceCollection: inviteKind === 'worker' ? 'workerInvites' : 'managerInvites',
+    codeHash,
+    status: 'active',
+    expiresAt,
+    claimedBy: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  batch.set(codeRef, {
+    inviteHash,
+    status: 'active',
+    expiresAt,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  if (inviteKind === 'worker') {
+    batch.set(sourceRef, {
+      managerId: request.auth.uid,
+      teamId,
+      teamName: teamName || (teamId ? 'Dispatch Team' : 'Solo worker'),
+      organizationId,
+      organizationName,
+      appLink: webUrl,
+      deliveryEmail,
+      workerId: null,
+      claimRequired: true,
+      secureInviteId: inviteHash,
+      deliveryChannel: 'email',
+      emailDelivery: 'firebase-mail-collection',
+      status: 'delivery_queued',
+      statusReason: 'Secure invitation link queued for email delivery.',
+      sendCount: 1,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt,
+      lastSentAt: now,
+    });
+  } else {
+    batch.set(sourceRef, {
+      inviterId: request.auth.uid,
+      organizationId,
+      organizationName,
+      deliveryEmail,
+      managerUserId: null,
+      claimRequired: true,
+      secureInviteId: inviteHash,
+      appLink: webUrl,
+      status: 'pending',
+      statusReason: 'Waiting for the recipient to claim this secure invitation.',
+      createdAt: now,
+      updatedAt: now,
+      expiresAt,
+    });
+  }
+
+  batch.set(mailRef, {
+    ...buildSecureInviteEmail({
+      deliveryEmail,
+      inviteKind,
+      organizationName,
+      teamName,
+      inviterName: caller.displayName,
+      inviteId: sourceRef.id,
+      webUrl,
+      appUrl,
+      code,
+    }),
+    createdAt: now,
+  });
+  await batch.commit();
+
+  logger.info('Created secure Dispatch invitation.', {
+    inviteKind,
+    organizationId,
+    teamId,
+    inviterId: request.auth.uid,
+    sourceInviteId: sourceRef.id,
+  });
+  return {
+    inviteId: sourceRef.id,
+    inviteCode: code,
+    appLink: webUrl,
+    expiresAt: expiresAt.toISOString(),
+    deliveryQueued: true,
+    reused: false,
+  };
+});
+
+exports.getDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
+  const resolved = await resolveSecureInvite(request.data?.tokenOrCode);
+  if (!resolved) throw new HttpsError('not-found', 'This Dispatch invitation could not be found.');
+
+  const invite = resolved.snapshot.data();
+  if (invite.status === 'active' && timestampMillis(invite.expiresAt) <= Date.now()) {
+    await resolved.ref.set({
+      status: 'expired',
+      statusReason: 'Invitation expired before it was claimed.',
+      expiredAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    invite.status = 'expired';
+  }
+  return invitationPreview(invite, request.auth?.uid || null);
+});
+
+exports.claimDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before joining this Dispatch invitation.');
+  const resolved = await resolveSecureInvite(request.data?.tokenOrCode);
+  if (!resolved) throw new HttpsError('not-found', 'This Dispatch invitation could not be found.');
+  const authUser = await adminAuth.getUser(request.auth.uid);
+
+  const claimResult = await db.runTransaction(async (transaction) => {
+    const inviteSnapshot = await transaction.get(resolved.ref);
+    if (!inviteSnapshot.exists) throw new HttpsError('not-found', 'This Dispatch invitation could not be found.');
+    const invite = inviteSnapshot.data();
+
+    if (invite.status === 'claimed' && invite.claimedBy === request.auth.uid) {
+      return { ...invitationPreview(invite, request.auth.uid), organizationId: invite.organizationId, teamId: invite.teamId || null };
+    }
+    if (invite.status !== 'active') throw new HttpsError('failed-precondition', `This invitation is ${invite.status}.`);
+    if (timestampMillis(invite.expiresAt) <= Date.now()) throw new HttpsError('deadline-exceeded', 'This invitation has expired. Ask the Manager for a new invitation.');
+
+    const organizationRef = db.collection('organizations').doc(invite.organizationId);
+    const userRef = db.collection('users').doc(request.auth.uid);
+    const sourceRef = db.collection(invite.sourceCollection).doc(invite.sourceInviteId);
+    const codeRef = db.collection('secureInviteCodes').doc(invite.codeHash);
+    const refs = [organizationRef, userRef, sourceRef];
+    const teamRef = invite.teamId ? db.collection('teams').doc(invite.teamId) : null;
+    if (teamRef) refs.push(teamRef);
+    const snapshots = await transaction.getAll(...refs);
+    const organizationSnapshot = snapshots[0];
+    const userSnapshot = snapshots[1];
+    const sourceSnapshot = snapshots[2];
+    const teamSnapshot = teamRef ? snapshots[3] : null;
+    if (!organizationSnapshot.exists) throw new HttpsError('not-found', 'The invited organization no longer exists.');
+    if (!sourceSnapshot.exists) throw new HttpsError('not-found', 'The underlying invitation no longer exists.');
+    if (teamRef && (!teamSnapshot?.exists || teamSnapshot.data().organizationId !== invite.organizationId)) {
+      throw new HttpsError('failed-precondition', 'The invited Team is no longer available.');
+    }
+
+    const source = sourceSnapshot.data();
+    if (['revoked', 'cancelled', 'declined', 'expired'].includes(source.status)) {
+      throw new HttpsError('failed-precondition', `This invitation is ${source.status}.`);
+    }
+    const targetRole = invite.inviteKind === 'manager' ? 'manager' : 'worker';
+    const existingUser = userSnapshot.exists ? userSnapshot.data() : null;
+    const existingRole = normalizedRole(existingUser?.role);
+    if (existingRole && existingRole !== targetRole) {
+      throw new HttpsError('failed-precondition', `This invitation is for a ${targetRole}. Sign in with the intended account or change the account role first.`);
+    }
+    if (existingUser?.organizationId && existingUser.organizationId !== invite.organizationId) {
+      throw new HttpsError('failed-precondition', 'This account already belongs to a different Dispatch organization.');
+    }
+
+    const organization = organizationSnapshot.data();
+    const authEmail = normalizeEmail(authUser.email);
+    const displayName = authUser.displayName?.trim()
+      || existingUser?.displayName?.trim()
+      || (authEmail.endsWith('@privaterelay.appleid.com') ? 'Dispatch User' : authEmail.split('@')[0])
+      || 'Dispatch User';
+    const now = FieldValue.serverTimestamp();
+    transaction.set(userRef, {
+      uid: request.auth.uid,
+      displayName,
+      role: targetRole,
+      onboardingCompleted: true,
+      organizationId: invite.organizationId,
+      organizationName: invite.organizationName || organization.name || null,
+      email: authEmail || null,
+      canonicalEmail: authEmail || null,
+      createdAt: existingUser?.createdAt || now,
+      updatedAt: now,
+    }, { merge: true });
+
+    if (targetRole === 'worker') {
+      transaction.set(organizationRef, {
+        workerIds: FieldValue.arrayUnion(request.auth.uid),
+        lastAcceptedInviteId: invite.sourceInviteId,
+        updatedAt: now,
+      }, { merge: true });
+      if (teamRef) {
+        transaction.set(teamRef, {
+          workerIds: FieldValue.arrayUnion(request.auth.uid),
+          lastAcceptedInviteId: invite.sourceInviteId,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      transaction.set(sourceRef, {
+        workerId: request.auth.uid,
+        status: 'accepted',
+        statusReason: 'Worker claimed the secure invitation link.',
+        acceptedAt: now,
+        consumedAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    } else {
+      transaction.set(organizationRef, {
+        managerIds: FieldValue.arrayUnion(request.auth.uid),
+        updatedAt: now,
+      }, { merge: true });
+      transaction.set(sourceRef, {
+        managerUserId: request.auth.uid,
+        status: 'accepted',
+        statusReason: 'Manager claimed the secure invitation link.',
+        acceptedAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    }
+
+    transaction.set(resolved.ref, {
+      status: 'claimed',
+      claimedBy: request.auth.uid,
+      claimedAt: now,
+      updatedAt: now,
+    }, { merge: true });
+    transaction.set(codeRef, { status: 'claimed', claimedAt: now, updatedAt: now }, { merge: true });
+    const notificationRef = db.collection('userNotifications').doc();
+    transaction.set(notificationRef, {
+      userId: invite.inviterId,
+      kind: invite.inviteKind === 'manager' ? 'manager_organisation_invite' : 'worker_team_invite',
+      title: `${targetRole === 'manager' ? 'Manager' : 'Worker'} invitation accepted`,
+      body: `${displayName} joined ${invite.teamName || invite.organizationName || 'your organization'}.`,
+      relatedRoleId: invite.sourceInviteId,
+      read: false,
+      createdAt: now,
+    });
+
+    return { ...invitationPreview({ ...invite, status: 'claimed', claimedBy: request.auth.uid }, request.auth.uid), organizationId: invite.organizationId, teamId: invite.teamId || null };
+  });
+
+  await syncClaimedInvitationChats(claimResult.organizationId).catch((error) => {
+    logger.error('Invitation claimed but communication-thread sync failed.', {
+      organizationId: claimResult.organizationId,
+      claimantId: request.auth.uid,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  logger.info('Claimed secure Dispatch invitation.', {
+    claimantId: request.auth.uid,
+    inviteKind: claimResult.inviteKind,
+    organizationId: claimResult.organizationId,
+    teamId: claimResult.teamId,
+  });
+  return { ...claimResult, claimed: true };
+});
 
 exports.resetDispatchDatabase = onCall({
   maxInstances: 1,
@@ -144,7 +623,7 @@ exports.deleteDispatchAccount = onCall({
       appleAuthorizationRevoked = true;
     } catch (error) {
       logger.error('Sign in with Apple revocation failed before account deletion.', {
-        message: error instanceof Error ? error.message : String(error),
+        revocationError: error instanceof Error ? error.message : String(error),
       });
       throw new HttpsError(
         'failed-precondition',

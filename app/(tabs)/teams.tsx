@@ -28,8 +28,6 @@ import {
   createTeam,
   ensureOrganizationCommunicationThreads,
   ensureTeamCommunicationThreads,
-  inviteManagerByEmailToOrganisation,
-  inviteWorkerByEmailToTeam,
   loadOrganizationMembers,
   loadUserProfilesByIds,
   watchIncomingChatThreadHeads,
@@ -37,7 +35,8 @@ import {
   watchUserTeamUnreadCounts,
   watchWorkerTeams,
 } from '@/services/dispatch';
-import { getWorkerInviteErrorMessage, getWorkerInviteOutcomeMessage } from '@/lib/worker-invite-validation';
+import { getWorkerInviteErrorMessage } from '@/lib/worker-invite-validation';
+import { createSecureDispatchInvite, secureInviteErrorMessage } from '@/lib/secure-invites';
 import type { Organisation, Team, UserProfile } from '@/types/dispatch';
 import { buildCurrentManagerIds, buildManagerChatParticipants, getVisibleManagerChatWorkerIds } from '@/lib/chat-list-membership';
 import { DrawerBottomFill } from '@/components/DrawerBottomFill';
@@ -342,13 +341,20 @@ export default function TeamsScreen() {
         setTeamName('');
         setDrawerMessage('Team created.');
       } else if (drawerMode === 'invite-worker') {
-        const result = await inviteWorkerByEmailToTeam({ managerId: profile.uid, teamId: inviteTeamId === 'solo' ? undefined : inviteTeamId, email: inviteEmail });
+        const result = await createSecureDispatchInvite({
+          inviteKind: 'worker',
+          deliveryEmail: inviteEmail,
+          teamId: inviteTeamId === 'solo' ? undefined : inviteTeamId,
+        });
         setInviteEmail('');
-        setDrawerMessage(getWorkerInviteOutcomeMessage(result));
+        setDrawerMessage(`Worker invitation sent. They may continue with Apple, Google, or email. Backup code: ${result.inviteCode}`);
       } else {
-        await inviteManagerByEmailToOrganisation({ inviterId: profile.uid, email: inviteEmail });
+        const result = await createSecureDispatchInvite({
+          inviteKind: 'manager',
+          deliveryEmail: inviteEmail,
+        });
         setInviteEmail('');
-        setDrawerMessage('Manager invite sent.');
+        setDrawerMessage(`Manager invitation sent. They may continue with Apple, Google, or email. Backup code: ${result.inviteCode}`);
       }
       setDrawerMessageTone('success');
     } catch (error) {
@@ -356,7 +362,7 @@ export default function TeamsScreen() {
       setDrawerMessage(
         drawerMode === 'invite-worker'
           ? getWorkerInviteErrorMessage(error)
-          : error instanceof Error ? error.message : 'Unable to complete this action.'
+          : secureInviteErrorMessage(error)
       );
     } finally {
       setSaving(false);
@@ -493,11 +499,14 @@ export default function TeamsScreen() {
                         </View>
                       </>
                     ) : null}
-                    <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>{drawerMode === 'invite-worker' ? 'Worker email' : 'Manager email'}</Text>
+                    <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Delivery email</Text>
                     <TextInput value={inviteEmail} onChangeText={setInviteEmail} autoCapitalize="none" keyboardType="email-address" style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="name@example.com" placeholderTextColor="#64748b" />
+                    <Text style={[styles.inviteEmailHint, isDarkMode ? styles.textDark : styles.textLight]}>
+                      This address only receives the invitation. The recipient can join with Apple, Google, or a different Dispatch email.
+                    </Text>
                   </>
                 )}
-                {drawerMessage ? <Text style={drawerMessageTone === 'error' ? styles.errorText : styles.successText}>{drawerMessage}</Text> : null}
+                {drawerMessage ? <Text selectable style={drawerMessageTone === 'error' ? styles.errorText : styles.successText}>{drawerMessage}</Text> : null}
                 <Pressable style={[styles.chatButton, saving && styles.disabled]} disabled={saving} onPress={handleSubmitDrawer}>
                   <Text style={styles.chatButtonText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
                 </Pressable>
@@ -566,6 +575,7 @@ const styles = StyleSheet.create({
   modeText: { color: '#64748b', fontSize: 12, fontWeight: '700', textAlign: 'center' },
   modeTextActive: { color: '#F98D2F' },
   fieldLabel: { fontSize: 13, fontWeight: '700', marginTop: 10, marginBottom: 6 },
+  inviteEmailHint: { marginTop: 8, fontSize: 12, lineHeight: 17, opacity: 0.78 },
   teamChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   teamChip: { borderRadius: 7, borderWidth: 1, borderColor: 'rgba(100,116,139,0.35)', paddingHorizontal: 10, paddingVertical: 9 },
   teamChipActive: { borderColor: '#F98D2F' },

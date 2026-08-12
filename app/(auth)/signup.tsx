@@ -11,7 +11,7 @@ import {
   View,
   Image,
 } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
@@ -25,6 +25,8 @@ const darkSignUpLogoSource = authDarkLogoSource;
 
 export default function SignUpScreen() {
   const router = useRouter();
+  const { inviteToken: inviteTokenParam } = useLocalSearchParams<{ inviteToken?: string | string[] }>();
+  const inviteToken = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
   const { signUp } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
@@ -73,7 +75,9 @@ export default function SignUpScreen() {
     try {
       await signUp({ displayName: displayName.trim(), email, password });
       Alert.alert('Verify your email', 'We sent a verification link to your inbox. Verify your email to continue.');
-      router.replace('/(auth)/verify-email');
+      router.replace(inviteToken
+        ? { pathname: '/(auth)/verify-email', params: { inviteToken } }
+        : '/(auth)/verify-email');
     } catch (error) {
       Alert.alert('Sign up failed', getAuthErrorMessage(error, 'signup'));
     } finally {
@@ -180,12 +184,14 @@ export default function SignUpScreen() {
             displayName={displayName}
             isDarkMode={false}
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={(result) => router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
+            onSuccess={(result) => inviteToken
+              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
+              : router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
           />
 
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Already have an account?</Text>
-            <Link href="/(auth)/signin" style={authStyles.lightFooterLink}>
+            <Link href={inviteToken ? { pathname: '/(auth)/signin', params: { inviteToken } } : '/(auth)/signin'} style={authStyles.lightFooterLink}>
               Sign In
             </Link>
           </View>
@@ -273,12 +279,14 @@ export default function SignUpScreen() {
             displayName={displayName}
             isDarkMode
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={(result) => router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
+            onSuccess={(result) => inviteToken
+              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
+              : router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
           />
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Already have an account?</Text>
-            <Link href="/(auth)/signin" style={authStyles.darkFooterLink}>
+            <Link href={inviteToken ? { pathname: '/(auth)/signin', params: { inviteToken } } : '/(auth)/signin'} style={authStyles.darkFooterLink}>
               Sign In
             </Link>
           </View>

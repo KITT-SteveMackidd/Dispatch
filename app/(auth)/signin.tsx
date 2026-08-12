@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 import { authPalettes, authStyles } from '@/components/auth/authStyles';
@@ -25,6 +25,8 @@ const darkSignInLogoSource = authDarkLogoSource;
 
 export default function SignInScreen() {
   const router = useRouter();
+  const { inviteToken: inviteTokenParam } = useLocalSearchParams<{ inviteToken?: string | string[] }>();
+  const inviteToken = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
   const { signIn, sendPasswordReset } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
@@ -68,7 +70,8 @@ export default function SignInScreen() {
     setLoading(true);
     try {
       await signIn(email, password);
-      router.replace('/(tabs)');
+      if (inviteToken) router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } });
+      else router.replace('/(tabs)');
     } catch (error) {
       Alert.alert('Sign in failed', getAuthErrorMessage(error, 'signin'));
     } finally {
@@ -175,16 +178,20 @@ export default function SignInScreen() {
             <Text style={authStyles.lightActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
 
+          <Link href="/invite/index" style={authStyles.lightActionLink}>Use Invitation Code</Link>
+
           <SocialAuthButtons
             mode="signin"
             isDarkMode={false}
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={() => router.replace('/(tabs)')}
+            onSuccess={() => inviteToken
+              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
+              : router.replace('/(tabs)')}
           />
 
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Don't have an account?</Text>
-            <Link href="/(auth)/signup" style={authStyles.lightFooterLink}>
+            <Link href={inviteToken ? { pathname: '/(auth)/signup', params: { inviteToken } } : '/(auth)/signup'} style={authStyles.lightFooterLink}>
               Create Account
             </Link>
           </View>
@@ -261,16 +268,20 @@ export default function SignInScreen() {
             <Text style={authStyles.darkActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
 
+          <Link href="/invite/index" style={authStyles.darkActionLink}>Use Invitation Code</Link>
+
           <SocialAuthButtons
             mode="signin"
             isDarkMode
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={() => router.replace('/(tabs)')}
+            onSuccess={() => inviteToken
+              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
+              : router.replace('/(tabs)')}
           />
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Don't have an account?</Text>
-            <Link href="/(auth)/signup" style={authStyles.darkFooterLink}>
+            <Link href={inviteToken ? { pathname: '/(auth)/signup', params: { inviteToken } } : '/(auth)/signup'} style={authStyles.darkFooterLink}>
               Create Account
             </Link>
           </View>

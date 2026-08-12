@@ -9,6 +9,7 @@ type CryptoModule = typeof import('expo-crypto');
 
 type SocialAuthButtonsProps = {
   mode: 'signin' | 'signup';
+  actionLabel?: 'default' | 'continue';
   displayName?: string;
   isDarkMode: boolean;
   disabled?: boolean;
@@ -100,7 +101,7 @@ function GoogleProviderButton(props: ProviderButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${props.mode === 'signup' ? 'Create account' : 'Sign in'} with Google`}
+      accessibilityLabel={`${props.actionLabel === 'continue' ? 'Continue' : props.mode === 'signup' ? 'Create account' : 'Sign in'} with Google`}
       disabled={props.disabled}
       onPress={onGooglePress}
       style={({ pressed }) => [
@@ -168,7 +169,7 @@ function AppleProviderButton(props: ProviderButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${props.mode === 'signup' ? 'Sign up' : 'Sign in'} with Apple`}
+      accessibilityLabel={`${props.actionLabel === 'continue' ? 'Continue' : props.mode === 'signup' ? 'Sign up' : 'Sign in'} with Apple`}
       disabled={props.disabled}
       onPress={onApplePress}
       style={({ pressed }) => [
@@ -179,7 +180,7 @@ function AppleProviderButton(props: ProviderButtonProps) {
       ]}>
       <Text style={[styles.appleLogo, props.isDarkMode && styles.appleContentOnDark]}></Text>
       <Text style={[styles.appleText, props.isDarkMode && styles.appleContentOnDark]}>
-        {props.mode === 'signup' ? 'Sign up with Apple' : 'Sign in with Apple'}
+        {props.actionLabel === 'continue' ? 'Continue with Apple' : props.mode === 'signup' ? 'Sign up with Apple' : 'Sign in with Apple'}
       </Text>
     </Pressable>
   );

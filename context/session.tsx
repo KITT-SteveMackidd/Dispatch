@@ -25,6 +25,7 @@ import {
 } from '@/services/push-token-session';
 import { shouldLinkPendingWorkerInvites } from '@/lib/chat-list-membership';
 import { requestDispatchAccountDeletion } from '@/lib/account-deletion';
+import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
 type CryptoModule = typeof import('expo-crypto');
@@ -92,21 +93,6 @@ async function loadProfile(uid: string): Promise<UserProfile | null> {
     phoneNumber: data.phoneNumber,
     scheduledEventReminderKeys: data.scheduledEventReminderKeys || [],
   };
-}
-
-function normalizeEmail(email?: string | null) {
-  return email?.trim().toLowerCase() || '';
-}
-
-function canonicalizeEmail(email?: string | null) {
-  const normalized = normalizeEmail(email);
-  const atIndex = normalized.indexOf('@');
-  if (atIndex <= 0) return normalized;
-
-  const local = normalized.slice(0, atIndex);
-  const domain = normalized.slice(atIndex + 1);
-  const plusIndex = local.indexOf('+');
-  return `${plusIndex >= 0 ? local.slice(0, plusIndex) : local}@${domain}`;
 }
 
 function normalizeRole(role?: string | null): AppRole | null {

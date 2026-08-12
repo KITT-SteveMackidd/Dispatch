@@ -10,12 +10,14 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
+  const { inviteToken: inviteTokenParam } = useLocalSearchParams<{ inviteToken?: string | string[] }>();
+  const inviteToken = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
   const { authUser, refreshAuthUser, sendVerificationEmail, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
@@ -39,7 +41,8 @@ export default function VerifyEmailScreen() {
     try {
       const isVerified = await refreshAuthUser();
       if (isVerified) {
-        router.replace('/');
+        if (inviteToken) router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } });
+        else router.replace('/');
       } else {
         Alert.alert('Not verified yet', 'We still show this account as unverified. Open the link from your email, then try again.');
       }
@@ -52,7 +55,9 @@ export default function VerifyEmailScreen() {
 
   const onUseAnotherAccount = async () => {
     await signOut();
-    router.replace('/(auth)/signin');
+    router.replace(inviteToken
+      ? { pathname: '/(auth)/signin', params: { inviteToken } }
+      : '/(auth)/signin');
   };
 
   return (

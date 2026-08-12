@@ -88,8 +88,14 @@ service cloud.firestore {
       return signedIn()
         && (
           (resource.data.workerId != null && resource.data.workerId == request.auth.uid)
-          || (request.auth.token.email != null && resource.data.email == request.auth.token.email)
-          || (request.auth.token.email != null && resource.data.normalizedEmail == request.auth.token.email)
+          || (
+            resource.data.claimRequired != true
+            && request.auth.token.email != null
+            && (
+              resource.data.email == request.auth.token.email
+              || resource.data.normalizedEmail == request.auth.token.email
+            )
+          )
         );
     }
 
@@ -221,11 +227,7 @@ service cloud.firestore {
         isManager()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerIds', 'updatedAt'])
         && resource.data.pendingManagerInviteEmails is list
-        && resource.data.pendingManagerInviteCanonicalEmails is list
-        && (
-          request.auth.token.email in resource.data.pendingManagerInviteEmails
-          || userDoc().data.canonicalEmail in resource.data.pendingManagerInviteCanonicalEmails
-        )
+        && request.auth.token.email in resource.data.pendingManagerInviteEmails
         && !(request.auth.uid in resource.data.managerIds)
         && request.auth.uid in request.resource.data.managerIds
         && request.resource.data.managerIds.hasAll(resource.data.managerIds)
@@ -279,11 +281,12 @@ service cloud.firestore {
       allow read: if signedIn()
         && (
           resource.data.inviterId == request.auth.uid
-          || resource.data.email == request.auth.token.email
-          || resource.data.normalizedEmail == request.auth.token.email
           || (
-            resource.data.canonicalEmail is string
-            && userDoc().data.canonicalEmail == resource.data.canonicalEmail
+            resource.data.claimRequired != true
+            && (
+              resource.data.email == request.auth.token.email
+              || resource.data.normalizedEmail == request.auth.token.email
+            )
           )
         );
 
@@ -298,13 +301,10 @@ service cloud.firestore {
         && request.resource.data.organizationId == resource.data.organizationId
       ) || (
         isManager()
+        && resource.data.claimRequired != true
         && (
           resource.data.email == request.auth.token.email
           || resource.data.normalizedEmail == request.auth.token.email
-          || (
-            resource.data.canonicalEmail is string
-            && userDoc().data.canonicalEmail == resource.data.canonicalEmail
-          )
         )
         && request.resource.data.organizationId == resource.data.organizationId
         && request.resource.data.status == 'accepted'
@@ -340,6 +340,16 @@ service cloud.firestore {
         && request.resource.data.status == 'consumed'
         && resource.data.email == request.auth.token.email
       );
+    }
+
+    // Raw invitation tokens and fallback-code mappings are server-only. The
+    // callable Functions expose a safe preview and perform authenticated claims.
+    match /secureInvites/{inviteHash} {
+      allow read, write: if false;
+    }
+
+    match /secureInviteCodes/{codeHash} {
+      allow read, write: if false;
     }
 
     match /roleAssignmentNotifications/{notificationId} {

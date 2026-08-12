@@ -256,6 +256,11 @@ export default function ProfileScreen() {
           </View>
           <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>{displayName}</Text>
           <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>{authUser?.email || 'No email found'}</Text>
+          {usesAppleProvider(authUser) ? (
+            <Text style={[styles.inviteEmailHint, isDarkMode ? styles.emailDark : styles.emailLight]}>
+              Apple may protect your address with Private Relay. Secure invitation links still connect to this account.
+            </Text>
+          ) : null}
           <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
             {profile?.organizationName || 'No organisation yet'}
           </Text>
@@ -269,6 +274,10 @@ export default function ProfileScreen() {
 
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Account Settings</Text>
+      </Pressable>
+      <Pressable style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/invite/index')}>
+        <MaterialIcons name="vpn-key" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
+        <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Use Invitation Code</Text>
       </Pressable>
       {canManageTemplates ? (
         <Pressable
@@ -449,6 +458,7 @@ const styles = StyleSheet.create({
   nameLight: { color: '#232832' },
   nameDark: { color: '#F4F8FF' },
   email: { marginTop: 4 },
+  inviteEmailHint: { marginTop: 4, fontSize: 12, fontWeight: '600' },
   emailLight: { color: '#64748b' },
   emailDark: { color: '#F4F8FF' },
   row: { borderWidth: 1, borderRadius: 10, padding: 16, marginBottom: 16 },
@@ -524,13 +534,19 @@ function formatDisplayDate(value: Date) {
 }
 
 function getPreferredDisplayName(profileName?: string | null, authName?: string | null, email?: string | null) {
+  const relayEmail = isApplePrivateRelayEmail(email);
+  const emailName = displayNameFromEmail(email);
   const profileDisplayName = cleanName(profileName);
-  if (profileDisplayName) return profileDisplayName;
+  if (profileDisplayName && !(relayEmail && profileDisplayName.toLowerCase() === emailName.toLowerCase())) {
+    return profileDisplayName;
+  }
 
   const authDisplayName = cleanName(authName);
-  if (authDisplayName) return authDisplayName;
+  if (authDisplayName && !(relayEmail && authDisplayName.toLowerCase() === emailName.toLowerCase())) {
+    return authDisplayName;
+  }
 
-  const emailName = displayNameFromEmail(email);
+  if (relayEmail) return 'Dispatch User';
   return emailName || 'Dispatch User';
 }
 
@@ -546,6 +562,11 @@ function displayNameFromEmail(email?: string | null) {
   const words = withoutAlias.split(/[._-]+/).filter(Boolean);
   if (!words.length) return '';
   return words.map((word) => word.slice(0, 1).toUpperCase() + word.slice(1)).join(' ');
+}
+
+function isApplePrivateRelayEmail(email?: string | null) {
+  const domain = email?.trim().toLowerCase().split('@')[1] || '';
+  return domain === 'privaterelay.appleid.com' || domain === 'private.icloud.com';
 }
 
 function usesAppleProvider(user?: { providerData?: Array<{ providerId?: string }> } | null) {

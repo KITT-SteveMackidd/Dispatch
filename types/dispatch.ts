@@ -98,10 +98,13 @@ export type WorkerInvite = {
   teamName?: string;
   organizationId?: string | null;
   organizationName?: string | null;
-  email: string;
+  email?: string | null;
+  deliveryEmail?: string | null;
   normalizedEmail?: string;
   canonicalEmail?: string;
   workerId?: string | null;
+  claimRequired?: boolean;
+  secureInviteId?: string | null;
   inviteTokenId?: string | null;
   tokenPreview?: string;
   appLink?: string;
@@ -124,17 +127,20 @@ export type WorkerInvite = {
   sentAt?: { toDate?: () => Date } | Date | null;
 };
 
-export type ManagerInviteStatus = 'pending' | 'accepted' | 'declined' | 'cancelled';
+export type ManagerInviteStatus = 'pending' | 'accepted' | 'declined' | 'expired' | 'revoked' | 'cancelled';
 
 export type ManagerInvite = {
   id: string;
   inviterId: string;
   organizationId: string;
   organizationName?: string | null;
-  email: string;
+  email?: string | null;
+  deliveryEmail?: string | null;
   normalizedEmail?: string;
   canonicalEmail?: string;
   managerUserId?: string | null;
+  claimRequired?: boolean;
+  secureInviteId?: string | null;
   status: ManagerInviteStatus;
   statusReason?: string;
   createdAt?: { toDate?: () => Date } | Date | null;

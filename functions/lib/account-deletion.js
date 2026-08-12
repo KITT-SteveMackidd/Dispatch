@@ -10,6 +10,8 @@ const ACCOUNT_DELETION_COLLECTIONS = [
   'workerInvites',
   'managerInvites',
   'inviteTokens',
+  'secureInvites',
+  'secureInviteCodes',
   'roleAssignmentNotifications',
   'userNotifications',
   'chatThreads',
@@ -25,13 +27,7 @@ function normalizeEmail(value) {
 }
 
 function canonicalizeEmail(value) {
-  const normalized = normalizeEmail(value);
-  const atIndex = normalized.indexOf('@');
-  if (atIndex <= 0) return normalized;
-  const local = normalized.slice(0, atIndex);
-  const domain = normalized.slice(atIndex + 1);
-  const plusIndex = local.indexOf('+');
-  return `${plusIndex >= 0 ? local.slice(0, plusIndex) : local}@${domain}`;
+  return normalizeEmail(value);
 }
 
 function uniqueStrings(values) {
@@ -46,12 +42,14 @@ function sameArray(left, right) {
 }
 
 function buildDeletionIdentity(authUser, userData = {}) {
-  const emails = uniqueStrings([
+  const accountEmails = uniqueStrings([
     authUser?.email,
     userData.email,
-    userData.canonicalEmail,
     ...(authUser?.providerData || []).map((provider) => provider.email),
-  ].flatMap((email) => [normalizeEmail(email), canonicalizeEmail(email)]));
+  ].map(normalizeEmail));
+  const emails = accountEmails.length
+    ? accountEmails
+    : uniqueStrings([normalizeEmail(userData.canonicalEmail)]);
   const names = uniqueStrings([
     authUser?.displayName,
     userData.displayName,
@@ -68,10 +66,7 @@ function buildDeletionIdentity(authUser, userData = {}) {
 
 function identityMatchesEmail(value, identity) {
   const normalized = normalizeEmail(value);
-  return Boolean(normalized && (
-    identity.emails.includes(normalized)
-    || identity.emails.includes(canonicalizeEmail(normalized))
-  ));
+  return Boolean(normalized && identity.emails.includes(normalized));
 }
 
 function escapeRegExp(value) {
@@ -554,6 +549,39 @@ async function deleteDispatchUserData(params) {
     if (data.managerId === uid && replacement) queue.update(record.ref, { managerId: replacement });
   });
 
+  const deletedSecureInviteHashes = new Set();
+  records.secureInvites.forEach((record) => {
+    const data = record.data;
+    const replacement = replacementForOrganization(data.organizationId) || defaultManagerReplacement;
+    const incoming = data.claimedBy === uid || identityMatchesEmail(data.deliveryEmail, identity);
+    if (incoming
+      || deletedInviteIds.has(data.sourceInviteId)
+      || deletedOrgIds.has(data.organizationId)
+      || (data.inviterId === uid && !replacement)) {
+      queue.delete(record.ref);
+      deletedSecureInviteHashes.add(record.id);
+      deletedSourcePaths.add(record.ref.path);
+      sensitiveIds.add(record.id);
+      return;
+    }
+
+    const updates = redactStringFields(
+      data,
+      ['inviterName', 'organizationName', 'teamName', 'statusReason'],
+      identity
+    );
+    if (data.inviterId === uid && replacement) updates.inviterId = replacement;
+    queue.update(record.ref, updates);
+  });
+
+  records.secureInviteCodes.forEach((record) => {
+    if (deletedSecureInviteHashes.has(record.data.inviteHash)) {
+      queue.delete(record.ref);
+      deletedSourcePaths.add(record.ref.path);
+      sensitiveIds.add(record.id);
+    }
+  });
+
   records.organizations.forEach((record) => {
     const data = record.data;
     if (deletedOrgIds.has(record.id)) {
@@ -962,6 +990,8 @@ async function deleteDispatchUserData(params) {
       'workerInvites',
       'managerInvites',
       'inviteTokens',
+      'secureInvites',
+      'secureInviteCodes',
       'roleAssignmentNotifications',
       'userNotifications',
       'chatUnread',
