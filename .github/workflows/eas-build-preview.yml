@@ -55,5 +55,6 @@ jobs:
           eas build
           --platform ${{ inputs.platform }}
           --profile preview
+          ${{ inputs.platform == 'android' && '' || '--refresh-ad-hoc-provisioning-profile' }}
           --non-interactive
           --no-wait
