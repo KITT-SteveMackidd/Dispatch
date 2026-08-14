@@ -49,7 +49,10 @@ test('invitation email permits Apple, Google, or email identities', () => {
   });
 
   assert.deepEqual(email.to, ['delivery@example.com']);
-  assert.match(email.message.text, /sign in with Apple, Google, or email/i);
+  assert.match(email.message.text, /sign in or create your account with Apple, Google, or email/i);
   assert.match(email.message.text, /does not need to match this delivery address/i);
+  assert.match(email.message.text, /iPhone and Android preview downloads/i);
+  assert.match(email.message.text, /return to this email/i);
+  assert.match(email.message.html, /Open your Dispatch invitation/i);
   assert.equal(email.dispatchInvite.inviteCode, 'ABCD2345EFGH');
 });

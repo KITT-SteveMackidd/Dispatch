@@ -32,6 +32,7 @@ module.exports = ({ config: baseConfig }) => {
       ...new Set([
         ...(config.ios?.associatedDomains || []),
         'applinks:dispatchcrewmanager.com',
+        'applinks:www.dispatchcrewmanager.com',
       ]),
     ],
     infoPlist: {
@@ -54,6 +55,11 @@ module.exports = ({ config: baseConfig }) => {
           {
             scheme: 'https',
             host: 'dispatchcrewmanager.com',
+            pathPrefix: '/invite',
+          },
+          {
+            scheme: 'https',
+            host: 'www.dispatchcrewmanager.com',
             pathPrefix: '/invite',
           },
         ],

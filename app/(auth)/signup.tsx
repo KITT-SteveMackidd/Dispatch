@@ -189,6 +189,8 @@ export default function SignUpScreen() {
               : router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
           />
 
+          <Link href="/invite/index" style={authStyles.lightActionLink}>Use Invitation Code</Link>
+
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Already have an account?</Text>
             <Link href={inviteToken ? { pathname: '/(auth)/signin', params: { inviteToken } } : '/(auth)/signin'} style={authStyles.lightFooterLink}>
@@ -283,6 +285,8 @@ export default function SignUpScreen() {
               ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
               : router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
           />
+
+          <Link href="/invite/index" style={authStyles.darkActionLink}>Use Invitation Code</Link>
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Already have an account?</Text>

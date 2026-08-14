@@ -142,6 +142,9 @@ export function SecureInviteScreen({ tokenOrCode }: { tokenOrCode: string }) {
           ) : null}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          <Pressable style={styles.textButton} onPress={() => router.push('/invite/index')}>
+            <Text style={styles.textButtonLabel}>Enter a different invitation code</Text>
+          </Pressable>
           <Pressable style={styles.textButton} onPress={() => router.replace('/')}>
             <Text style={styles.textButtonLabel}>Back to Dispatch</Text>
           </Pressable>
