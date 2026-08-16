@@ -627,9 +627,8 @@ exports.deleteDispatchAccount = onCall({
       });
       appleAuthorizationRevoked = true;
     } catch (error) {
-      logger.error('Sign in with Apple revocation failed before account deletion.', {
-        revocationError: error instanceof Error ? error.message : String(error),
-      });
+      const revocationError = error instanceof Error ? error.message : String(error);
+      logger.error(`Sign in with Apple revocation failed before account deletion: ${revocationError}`);
       throw new HttpsError(
         'failed-precondition',
         'Apple authorization could not be revoked, so no account data was deleted. Please try again.'
