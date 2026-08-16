@@ -4,6 +4,7 @@ const {
   INVITE_CODE_LENGTH,
   buildInviteUrls,
   buildSecureInviteEmail,
+  canAdoptInviteRole,
   generateInviteSecrets,
   hashInviteCode,
   hashInviteToken,
@@ -55,4 +56,16 @@ test('invitation email permits Apple, Google, or email identities', () => {
   assert.match(email.message.text, /return to this email/i);
   assert.match(email.message.html, /Open your Dispatch invitation/i);
   assert.equal(email.dispatchInvite.inviteCode, 'ABCD2345EFGH');
+});
+
+test('allows an unaffiliated account to adopt the role carried by an invitation', () => {
+  assert.equal(canAdoptInviteRole({ currentRole: 'manager', targetRole: 'worker', currentOrganizationId: null }), true);
+  assert.equal(canAdoptInviteRole({ currentRole: 'worker', targetRole: 'manager', currentOrganizationId: '' }), true);
+  assert.equal(canAdoptInviteRole({ currentRole: 'worker', targetRole: 'worker', currentOrganizationId: 'org-1' }), true);
+});
+
+test('protects an affiliated account from silently changing roles', () => {
+  assert.equal(canAdoptInviteRole({ currentRole: 'manager', targetRole: 'worker', currentOrganizationId: 'org-1' }), false);
+  assert.equal(canAdoptInviteRole({ currentRole: 'worker', targetRole: 'manager', currentOrganizationId: 'org-1' }), false);
+  assert.equal(canAdoptInviteRole({ currentRole: 'worker', targetRole: 'invalid', currentOrganizationId: null }), false);
 });

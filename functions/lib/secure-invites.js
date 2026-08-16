@@ -48,6 +48,14 @@ function maskEmail(value) {
   return `${visible}${'*'.repeat(Math.max(3, local.length - visible.length))}@${domain}`;
 }
 
+function canAdoptInviteRole({ currentRole, targetRole, currentOrganizationId }) {
+  const normalizedCurrentRole = typeof currentRole === 'string' ? currentRole.trim().toLowerCase() : '';
+  const normalizedTargetRole = typeof targetRole === 'string' ? targetRole.trim().toLowerCase() : '';
+  if (!['manager', 'worker'].includes(normalizedTargetRole)) return false;
+  if (!['manager', 'worker'].includes(normalizedCurrentRole) || normalizedCurrentRole === normalizedTargetRole) return true;
+  return !(typeof currentOrganizationId === 'string' && currentOrganizationId.trim());
+}
+
 function cleanBaseUrl(value) {
   const fallback = 'https://dispatchcrewmanager.com/invite';
   const candidate = typeof value === 'string' && value.trim() ? value.trim() : fallback;
@@ -118,6 +126,7 @@ module.exports = {
   INVITE_TTL_MS,
   buildInviteUrls,
   buildSecureInviteEmail,
+  canAdoptInviteRole,
   generateInviteSecrets,
   hashInviteCode,
   hashInviteToken,

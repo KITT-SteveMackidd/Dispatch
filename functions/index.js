@@ -34,6 +34,7 @@ const {
   INVITE_TTL_MS,
   buildInviteUrls,
   buildSecureInviteEmail,
+  canAdoptInviteRole,
   generateInviteSecrets,
   hashInviteCode,
   hashInviteToken,
@@ -440,8 +441,12 @@ exports.claimDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
     const targetRole = invite.inviteKind === 'manager' ? 'manager' : 'worker';
     const existingUser = userSnapshot.exists ? userSnapshot.data() : null;
     const existingRole = normalizedRole(existingUser?.role);
-    if (existingRole && existingRole !== targetRole) {
-      throw new HttpsError('failed-precondition', `This invitation is for a ${targetRole}. Sign in with the intended account or change the account role first.`);
+    if (!canAdoptInviteRole({
+      currentRole: existingRole,
+      targetRole,
+      currentOrganizationId: existingUser?.organizationId,
+    })) {
+      throw new HttpsError('failed-precondition', `This account is already connected to an organization as a ${existingRole}. Use an unaffiliated account or leave that organization before accepting a ${targetRole} invitation.`);
     }
     if (existingUser?.organizationId && existingUser.organizationId !== invite.organizationId) {
       throw new HttpsError('failed-precondition', 'This account already belongs to a different Dispatch organization.');
