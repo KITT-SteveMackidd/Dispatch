@@ -13,9 +13,10 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SecureInviteScreen } from '@/components/invite/SecureInviteScreen';
 import { headerLogoSource } from '@/constants/branding';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
@@ -44,6 +45,17 @@ const emptyMembership: MembershipSummary = {
 
 export default function SetupScreen() {
   const router = useRouter();
+  const {
+    inviteToken: inviteTokenParam,
+    inviteResume: inviteResumeParam,
+  } = useLocalSearchParams<{
+    inviteToken?: string | string[];
+    inviteResume?: string | string[];
+  }>();
+  const inviteTokenValue = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
+  const inviteToken = inviteTokenValue?.trim() || '';
+  const inviteResumeValue = Array.isArray(inviteResumeParam) ? inviteResumeParam[0] : inviteResumeParam;
+  const isInviteOnboarding = Boolean(inviteToken);
   const { height } = useWindowDimensions();
   const {
     authUser,
@@ -56,14 +68,18 @@ export default function SetupScreen() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const colors = isDarkMode ? darkColors : lightColors;
 
-  const [step, setStep] = useState(profile?.onboardingCompleted === false ? 4 : 0);
+  const [step, setStep] = useState(
+    isInviteOnboarding
+      ? inviteResumeValue === '1' ? 3 : 0
+      : profile?.onboardingCompleted === false ? 4 : 0
+  );
   const [selectedRole, setSelectedRole] = useState<AppRole | null>(profile?.role || null);
   const [membership, setMembership] = useState<MembershipSummary>(emptyMembership);
   const [organizationName, setOrganizationName] = useState('');
   const [busy, setBusy] = useState(false);
   const [membershipLoading, setMembershipLoading] = useState(profile?.onboardingCompleted === false);
   const [errorMessage, setErrorMessage] = useState('');
-  const resumeIncompleteProfile = useRef(profile?.onboardingCompleted === false);
+  const resumeIncompleteProfile = useRef(!isInviteOnboarding && profile?.onboardingCompleted === false);
 
   const displayName = useMemo(() => {
     const knownName = authUser?.displayName?.trim() || profile?.displayName?.trim();
@@ -80,10 +96,10 @@ export default function SetupScreen() {
   const illustrationHeight = Math.min(330, Math.max(220, height * 0.34));
 
   useEffect(() => {
-    if (!authUser) {
+    if (!authUser && !isInviteOnboarding) {
       router.replace('/(auth)/signin');
     }
-  }, [authUser, router]);
+  }, [authUser, isInviteOnboarding, router]);
 
   useEffect(() => {
     let active = true;
@@ -231,6 +247,16 @@ export default function SetupScreen() {
     }
 
     if (step === 3) {
+      if (isInviteOnboarding) {
+        return (
+          <SecureInviteScreen
+            embedded
+            inviteOnboarding
+            tokenOrCode={inviteToken}
+          />
+        );
+      }
+
       return (
         <View style={styles.messageBlock}>
           <Text style={[styles.eyebrow, { color: colors.accent }]}>Choose your role</Text>
@@ -360,6 +386,8 @@ export default function SetupScreen() {
     );
   };
 
+  const isInviteStep = isInviteOnboarding && step === 3;
+  const totalSteps = isInviteOnboarding ? 4 : TOTAL_STEPS;
   const illustrationSource = step === 0
     ? illustrations.welcome
     : step === 1
@@ -401,8 +429,8 @@ export default function SetupScreen() {
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <Image source={headerLogoSource} resizeMode="contain" style={styles.logo} />
-          <View style={styles.progress} accessibilityLabel={`Step ${step + 1} of ${TOTAL_STEPS}`}>
-            {Array.from({ length: TOTAL_STEPS }).map((_, index) => (
+          <View style={styles.progress} accessibilityLabel={`Step ${step + 1} of ${totalSteps}`}>
+            {Array.from({ length: totalSteps }).map((_, index) => (
               <View
                 key={index}
                 style={[
@@ -422,14 +450,16 @@ export default function SetupScreen() {
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          <View style={[styles.illustrationWrap, { height: illustrationHeight }]}>
-            <Image
-              accessibilityIgnoresInvertColors
-              resizeMode="contain"
-              source={illustrationSource}
-              style={styles.illustration}
-            />
-          </View>
+          {!isInviteStep ? (
+            <View style={[styles.illustrationWrap, { height: illustrationHeight }]}>
+              <Image
+                accessibilityIgnoresInvertColors
+                resizeMode="contain"
+                source={illustrationSource}
+                style={styles.illustration}
+              />
+            </View>
+          ) : null}
 
           {renderStepContent()}
 
@@ -438,19 +468,21 @@ export default function SetupScreen() {
           ) : null}
 
           <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
-              disabled={primaryDisabled}
-              onPress={onPrimaryPress}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                { backgroundColor: colors.teal },
-                primaryDisabled && styles.disabled,
-                pressed && !primaryDisabled && styles.pressed,
-              ]}>
-              {busy ? <ActivityIndicator color="#06132A" size="small" /> : null}
-              <Text style={styles.primaryButtonText}>{primaryLabel}</Text>
-            </Pressable>
+            {!isInviteStep ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={primaryDisabled}
+                onPress={onPrimaryPress}
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  { backgroundColor: colors.teal },
+                  primaryDisabled && styles.disabled,
+                  pressed && !primaryDisabled && styles.pressed,
+                ]}>
+                {busy ? <ActivityIndicator color="#06132A" size="small" /> : null}
+                <Text style={styles.primaryButtonText}>{primaryLabel}</Text>
+              </Pressable>
+            ) : null}
 
             {step > 0 && step < 4 ? (
               <Pressable

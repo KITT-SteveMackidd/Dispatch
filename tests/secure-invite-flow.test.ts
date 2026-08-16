@@ -30,13 +30,35 @@ describe('secure invitation flow wiring', () => {
 
   it('registers native links and preserves the invitation through authentication', () => {
     const appConfig = read('app.config.js');
+    const inviteRoute = read('app/invite/[token].tsx');
+    const inviteCodeRoute = read('app/invite/index.tsx');
+    const setup = read('app/(auth)/setup.tsx');
     const signIn = read('app/(auth)/signin.tsx');
     const signUp = read('app/(auth)/signup.tsx');
     const verifyEmail = read('app/(auth)/verify-email.tsx');
     expect(appConfig).toContain('applinks:dispatchcrewmanager.com');
     expect(appConfig).toContain("pathPrefix: '/invite'");
+    expect(inviteRoute).toContain("pathname: '/(auth)/setup'");
+    expect(inviteRoute).toContain('inviteToken: normalizedToken');
+    expect(inviteCodeRoute).toContain("direct: '1'");
+    expect(setup).toContain('isInviteOnboarding');
+    expect(setup).toContain('<SecureInviteScreen');
+    expect(setup).toContain('inviteOnboarding');
     expect(signIn).toContain('inviteTokenParam');
     expect(signUp).toContain('inviteTokenParam');
     expect(verifyEmail).toContain('inviteTokenParam');
+    expect(signIn).toContain("inviteResume: '1'");
+    expect(signUp).toContain("inviteResume: '1'");
+    expect(verifyEmail).toContain("inviteResume: '1'");
+  });
+
+  it('keeps ordinary account onboarding separate from invite-link onboarding', () => {
+    const setup = read('app/(auth)/setup.tsx');
+    expect(setup).toContain("title={`Welcome to Dispatch");
+    expect(setup).toContain('eyebrow="The Manager role"');
+    expect(setup).toContain('eyebrow="The Worker role"');
+    expect(setup).toContain('How will you use Dispatch?');
+    expect(setup).toContain('isInviteOnboarding && step === 3');
+    expect(setup).toContain('const totalSteps = isInviteOnboarding ? 4 : TOTAL_STEPS;');
   });
 });

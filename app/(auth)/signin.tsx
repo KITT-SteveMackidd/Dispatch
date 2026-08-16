@@ -25,8 +25,21 @@ const darkSignInLogoSource = authDarkLogoSource;
 
 export default function SignInScreen() {
   const router = useRouter();
-  const { inviteToken: inviteTokenParam } = useLocalSearchParams<{ inviteToken?: string | string[] }>();
+  const {
+    inviteToken: inviteTokenParam,
+    inviteOnboarding: inviteOnboardingParam,
+  } = useLocalSearchParams<{
+    inviteToken?: string | string[];
+    inviteOnboarding?: string | string[];
+  }>();
   const inviteToken = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
+  const inviteOnboardingValue = Array.isArray(inviteOnboardingParam)
+    ? inviteOnboardingParam[0]
+    : inviteOnboardingParam;
+  const isInviteOnboarding = inviteOnboardingValue === '1';
+  const inviteAuthParams = inviteToken
+    ? { inviteToken, inviteOnboarding: isInviteOnboarding ? '1' : '0' }
+    : null;
   const { signIn, sendPasswordReset } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
@@ -43,6 +56,23 @@ export default function SignInScreen() {
     setTimeout(() => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 80);
+  };
+
+  const returnToInvitation = () => {
+    if (!inviteToken) return false;
+
+    if (isInviteOnboarding) {
+      router.replace({
+        pathname: '/(auth)/setup',
+        params: { inviteToken, inviteResume: '1' },
+      });
+    } else {
+      router.replace({
+        pathname: '/invite/[token]',
+        params: { token: inviteToken, direct: '1' },
+      });
+    }
+    return true;
   };
 
   useEffect(() => {
@@ -70,8 +100,7 @@ export default function SignInScreen() {
     setLoading(true);
     try {
       await signIn(email, password);
-      if (inviteToken) router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } });
-      else router.replace('/(tabs)');
+      if (!returnToInvitation()) router.replace('/(tabs)');
     } catch (error) {
       Alert.alert('Sign in failed', getAuthErrorMessage(error, 'signin'));
     } finally {
@@ -184,14 +213,14 @@ export default function SignInScreen() {
             mode="signin"
             isDarkMode={false}
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={() => inviteToken
-              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
-              : router.replace('/(tabs)')}
+            onSuccess={() => {
+              if (!returnToInvitation()) router.replace('/(tabs)');
+            }}
           />
 
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Don't have an account?</Text>
-            <Link href={inviteToken ? { pathname: '/(auth)/signup', params: { inviteToken } } : '/(auth)/signup'} style={authStyles.lightFooterLink}>
+            <Link href={inviteAuthParams ? { pathname: '/(auth)/signup', params: inviteAuthParams } : '/(auth)/signup'} style={authStyles.lightFooterLink}>
               Create Account
             </Link>
           </View>
@@ -274,14 +303,14 @@ export default function SignInScreen() {
             mode="signin"
             isDarkMode
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={() => inviteToken
-              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
-              : router.replace('/(tabs)')}
+            onSuccess={() => {
+              if (!returnToInvitation()) router.replace('/(tabs)');
+            }}
           />
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Don't have an account?</Text>
-            <Link href={inviteToken ? { pathname: '/(auth)/signup', params: { inviteToken } } : '/(auth)/signup'} style={authStyles.darkFooterLink}>
+            <Link href={inviteAuthParams ? { pathname: '/(auth)/signup', params: inviteAuthParams } : '/(auth)/signup'} style={authStyles.darkFooterLink}>
               Create Account
             </Link>
           </View>

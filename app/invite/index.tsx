@@ -33,14 +33,14 @@ export default function EnterInviteCodeScreen() {
             returnKeyType="go"
             onSubmitEditing={() => {
               if (normalizedCode.length >= 8) {
-                router.replace({ pathname: '/invite/[token]', params: { token: normalizedCode } });
+                router.replace({ pathname: '/invite/[token]', params: { token: normalizedCode, direct: '1' } });
               }
             }}
           />
           <Pressable
             style={[styles.primaryButton, normalizedCode.length < 8 && styles.disabled]}
             disabled={normalizedCode.length < 8}
-            onPress={() => router.replace({ pathname: '/invite/[token]', params: { token: normalizedCode } })}>
+            onPress={() => router.replace({ pathname: '/invite/[token]', params: { token: normalizedCode, direct: '1' } })}>
             <Text style={styles.primaryButtonText}>Review invitation</Text>
           </Pressable>
           <Pressable style={styles.textButton} onPress={() => router.replace('/')}>

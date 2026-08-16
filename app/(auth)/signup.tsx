@@ -25,8 +25,21 @@ const darkSignUpLogoSource = authDarkLogoSource;
 
 export default function SignUpScreen() {
   const router = useRouter();
-  const { inviteToken: inviteTokenParam } = useLocalSearchParams<{ inviteToken?: string | string[] }>();
+  const {
+    inviteToken: inviteTokenParam,
+    inviteOnboarding: inviteOnboardingParam,
+  } = useLocalSearchParams<{
+    inviteToken?: string | string[];
+    inviteOnboarding?: string | string[];
+  }>();
   const inviteToken = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
+  const inviteOnboardingValue = Array.isArray(inviteOnboardingParam)
+    ? inviteOnboardingParam[0]
+    : inviteOnboardingParam;
+  const isInviteOnboarding = inviteOnboardingValue === '1';
+  const inviteAuthParams = inviteToken
+    ? { inviteToken, inviteOnboarding: isInviteOnboarding ? '1' : '0' }
+    : null;
   const { signUp } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
@@ -44,6 +57,23 @@ export default function SignUpScreen() {
     setTimeout(() => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 80);
+  };
+
+  const returnToInvitation = () => {
+    if (!inviteToken) return false;
+
+    if (isInviteOnboarding) {
+      router.replace({
+        pathname: '/(auth)/setup',
+        params: { inviteToken, inviteResume: '1' },
+      });
+    } else {
+      router.replace({
+        pathname: '/invite/[token]',
+        params: { token: inviteToken, direct: '1' },
+      });
+    }
+    return true;
   };
 
   useEffect(() => {
@@ -76,7 +106,7 @@ export default function SignUpScreen() {
       await signUp({ displayName: displayName.trim(), email, password });
       Alert.alert('Verify your email', 'We sent a verification link to your inbox. Verify your email to continue.');
       router.replace(inviteToken
-        ? { pathname: '/(auth)/verify-email', params: { inviteToken } }
+        ? { pathname: '/(auth)/verify-email', params: inviteAuthParams! }
         : '/(auth)/verify-email');
     } catch (error) {
       Alert.alert('Sign up failed', getAuthErrorMessage(error, 'signup'));
@@ -184,16 +214,18 @@ export default function SignUpScreen() {
             displayName={displayName}
             isDarkMode={false}
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={(result) => inviteToken
-              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
-              : router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
+            onSuccess={(result) => {
+              if (!returnToInvitation()) {
+                router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)');
+              }
+            }}
           />
 
           <Link href="/invite/index" style={authStyles.lightActionLink}>Use Invitation Code</Link>
 
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Already have an account?</Text>
-            <Link href={inviteToken ? { pathname: '/(auth)/signin', params: { inviteToken } } : '/(auth)/signin'} style={authStyles.lightFooterLink}>
+            <Link href={inviteAuthParams ? { pathname: '/(auth)/signin', params: inviteAuthParams } : '/(auth)/signin'} style={authStyles.lightFooterLink}>
               Sign In
             </Link>
           </View>
@@ -281,16 +313,18 @@ export default function SignUpScreen() {
             displayName={displayName}
             isDarkMode
             disabled={loading || Boolean(firebaseConfigError)}
-            onSuccess={(result) => inviteToken
-              ? router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } })
-              : router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)')}
+            onSuccess={(result) => {
+              if (!returnToInvitation()) {
+                router.replace(result.needsRoleSelection ? '/(auth)/setup' : '/(tabs)');
+              }
+            }}
           />
 
           <Link href="/invite/index" style={authStyles.darkActionLink}>Use Invitation Code</Link>
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Already have an account?</Text>
-            <Link href={inviteToken ? { pathname: '/(auth)/signin', params: { inviteToken } } : '/(auth)/signin'} style={authStyles.darkFooterLink}>
+            <Link href={inviteAuthParams ? { pathname: '/(auth)/signin', params: inviteAuthParams } : '/(auth)/signin'} style={authStyles.darkFooterLink}>
               Sign In
             </Link>
           </View>

@@ -16,13 +16,43 @@ import { useThemeMode } from '@/context/theme';
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
-  const { inviteToken: inviteTokenParam } = useLocalSearchParams<{ inviteToken?: string | string[] }>();
+  const {
+    inviteToken: inviteTokenParam,
+    inviteOnboarding: inviteOnboardingParam,
+  } = useLocalSearchParams<{
+    inviteToken?: string | string[];
+    inviteOnboarding?: string | string[];
+  }>();
   const inviteToken = Array.isArray(inviteTokenParam) ? inviteTokenParam[0] : inviteTokenParam;
+  const inviteOnboardingValue = Array.isArray(inviteOnboardingParam)
+    ? inviteOnboardingParam[0]
+    : inviteOnboardingParam;
+  const isInviteOnboarding = inviteOnboardingValue === '1';
+  const inviteAuthParams = inviteToken
+    ? { inviteToken, inviteOnboarding: isInviteOnboarding ? '1' : '0' }
+    : null;
   const { authUser, refreshAuthUser, sendVerificationEmail, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [resendLoading, setResendLoading] = useState(false);
   const [refreshLoading, setRefreshLoading] = useState(false);
+
+  const returnToInvitation = () => {
+    if (!inviteToken) return false;
+
+    if (isInviteOnboarding) {
+      router.replace({
+        pathname: '/(auth)/setup',
+        params: { inviteToken, inviteResume: '1' },
+      });
+    } else {
+      router.replace({
+        pathname: '/invite/[token]',
+        params: { token: inviteToken, direct: '1' },
+      });
+    }
+    return true;
+  };
 
   const onResend = async () => {
     setResendLoading(true);
@@ -41,8 +71,7 @@ export default function VerifyEmailScreen() {
     try {
       const isVerified = await refreshAuthUser();
       if (isVerified) {
-        if (inviteToken) router.replace({ pathname: '/invite/[token]', params: { token: inviteToken } });
-        else router.replace('/');
+        if (!returnToInvitation()) router.replace('/');
       } else {
         Alert.alert('Not verified yet', 'We still show this account as unverified. Open the link from your email, then try again.');
       }
@@ -55,8 +84,8 @@ export default function VerifyEmailScreen() {
 
   const onUseAnotherAccount = async () => {
     await signOut();
-    router.replace(inviteToken
-      ? { pathname: '/(auth)/signin', params: { inviteToken } }
+    router.replace(inviteAuthParams
+      ? { pathname: '/(auth)/signin', params: inviteAuthParams }
       : '/(auth)/signin');
   };
 

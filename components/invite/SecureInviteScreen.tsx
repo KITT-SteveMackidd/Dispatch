@@ -14,7 +14,17 @@ import {
   type SecureInvitePreview,
 } from '@/lib/secure-invites';
 
-export function SecureInviteScreen({ tokenOrCode }: { tokenOrCode: string }) {
+type SecureInviteScreenProps = {
+  tokenOrCode: string;
+  embedded?: boolean;
+  inviteOnboarding?: boolean;
+};
+
+export function SecureInviteScreen({
+  tokenOrCode,
+  embedded = false,
+  inviteOnboarding = false,
+}: SecureInviteScreenProps) {
   const router = useRouter();
   const { authUser, refreshProfile, requiresEmailVerification, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
@@ -65,12 +75,13 @@ export function SecureInviteScreen({ tokenOrCode }: { tokenOrCode: string }) {
   const destination = preview?.teamName || preview?.organizationName || 'Dispatch';
   const roleLabel = preview?.inviteKind === 'manager' ? 'Manager' : 'Worker';
   const canClaim = Boolean(preview?.canClaim);
+  const authParams = {
+    inviteToken: tokenOrCode,
+    inviteOnboarding: inviteOnboarding ? '1' : '0',
+  };
 
-  return (
-    <SafeAreaView style={[styles.screen, isDarkMode ? styles.screenDark : styles.screenLight]}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Image source={headerLogoSource} style={styles.logo} resizeMode="contain" />
-        <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
+  const invitationCard = (
+    <View style={[styles.card, isDarkMode ? styles.cardDark : styles.cardLight]}>
           <Text style={[styles.eyebrow, isDarkMode ? styles.tealText : styles.orangeText]}>Dispatch invitation</Text>
           {loading ? (
             <View style={styles.loadingWrap}>
@@ -101,7 +112,7 @@ export function SecureInviteScreen({ tokenOrCode }: { tokenOrCode: string }) {
                     </Text>
                     <Pressable
                       style={styles.primaryButton}
-                      onPress={() => router.push({ pathname: '/(auth)/verify-email', params: { inviteToken: tokenOrCode } })}>
+                      onPress={() => router.push({ pathname: '/(auth)/verify-email', params: authParams })}>
                       <Text style={styles.primaryButtonText}>Verify email</Text>
                     </Pressable>
                   </>
@@ -128,12 +139,12 @@ export function SecureInviteScreen({ tokenOrCode }: { tokenOrCode: string }) {
                   />
                   <Pressable
                     style={styles.primaryButton}
-                    onPress={() => router.push({ pathname: '/(auth)/signin', params: { inviteToken: tokenOrCode } })}>
+                    onPress={() => router.push({ pathname: '/(auth)/signin', params: authParams })}>
                     <Text style={styles.primaryButtonText}>Sign in with email</Text>
                   </Pressable>
                   <Pressable
                     style={[styles.secondaryButton, isDarkMode ? styles.secondaryButtonDark : styles.secondaryButtonLight]}
-                    onPress={() => router.push({ pathname: '/(auth)/signup', params: { inviteToken: tokenOrCode } })}>
+                    onPress={() => router.push({ pathname: '/(auth)/signup', params: authParams })}>
                     <Text style={[styles.secondaryButtonText, isDarkMode ? styles.textDark : styles.textLight]}>Create account with email</Text>
                   </Pressable>
                 </>
@@ -145,10 +156,23 @@ export function SecureInviteScreen({ tokenOrCode }: { tokenOrCode: string }) {
           <Pressable style={styles.textButton} onPress={() => router.push('/invite/index')}>
             <Text style={styles.textButtonLabel}>Enter a different invitation code</Text>
           </Pressable>
-          <Pressable style={styles.textButton} onPress={() => router.replace('/')}>
-            <Text style={styles.textButtonLabel}>Back to Dispatch</Text>
-          </Pressable>
-        </View>
+          {!embedded ? (
+            <Pressable style={styles.textButton} onPress={() => router.replace('/')}>
+              <Text style={styles.textButtonLabel}>Back to Dispatch</Text>
+            </Pressable>
+          ) : null}
+    </View>
+  );
+
+  if (embedded) {
+    return <View style={styles.embeddedContent}>{invitationCard}</View>;
+  }
+
+  return (
+    <SafeAreaView style={[styles.screen, isDarkMode ? styles.screenDark : styles.screenLight]}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Image source={headerLogoSource} style={styles.logo} resizeMode="contain" />
+        {invitationCard}
       </ScrollView>
     </SafeAreaView>
   );
@@ -175,6 +199,7 @@ const styles = StyleSheet.create({
   screenLight: { backgroundColor: '#DBE2F9' },
   screenDark: { backgroundColor: '#061229' },
   content: { flexGrow: 1, justifyContent: 'center', padding: 20, paddingBottom: 36 },
+  embeddedContent: { width: '100%' },
   logo: { alignSelf: 'center', width: 86, height: 86, marginBottom: 18 },
   card: { width: '100%', maxWidth: 560, alignSelf: 'center', borderRadius: 8, borderWidth: 1, padding: 20 },
   cardLight: { backgroundColor: '#F7F7F7', borderColor: 'rgba(6,18,41,0.12)' },
