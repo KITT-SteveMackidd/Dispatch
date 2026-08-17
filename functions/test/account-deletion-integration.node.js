@@ -8,6 +8,16 @@ const FieldValue = {
   serverTimestamp: () => ({ __serverTimestamp: true }),
 };
 
+function assertNoUndefined(value, path = 'update') {
+  if (value === undefined) throw new Error(`Firestore update contains undefined at ${path}`);
+  if (!value || typeof value !== 'object' || value === DELETE_FIELD) return;
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoUndefined(item, `${path}[${index}]`));
+    return;
+  }
+  Object.entries(value).forEach(([key, item]) => assertNoUndefined(item, `${path}.${key}`));
+}
+
 class FakeDocumentSnapshot {
   constructor(db, ref) {
     this.db = db;
@@ -97,7 +107,10 @@ class FakeFirestore {
     const writes = [];
     return {
       delete: (ref) => writes.push({ type: 'delete', ref }),
-      update: (ref, data) => writes.push({ type: 'update', ref, data }),
+      update: (ref, data) => {
+        assertNoUndefined(data, ref.path);
+        writes.push({ type: 'update', ref, data });
+      },
       commit: async () => {
         writes.forEach((write) => {
           if (write.type === 'delete') {
@@ -289,6 +302,7 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
       organizationId: 'org-1',
       title: 'Steve Manager Events',
       participants: [deletingUid, 'manager-keep', 'worker-1'],
+      lastMessage: 'Thanks Steve Manager',
       lastMessageSenderId: deletingUid,
     },
     'chatThreads/organization:org-1:all/messages/deleted-message': {
@@ -380,6 +394,7 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
   const sharedThread = db.documents.get('chatThreads/organization:org-1:all');
   assert.deepEqual(sharedThread.participants, ['manager-keep', 'worker-1']);
   assert.equal(sharedThread.title, 'Deleted user Events');
+  assert.equal(sharedThread.lastMessage, 'Thanks Deleted user');
   assert.equal(db.documents.has('chatThreads/organization:org-1:all/messages/deleted-message'), false);
   assert.equal(
     db.documents.get('chatThreads/organization:org-1:all/messages/keep-message').text,

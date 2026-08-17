@@ -200,19 +200,23 @@ function sanitizeEventRoles(roles, uid, storagePaths, identity) {
         }
         const name = identity ? redactIdentityText(attachment?.name, identity) : attachment?.name;
         if (name !== attachment?.name) changed = true;
-        return [{ ...attachment, name }];
+        const nextAttachment = { ...attachment };
+        if (name !== attachment?.name) nextAttachment.name = name;
+        return [nextAttachment];
       });
       if (!sameArray(completedBy, task?.completedBy)) changed = true;
       if (attachments.length !== (task?.attachments || []).length) changed = true;
       const name = identity ? redactIdentityText(task?.name, identity) : task?.name;
       const description = identity ? redactIdentityText(task?.description, identity) : task?.description;
       if (name !== task?.name || description !== task?.description) changed = true;
-      return { ...task, name, description, completedBy, attachments };
+      const nextTask = { ...task, completedBy, attachments };
+      if (name !== task?.name) nextTask.name = name;
+      if (description !== task?.description) nextTask.description = description;
+      return nextTask;
     });
 
-    return {
+    const nextRole = {
       ...role,
-      name: roleName,
       assignedWorkerIds,
       waitlistWorkerIds,
       eligibleWaitlistWorkerIds,
@@ -220,6 +224,8 @@ function sanitizeEventRoles(roles, uid, storagePaths, identity) {
       openSlots: Math.max(0, Number(role?.openSlots || 0) + removedAssignedCount),
       tasks,
     };
+    if (roleName !== role?.name) nextRole.name = roleName;
+    return nextRole;
   });
   const workerIds = uniqueStrings(nextRoles.flatMap((role) => [
     ...role.assignedWorkerIds,
@@ -235,27 +241,31 @@ function sanitizeTemplateRoles(roles, uid, storagePaths, identity) {
   const nextRoles = (Array.isArray(roles) ? roles : []).map((role) => {
     const name = identity ? redactIdentityText(role?.name, identity) : role?.name;
     if (name !== role?.name) changed = true;
-    return {
-      ...role,
-      name,
-      tasks: (Array.isArray(role?.tasks) ? role.tasks : []).map((task) => {
-        const attachments = (Array.isArray(task?.attachments) ? task.attachments : []).flatMap((attachment) => {
-          const path = storagePathFromAttachment(attachment);
-          if (path && storagePathBelongsToUser(path, uid)) {
-            storagePaths.add(path);
-            changed = true;
-            return [];
-          }
-          const attachmentName = identity ? redactIdentityText(attachment?.name, identity) : attachment?.name;
-          if (attachmentName !== attachment?.name) changed = true;
-          return [{ ...attachment, name: attachmentName }];
-        });
-        const taskName = identity ? redactIdentityText(task?.name, identity) : task?.name;
-        const description = identity ? redactIdentityText(task?.description, identity) : task?.description;
-        if (taskName !== task?.name || description !== task?.description) changed = true;
-        return { ...task, name: taskName, description, attachments };
-      }),
-    };
+    const tasks = (Array.isArray(role?.tasks) ? role.tasks : []).map((task) => {
+      const attachments = (Array.isArray(task?.attachments) ? task.attachments : []).flatMap((attachment) => {
+        const path = storagePathFromAttachment(attachment);
+        if (path && storagePathBelongsToUser(path, uid)) {
+          storagePaths.add(path);
+          changed = true;
+          return [];
+        }
+        const attachmentName = identity ? redactIdentityText(attachment?.name, identity) : attachment?.name;
+        if (attachmentName !== attachment?.name) changed = true;
+        const nextAttachment = { ...attachment };
+        if (attachmentName !== attachment?.name) nextAttachment.name = attachmentName;
+        return [nextAttachment];
+      });
+      const taskName = identity ? redactIdentityText(task?.name, identity) : task?.name;
+      const description = identity ? redactIdentityText(task?.description, identity) : task?.description;
+      if (taskName !== task?.name || description !== task?.description) changed = true;
+      const nextTask = { ...task, attachments };
+      if (taskName !== task?.name) nextTask.name = taskName;
+      if (description !== task?.description) nextTask.description = description;
+      return nextTask;
+    });
+    const nextRole = { ...role, tasks };
+    if (name !== role?.name) nextRole.name = name;
+    return nextRole;
   });
   return { roles: nextRoles, changed };
 }
@@ -848,11 +858,15 @@ async function deleteDispatchUserData(params) {
 
     const redactedTitle = redactIdentityText(data.title, identity);
     const redactedTeamName = redactIdentityText(data.teamName, identity);
+    const redactedLastMessage = redactIdentityText(data.lastMessage, identity);
+    const redactedLastMessageText = redactIdentityText(data.lastMessageText, identity);
     let threadAffected = !sameArray(participants, data.participants)
       || data.createdBy === uid
       || data.lastMessageSenderId === uid
       || redactedTitle !== data.title
-      || redactedTeamName !== data.teamName;
+      || redactedTeamName !== data.teamName
+      || redactedLastMessage !== data.lastMessage
+      || redactedLastMessageText !== data.lastMessageText;
     const remainingMessages = [];
     for (const message of messages) {
       const messageData = message.data;
@@ -911,12 +925,15 @@ async function deleteDispatchUserData(params) {
       if (redactedTeamName !== data.teamName) updates.teamName = redactedTeamName;
       const latestMessage = remainingMessages.sort((left, right) => timestampMs(right.createdAt) - timestampMs(left.createdAt))[0];
       if (latestMessage) {
-        updates.lastMessageText = summarizeMessage(latestMessage);
+        const summary = summarizeMessage(latestMessage);
+        updates.lastMessageText = summary;
+        if (Object.hasOwn(data, 'lastMessage')) updates.lastMessage = summary;
         if (latestMessage.senderId) updates.lastMessageSenderId = latestMessage.senderId;
         else updates.lastMessageSenderId = FieldValue.delete();
         if (latestMessage.createdAt) updates.updatedAt = latestMessage.createdAt;
       } else {
         updates.lastMessageText = FieldValue.delete();
+        if (Object.hasOwn(data, 'lastMessage')) updates.lastMessage = FieldValue.delete();
         updates.lastMessageSenderId = FieldValue.delete();
         updates.updatedAt = FieldValue.serverTimestamp();
       }

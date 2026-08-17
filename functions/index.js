@@ -645,9 +645,8 @@ exports.deleteDispatchAccount = onCall({
       authUser,
     });
   } catch (error) {
-    logger.error('Dispatch account data cleanup failed.', {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    const cleanupError = error instanceof Error ? error.message : String(error);
+    logger.error(`Dispatch account data cleanup failed: ${cleanupError}`);
     throw new HttpsError(
       'internal',
       'Account deletion could not be completed. Your sign-in account remains active; please try again.'
@@ -657,9 +656,8 @@ exports.deleteDispatchAccount = onCall({
   try {
     await adminAuth.deleteUser(authUser.uid);
   } catch (error) {
-    logger.error('Firebase Auth deletion failed after Dispatch data cleanup.', {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    const authDeletionError = error instanceof Error ? error.message : String(error);
+    logger.error(`Firebase Auth deletion failed after Dispatch data cleanup: ${authDeletionError}`);
     throw new HttpsError(
       'internal',
       'Your Dispatch data was removed, but sign-in cleanup needs another attempt. Please try deleting the account again.'
