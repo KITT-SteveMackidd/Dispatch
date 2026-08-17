@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { buildChatThreadId, ChatThreadHead, loadUserProfilesByIds, watchIncomingChatThreadHeads } from '@/services/dispatch';
 import { useSession } from '@/context/session';
 import { UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
-import { DrawerBottomFill } from '@/components/DrawerBottomFill';
+import {
+  KeyboardAwareDrawer,
+  KeyboardAwareDrawerScrollView,
+  KeyboardAwareDrawerTextInput,
+} from '@/components/KeyboardAwareDrawer';
 
 type MemberInfo = Pick<UserProfile, 'uid' | 'displayName' | 'phoneNumber'>;
 
@@ -242,12 +246,14 @@ export default function TeamMemberListScreen() {
         }}
       />
 
-      <Modal visible={createChatOpen} animationType="slide" transparent onRequestClose={closeCreateChatDrawer}>
-        <Pressable style={styles.drawerBackdrop} onPress={closeCreateChatDrawer}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={createChatOpen}
+        onClose={closeCreateChatDrawer}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
+        <KeyboardAwareDrawerScrollView contentContainerStyle={styles.drawerScrollContent}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.titleDark : styles.titleLight]}>Create Chat</Text>
-            <TextInput
+            <KeyboardAwareDrawerTextInput
               value={chatNameDraft}
               onChangeText={setChatNameDraft}
               placeholder="Chat name"
@@ -260,7 +266,6 @@ export default function TeamMemberListScreen() {
               </View>
               <Text style={[styles.drawerMemberName, isDarkMode ? styles.titleDark : styles.titleLight]}>Select all</Text>
             </Pressable>
-            <ScrollView style={styles.drawerList}>
               {members.length ? members.map((member) => {
                 const selected = selectedChatMemberIds.includes(member.uid);
                 const initial = member.displayName.slice(0, 1).toUpperCase();
@@ -279,16 +284,14 @@ export default function TeamMemberListScreen() {
               }) : (
                 <Text style={[styles.meta, isDarkMode ? styles.metaDark : styles.metaLight]}>No members available.</Text>
               )}
-            </ScrollView>
             <Pressable style={[styles.drawerPrimaryButton, !selectedChatMemberIds.length && styles.drawerDisabled]} onPress={createGroupChat}>
               <Text style={styles.drawerPrimaryText}>Create chat</Text>
             </Pressable>
             <Pressable style={styles.drawerCancelButton} onPress={closeCreateChatDrawer}>
               <Text style={[styles.drawerCancelText, isDarkMode ? styles.metaDark : styles.metaLight]}>Cancel</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
     </View>
   );
 }
@@ -326,7 +329,6 @@ const styles = StyleSheet.create({
   openLabel: { fontSize: 12, fontWeight: '700' },
   openLabelLight: { color: '#2563eb' },
   openLabelDark: { color: '#0EC3C9' },
-  drawerBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15,23,42,0.45)' },
   drawer: { maxHeight: '82%', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, gap: 12 },
   drawerLight: { backgroundColor: '#fff' },
   drawerDark: { backgroundColor: '#101A2F' },
@@ -335,7 +337,7 @@ const styles = StyleSheet.create({
   chatNameInputLight: { borderColor: '#cbd5e1', backgroundColor: '#f8fafc', color: '#232832' },
   chatNameInputDark: { borderColor: '#001A4D', backgroundColor: '#1A2540', color: '#F4F8FF' },
   selectAllRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
-  drawerList: { maxHeight: 360 },
+  drawerScrollContent: { gap: 12 },
   drawerMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
   drawerMemberName: { flex: 1, fontSize: 14, fontWeight: '600' },
   avatarSelected: { backgroundColor: '#0EC3C9' },

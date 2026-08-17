@@ -1,6 +1,6 @@
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -11,7 +11,11 @@ import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead,
 import type { UserProfile } from '@/types/dispatch';
 import { clearActiveChatThread, setActiveChatThread } from '@/lib/foreground-chat-notifications';
 import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
-import { DrawerBottomFill } from '@/components/DrawerBottomFill';
+import {
+  KeyboardAwareDrawer,
+  KeyboardAwareDrawerScrollView,
+  KeyboardAwareDrawerTextInput,
+} from '@/components/KeyboardAwareDrawer';
 import { isChatMemberChecked } from '@/lib/custom-chat-membership';
 
 type ChatMessage = {
@@ -580,21 +584,17 @@ export default function WorkerChatScreen() {
         }}
       />
 
-      <Modal visible={memberPickerOpen} transparent animationType="slide" onRequestClose={closeMemberPicker}>
-        <View style={styles.memberPickerBackdrop}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close people drawer"
-            style={styles.memberPickerBackdropDismiss}
-            onPress={closeMemberPicker}
-          />
-          <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.memberPickerKeyboardView}>
-            <View style={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]}>
-              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={memberPickerOpen}
+        onClose={closeMemberPicker}
+        backgroundColor={drawerSurfaceColor}
+        accessibilityLabel="Close people drawer"
+        surfaceStyle={[styles.memberPickerDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]}>
+        <KeyboardAwareDrawerScrollView contentContainerStyle={styles.memberPickerScrollContent}>
               <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>
                 {isCustomChat ? 'Add People' : canManageTeamMembers ? 'Manage Team' : 'People in Chat'}
               </Text>
-              <TextInput
+              <KeyboardAwareDrawerTextInput
                 value={memberSearch}
                 onChangeText={setMemberSearch}
                 placeholder="Search organization members"
@@ -617,13 +617,7 @@ export default function WorkerChatScreen() {
                 />
                 <Text style={[styles.selectAllText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Select all</Text>
               </Pressable>
-              <ScrollView
-                style={styles.memberPickerList}
-                contentContainerStyle={styles.memberPickerListContent}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="on-drag"
-                nestedScrollEnabled
-                showsVerticalScrollIndicator>
+              <View style={styles.memberPickerList}>
                 {selectableOrganizationMembers.map((member) => {
                   const alreadyInChat = memberIds.includes(member.uid);
                   const canToggleTeamWorker = canManageTeamMembers && member.role === 'worker';
@@ -673,7 +667,7 @@ export default function WorkerChatScreen() {
                     </View>
                   );
                 })}
-              </ScrollView>
+              </View>
               <Pressable
                 style={[styles.memberPickerButton, (!canEditMemberSelection || addingMembers) && styles.sendButtonDisabled]}
                 disabled={!canEditMemberSelection || addingMembers}
@@ -685,19 +679,18 @@ export default function WorkerChatScreen() {
               <Pressable style={styles.memberPickerCloseButton} disabled={addingMembers} onPress={closeMemberPicker}>
                 <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
               </Pressable>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={isCustomChat && settingsOpen} transparent animationType="slide" onRequestClose={closeSettings}>
-        <Pressable style={styles.memberPickerBackdrop} onPress={closeSettings}>
-          <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })} style={styles.settingsKeyboardView}>
-            <Pressable style={[styles.settingsDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]} onPress={() => undefined}>
-              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={isCustomChat && settingsOpen}
+        onClose={closeSettings}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.settingsDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]}>
+        <KeyboardAwareDrawerScrollView>
               <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat Settings</Text>
               <Text style={[styles.settingsLabel, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat name</Text>
-              <TextInput
+              <KeyboardAwareDrawerTextInput
                 value={chatNameDraft}
                 onChangeText={setChatNameDraft}
                 editable={!savingSettings}
@@ -735,10 +728,8 @@ export default function WorkerChatScreen() {
               <Pressable style={styles.memberPickerCloseButton} disabled={savingSettings} onPress={closeSettings}>
                 <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
               </Pressable>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
       <View style={[styles.composer, isDarkMode ? styles.composerDark : styles.composerLight, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         {showAttachmentPicker ? (
@@ -856,10 +847,7 @@ const styles = StyleSheet.create({
   headerSubtitleDark: { color: '#F7F7F7', opacity: 0.75 },
   headerSpacer: { width: 36, height: 29 },
   headerMenuButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
-  memberPickerBackdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
-  memberPickerBackdropDismiss: { ...StyleSheet.absoluteFillObject },
-  memberPickerKeyboardView: { height: '75%', justifyContent: 'flex-end' },
-  memberPickerDrawer: { flex: 1, minHeight: 0, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
+  memberPickerDrawer: { height: '75%', maxHeight: '75%', minHeight: 0, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
   memberPickerDrawerLight: { backgroundColor: '#F7F7F7' },
   memberPickerDrawerDark: { backgroundColor: '#12274D' },
   memberPickerTitle: { marginBottom: 12, fontSize: 19, fontWeight: '700' },
@@ -869,7 +857,7 @@ const styles = StyleSheet.create({
   selectAllRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.25)' },
   selectAllText: { fontSize: 14, fontWeight: '700' },
   memberPickerList: { flex: 1, minHeight: 0 },
-  memberPickerListContent: { paddingBottom: 8 },
+  memberPickerScrollContent: { paddingBottom: 8 },
   memberPickerRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(100,116,139,0.2)' },
   memberPickerRowLocked: { opacity: 0.65 },
   memberPickerCheckbox: { width: 31, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
@@ -881,7 +869,6 @@ const styles = StyleSheet.create({
   memberPickerButtonText: { color: '#061229', fontSize: 16, fontWeight: '700' },
   memberPickerCloseButton: { minHeight: 46, marginTop: 6, alignItems: 'center', justifyContent: 'center' },
   memberPickerCloseText: { fontSize: 15, fontWeight: '700' },
-  settingsKeyboardView: { justifyContent: 'flex-end' },
   settingsDrawer: { borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18, paddingBottom: 12 },
   settingsLabel: { marginBottom: 6, fontSize: 13, fontWeight: '700' },
   leaveChatButton: { minHeight: 48, marginTop: 12, borderWidth: 1, borderColor: '#fecaca', borderRadius: 8, backgroundColor: '#fef2f2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },

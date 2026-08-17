@@ -3,14 +3,9 @@ import {
   Alert,
   FlatList,
   Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -39,7 +34,11 @@ import { getWorkerInviteErrorMessage } from '@/lib/worker-invite-validation';
 import { createSecureDispatchInvite, secureInviteErrorMessage } from '@/lib/secure-invites';
 import type { Organisation, Team, UserProfile } from '@/types/dispatch';
 import { buildCurrentManagerIds, buildManagerChatParticipants, getVisibleManagerChatWorkerIds } from '@/lib/chat-list-membership';
-import { DrawerBottomFill } from '@/components/DrawerBottomFill';
+import {
+  KeyboardAwareDrawer,
+  KeyboardAwareDrawerScrollView,
+  KeyboardAwareDrawerTextInput,
+} from '@/components/KeyboardAwareDrawer';
 
 type DrawerMode = 'add-team' | 'invite-worker' | 'invite-manager';
 
@@ -423,12 +422,14 @@ export default function TeamsScreen() {
         }}
       />
 
-      <Modal visible={chatPickerOpen} transparent animationType="slide" onRequestClose={closeChatPicker}>
-        <Pressable style={styles.backdrop} onPress={closeChatPicker}>
-          <Pressable style={[styles.pickerDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => undefined}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={chatPickerOpen}
+        onClose={closeChatPicker}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.pickerDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
+        <KeyboardAwareDrawerScrollView>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>New Chat</Text>
-            <TextInput
+            <KeyboardAwareDrawerTextInput
               value={memberSearch}
               onChangeText={setMemberSearch}
               placeholder="Search organization members"
@@ -443,7 +444,7 @@ export default function TeamsScreen() {
               />
               <Text style={[styles.selectLabel, isDarkMode ? styles.textDark : styles.textLight]}>Select all</Text>
             </Pressable>
-            <ScrollView style={styles.memberList} keyboardShouldPersistTaps="handled">
+            <View style={styles.memberList}>
               {selectableMembers.map((member) => (
                 <View key={member.uid} style={styles.memberRow}>
                   <Pressable
@@ -461,20 +462,19 @@ export default function TeamsScreen() {
                   </View>
                 </View>
               ))}
-            </ScrollView>
+            </View>
             <Pressable style={[styles.chatButton, (!selectedMemberIds.length || creatingChat) && styles.disabled]} disabled={!selectedMemberIds.length || creatingChat} onPress={handleCreateChat}>
               <Text style={styles.chatButtonText}>{creatingChat ? 'Creating...' : 'Chat'}</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={drawerOpen} transparent animationType="slide" onRequestClose={() => setDrawerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setDrawerOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: 'height' })}>
-            <Pressable style={[styles.actionDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => undefined}>
-              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.drawerContent}>
+      <KeyboardAwareDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.actionDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
+              <KeyboardAwareDrawerScrollView contentContainerStyle={styles.drawerContent}>
                 <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>Team Actions</Text>
                 <View style={styles.modeRow}>
                   {(['add-team', 'invite-worker', 'invite-manager'] as DrawerMode[]).map((mode) => (
@@ -486,7 +486,7 @@ export default function TeamsScreen() {
                 {drawerMode === 'add-team' ? (
                   <>
                     <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Team name</Text>
-                    <TextInput value={teamName} onChangeText={setTeamName} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="Team name" placeholderTextColor="#64748b" />
+                    <KeyboardAwareDrawerTextInput value={teamName} onChangeText={setTeamName} style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="Team name" placeholderTextColor="#64748b" />
                   </>
                 ) : (
                   <>
@@ -500,7 +500,7 @@ export default function TeamsScreen() {
                       </>
                     ) : null}
                     <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Delivery email</Text>
-                    <TextInput value={inviteEmail} onChangeText={setInviteEmail} autoCapitalize="none" keyboardType="email-address" style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="name@example.com" placeholderTextColor="#64748b" />
+                    <KeyboardAwareDrawerTextInput value={inviteEmail} onChangeText={setInviteEmail} autoCapitalize="none" keyboardType="email-address" style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="name@example.com" placeholderTextColor="#64748b" />
                     <Text style={[styles.inviteEmailHint, isDarkMode ? styles.textDark : styles.textLight]}>
                       This address only receives the invitation. The recipient can join with Apple, Google, or a different Dispatch email.
                     </Text>
@@ -511,11 +511,8 @@ export default function TeamsScreen() {
                   <Text style={styles.chatButtonText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
                 </Pressable>
                 <Pressable style={styles.closeButton} onPress={() => setDrawerOpen(false)}><Text style={[styles.closeText, isDarkMode ? styles.textDark : styles.textLight]}>Close</Text></Pressable>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+              </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
     </View>
   );
 }
@@ -551,7 +548,6 @@ const styles = StyleSheet.create({
   badgePlaceholder: { height: 22 },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   emptyText: { paddingTop: 24, textAlign: 'center' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(6,18,41,0.55)', justifyContent: 'flex-end' },
   pickerDrawer: { height: '78%', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
   actionDrawer: { maxHeight: '88%', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 18 },
   drawerLight: { backgroundColor: '#F7F7F7' },

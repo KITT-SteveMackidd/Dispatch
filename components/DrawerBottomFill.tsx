@@ -1,6 +1,4 @@
-import { StyleSheet, View } from 'react-native';
-
-const DRAWER_BOTTOM_FILL_HEIGHT = 640;
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 
 type DrawerBottomFillProps = {
   backgroundColor: string;
@@ -12,10 +10,12 @@ type DrawerBottomFillProps = {
  * rounded corners cannot expose the dimmed backdrop behind the drawer.
  */
 export function DrawerBottomFill({ backgroundColor }: DrawerBottomFillProps) {
+  const { height } = useWindowDimensions();
+
   return (
     <View
       pointerEvents="none"
-      style={[styles.fill, { backgroundColor }]}
+      style={[styles.fill, { backgroundColor, bottom: -height, height }]}
     />
   );
 }
@@ -24,8 +24,6 @@ const styles = StyleSheet.create({
   fill: {
     position: 'absolute',
     right: 0,
-    bottom: -DRAWER_BOTTOM_FILL_HEIGHT,
     left: 0,
-    height: DRAWER_BOTTOM_FILL_HEIGHT,
   },
 });

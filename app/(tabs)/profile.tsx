@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Alert, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
@@ -11,7 +11,11 @@ import { headerLogoSource } from '@/constants/branding';
 import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
 import { canResetDispatchDatabase, resetDispatchDatabase } from '@/lib/admin-database-reset';
 import { DISPATCH_PRIVACY_URL, DISPATCH_SUPPORT_URL } from '@/constants/legal';
-import { DrawerBottomFill } from '@/components/DrawerBottomFill';
+import {
+  KeyboardAwareDrawer,
+  KeyboardAwareDrawerScrollView,
+  KeyboardAwareDrawerTextInput,
+} from '@/components/KeyboardAwareDrawer';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
@@ -328,35 +332,36 @@ export default function ProfileScreen() {
       </Pressable>
       </ScrollView>
 
-      <Modal visible={notificationsOpen} animationType="slide" transparent onRequestClose={() => setNotificationsOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setNotificationsOpen(false)}>
-          <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Notifications</Text>
-            <ScrollView style={styles.modalScroll}>
+            <KeyboardAwareDrawerScrollView style={styles.modalScroll}>
               {notifications.length ? notifications.map((notification) => (
                 <View key={notification.id} style={styles.notificationRow}>
                   <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>{notification.title}</Text>
                   <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>{notification.body}</Text>
                 </View>
               )) : <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>No notifications yet.</Text>}
-            </ScrollView>
+            </KeyboardAwareDrawerScrollView>
             <Pressable style={styles.closeBtn} onPress={() => setNotificationsOpen(false)}>
               <Text style={styles.closeBtnText}>Close</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={organisationModalOpen} animationType="slide" transparent onRequestClose={() => setOrganisationModalOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setOrganisationModalOpen(false)}>
-          <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={organisationModalOpen}
+        onClose={() => setOrganisationModalOpen(false)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
+        <KeyboardAwareDrawerScrollView>
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Create Organization</Text>
             <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
               Create a new organization for your managers, workers, and teams.
             </Text>
-            <TextInput
+            <KeyboardAwareDrawerTextInput
               value={organisationName}
               onChangeText={setOrganisationName}
               placeholder="Organization name"
@@ -369,14 +374,15 @@ export default function ProfileScreen() {
             <Pressable style={[styles.secondaryBtn, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => setOrganisationModalOpen(false)}>
               <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Cancel</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={exportModalOpen} animationType="slide" transparent onRequestClose={closeExportModal}>
-        <Pressable style={styles.modalBackdrop} onPress={closeExportModal}>
-          <Pressable style={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={exportModalOpen}
+        onClose={closeExportModal}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
+        <KeyboardAwareDrawerScrollView>
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Export Worker Roles</Text>
             <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>
               Choose the event date range to include in the spreadsheet.
@@ -423,9 +429,8 @@ export default function ProfileScreen() {
               onPress={closeExportModal}>
               <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Cancel</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
     </View>
   );
 }
@@ -481,7 +486,6 @@ const styles = StyleSheet.create({
   input: { marginTop: 14, padding: 13, borderRadius: 12, borderWidth: 1 },
   inputLight: { backgroundColor: '#f8fafc', color: '#232832', borderColor: '#e2e8f0' },
   inputDark: { backgroundColor: '#1A2540', color: '#F4F8FF', borderColor: '#001A4D' },
-  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.35)' },
   modalCard: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '70%' },
   modalScroll: { marginTop: 10 },
   dateFields: { flexDirection: 'row', gap: 10, marginTop: 16 },

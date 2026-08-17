@@ -1,5 +1,5 @@
-import { RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Image, Keyboard, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -45,9 +45,6 @@ import { headerLogoSource } from '@/constants/branding';
 import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
 import {
   DRAWER_KEYBOARD_CONTENT_GAP,
-  EVENT_ROLE_DRAWER_KEYBOARD_BEHAVIOR,
-  EVENT_ROLE_EDITOR_KEYBOARD_VERTICAL_OFFSET,
-  getEventRoleEditorKeyboardBehavior,
   getTemplateEditorReturnOffset,
 } from '@/lib/keyboard-layout';
 import { mergePersistedAndOptimisticEvents } from '@/lib/event-role-deletion';
@@ -72,7 +69,11 @@ import {
   toggleEditableInviteTeam,
   toggleEditableInviteWorker,
 } from '@/lib/edit-invite-selection';
-import { DrawerBottomFill } from '@/components/DrawerBottomFill';
+import {
+  KeyboardAwareDrawer,
+  KeyboardAwareDrawerScrollView,
+  KeyboardAwareDrawerTextInput,
+} from '@/components/KeyboardAwareDrawer';
 
 const lightEventsLogoSource = headerLogoSource;
 const darkEventsLogoSource = headerLogoSource;
@@ -270,7 +271,7 @@ function LocationAutocompleteField({
   return (
     <View style={styles.locationAutocompleteWrap}>
       <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>{label}</Text>
-      <TextInput
+      <KeyboardAwareDrawerTextInput
         value={value}
         onChangeText={(text) => {
           onChangeText(text);
@@ -397,7 +398,6 @@ export default function EventsScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showEventsWeekPicker, setShowEventsWeekPicker] = useState(false);
-  const drawerKeyboardOffset = 0;
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventLocationPlaceIdDraft, setEventLocationPlaceIdDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
@@ -416,17 +416,11 @@ export default function EventsScreen() {
     return base;
   });
   const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
-  const createEventScrollRef = useRef<ScrollView | null>(null);
   const createTemplateScrollRef = useRef<ScrollView | null>(null);
   const createTemplateScrollOffsetRef = useRef(0);
   const templateRoleYByIdRef = useRef<Record<string, number>>({});
   const templateTaskReturnScrollYRef = useRef(0);
   const templateTaskRestorePendingRef = useRef(false);
-  const templateTaskDescriptionYRef = useRef(0);
-  const templateDefaultLocationYRef = useRef(0);
-  const templateDefaultDescriptionYRef = useRef(0);
-  const eventLocationYRef = useRef(0);
-  const eventDescriptionYRef = useRef(0);
   const knownEventIdsRef = useRef<Set<string>>(new Set());
   const eventListInitializedRef = useRef(false);
   const calendarPromptedEventIdsRef = useRef<Set<string>>(new Set());
@@ -491,24 +485,6 @@ export default function EventsScreen() {
     if (minutes > 59 || seconds > 59) return null;
 
     return Math.max(0, Math.round((hours * 3600 + minutes * 60 + seconds) / 60));
-  };
-
-  const scrollFieldAboveKeyboard = (scrollRef: RefObject<ScrollView | null>, fieldY: number) => {
-    const delay = Platform.OS === 'ios' ? 220 : 320;
-    setTimeout(() => {
-      scrollRef.current?.scrollTo({
-        y: Math.max(0, fieldY - 120),
-        animated: true,
-      });
-    }, delay);
-  };
-
-  const scrollCreateEventFieldAboveKeyboard = (fieldY: number) => {
-    scrollFieldAboveKeyboard(createEventScrollRef, fieldY);
-  };
-
-  const scrollCreateTemplateFieldAboveKeyboard = (fieldY: number) => {
-    scrollFieldAboveKeyboard(createTemplateScrollRef, fieldY);
   };
 
   const getTaskDueAtMs = (event: DispatchEvent, task: EventTask) => {
@@ -3358,20 +3334,17 @@ export default function EventsScreen() {
         </View>
       ) : null}
 
-      <Modal visible={eventEdit.open} animationType="slide" transparent onRequestClose={closeEventEditDrawer}>
-        <Pressable style={styles.drawerBackdrop} onPress={closeEventEditDrawer}>
-          <KeyboardAvoidingView
-            style={styles.keyboardAvoidingFill}
-            behavior={EVENT_ROLE_DRAWER_KEYBOARD_BEHAVIOR}
-            keyboardVerticalOffset={drawerKeyboardOffset}>
-            <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={() => null}>
-              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
-              <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Edit Event</Text>
-              <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Update the event details for every Manager and assigned Worker.</Text>
-              <ScrollView style={styles.createEventScroll} contentContainerStyle={styles.createEventScrollContent} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareDrawer
+        visible={eventEdit.open}
+        onClose={closeEventEditDrawer}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]}>
+        <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Edit Event</Text>
+        <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Update the event details for every Manager and assigned Worker.</Text>
+        <KeyboardAwareDrawerScrollView style={styles.createEventScroll} contentContainerStyle={styles.createEventScrollContent}>
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Event name</Text>
-                  <TextInput
+                  <KeyboardAwareDrawerTextInput
                     value={eventEdit.name}
                     onChangeText={(name) => setEventEdit((current) => ({ ...current, name }))}
                     placeholder="Event name"
@@ -3381,7 +3354,7 @@ export default function EventsScreen() {
                 </View>
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Event date</Text>
-                  <TextInput
+                  <KeyboardAwareDrawerTextInput
                     value={eventEdit.date}
                     onChangeText={(date) => setEventEdit((current) => ({ ...current, date }))}
                     placeholder="YYYY-MM-DD"
@@ -3392,7 +3365,7 @@ export default function EventsScreen() {
                 </View>
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Event time</Text>
-                  <TextInput
+                  <KeyboardAwareDrawerTextInput
                     value={eventEdit.time}
                     onChangeText={(time) => setEventEdit((current) => ({ ...current, time }))}
                     placeholder="HH:MM"
@@ -3414,7 +3387,7 @@ export default function EventsScreen() {
                 </View>
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Description</Text>
-                  <TextInput
+                  <KeyboardAwareDrawerTextInput
                     value={eventEdit.description}
                     onChangeText={(description) => setEventEdit((current) => ({ ...current, description }))}
                     placeholder="Event description"
@@ -3435,19 +3408,17 @@ export default function EventsScreen() {
                   disabled={eventEditBusy}>
                   <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
                 </Pressable>
-              </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={replaceDrawer.open} animationType="slide" transparent onRequestClose={() => setReplaceDrawer(INITIAL_DRAWER)}>
-        <Pressable style={styles.drawerBackdrop} onPress={() => setReplaceDrawer(INITIAL_DRAWER)}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Replace Worker</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {replaceTarget?.role.name || 'Unknown role'}</Text>
-            <ScrollView style={styles.drawerList}>
+      <KeyboardAwareDrawer
+        visible={replaceDrawer.open}
+        onClose={() => setReplaceDrawer(INITIAL_DRAWER)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
+        <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Replace Worker</Text>
+        <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {replaceTarget?.role.name || 'Unknown role'}</Text>
+        <KeyboardAwareDrawerScrollView style={styles.drawerList}>
               {teamWorkerIds.length ? teamWorkerIds.map((workerId) => {
                 const assigned = !!replaceTarget?.role.assignedWorkerIds.includes(workerId);
                 const busy = assignmentBusyKey === `${replaceTarget?.event.id}:${replaceTarget?.role.id}:${workerId}`;
@@ -3471,21 +3442,20 @@ export default function EventsScreen() {
                   </View>
                 );
               }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
-            </ScrollView>
-            <Pressable style={styles.drawerClose} onPress={() => setReplaceDrawer(INITIAL_DRAWER)}>
-              <Text style={styles.drawerCloseText}>Close</Text>
-            </Pressable>
-          </Pressable>
+        </KeyboardAwareDrawerScrollView>
+        <Pressable style={styles.drawerClose} onPress={() => setReplaceDrawer(INITIAL_DRAWER)}>
+          <Text style={styles.drawerCloseText}>Close</Text>
         </Pressable>
-      </Modal>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={inviteDrawer.open} animationType="slide" transparent onRequestClose={() => setInviteDrawer(INITIAL_DRAWER)}>
-        <Pressable style={styles.drawerBackdrop} onPress={() => setInviteDrawer(INITIAL_DRAWER)}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Invite Worker</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {inviteTarget?.role.name || 'Unknown role'}</Text>
-            <ScrollView style={styles.drawerList}>
+      <KeyboardAwareDrawer
+        visible={inviteDrawer.open}
+        onClose={() => setInviteDrawer(INITIAL_DRAWER)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]}>
+        <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Invite Worker</Text>
+        <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>Role: {inviteTarget?.role.name || 'Unknown role'}</Text>
+        <KeyboardAwareDrawerScrollView style={styles.drawerList}>
               {eventInviteTeamOptions.length ? eventInviteTeamOptions.map((team) => {
                 const teamWorkerIds = [...new Set((team.workerIds || []).filter(Boolean))];
                 const assignedWorkerIds = new Set(inviteTarget?.role.assignedWorkerIds || []);
@@ -3546,50 +3516,42 @@ export default function EventsScreen() {
                   </View>
                 );
               }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No organization workers available.</Text>}
-            </ScrollView>
-            <Pressable
-              style={[styles.inviteSubmitButton, inviteSubmitBusy && styles.drawerCloseDisabled]}
-              onPress={handleSendRoleInvites}
-              disabled={!inviteTarget || inviteSubmitBusy}>
-              <Text style={styles.inviteSubmitButtonText}>{inviteSubmitBusy ? 'Sending…' : 'Send invite updates'}</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.inviteCloseButton, isDarkMode ? styles.inviteCloseButtonDark : styles.inviteCloseButtonLight]}
-              onPress={() => setInviteDrawer(INITIAL_DRAWER)}>
-              <Text style={[styles.inviteCloseButtonText, isDarkMode ? styles.inviteCloseButtonTextDark : styles.inviteCloseButtonTextLight]}>Close</Text>
-            </Pressable>
-          </Pressable>
+        </KeyboardAwareDrawerScrollView>
+        <Pressable
+          style={[styles.inviteSubmitButton, inviteSubmitBusy && styles.drawerCloseDisabled]}
+          onPress={handleSendRoleInvites}
+          disabled={!inviteTarget || inviteSubmitBusy}>
+          <Text style={styles.inviteSubmitButtonText}>{inviteSubmitBusy ? 'Sending…' : 'Send invite updates'}</Text>
         </Pressable>
-      </Modal>
+        <Pressable
+          style={[styles.inviteCloseButton, isDarkMode ? styles.inviteCloseButtonDark : styles.inviteCloseButtonLight]}
+          onPress={() => setInviteDrawer(INITIAL_DRAWER)}>
+          <Text style={[styles.inviteCloseButtonText, isDarkMode ? styles.inviteCloseButtonTextDark : styles.inviteCloseButtonTextLight]}>Close</Text>
+        </Pressable>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={eventRoleEditor.open} animationType="slide" transparent onRequestClose={eventRoleTaskEditor.open ? closeEventRoleTaskEditor : closeEventRoleEditor}>
-        <Pressable style={styles.drawerBackdrop} onPress={eventRoleTaskEditor.open ? closeEventRoleTaskEditor : closeEventRoleEditor}>
-          <KeyboardAvoidingView
-            style={styles.keyboardAvoidingFill}
-            behavior={getEventRoleEditorKeyboardBehavior(Platform.OS)}
-            keyboardVerticalOffset={EVENT_ROLE_EDITOR_KEYBOARD_VERTICAL_OFFSET}>
-            <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={() => null}>
-              <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
-              <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>
+      <KeyboardAwareDrawer
+        visible={eventRoleEditor.open}
+        onClose={eventRoleTaskEditor.open ? closeEventRoleTaskEditor : closeEventRoleEditor}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]}>
+        <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>
                 {eventRoleTaskEditor.open
                   ? (eventRoleTaskEditor.mode === 'edit' ? 'Edit Task' : 'Add Task')
                   : eventRoleEditor.mode === 'add' ? 'Add Role' : 'Edit Role'}
-              </Text>
-              <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
+        </Text>
+        <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
                 {eventRoleTaskEditor.open
                   ? (eventRoleTaskEditor.mode === 'edit' ? 'Update the task details, then save your changes.' : 'Add the task details, then confirm it for this role.')
                   : eventRoleEditorTarget?.event.name || events.find((event) => event.id === eventRoleEditor.eventId)?.name || 'Event role'}
-              </Text>
-              {eventRoleTaskEditor.open ? (
-                <ScrollView
-                  automaticallyAdjustKeyboardInsets={false}
+        </Text>
+        {eventRoleTaskEditor.open ? (
+                <KeyboardAwareDrawerScrollView
                   style={styles.createEventScroll}
-                  contentContainerStyle={styles.eventRoleEditorScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                  keyboardDismissMode="on-drag">
+                  contentContainerStyle={styles.eventRoleEditorScrollContent}>
                   <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                     <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task name</Text>
-                    <TextInput
+                    <KeyboardAwareDrawerTextInput
                       value={eventRoleTaskEditor.name}
                       onChangeText={(value) => setEventRoleTaskEditor((prev) => ({ ...prev, name: value }))}
                       placeholder="Task name"
@@ -3601,7 +3563,7 @@ export default function EventsScreen() {
 
                   <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                     <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task description</Text>
-                    <TextInput
+                    <KeyboardAwareDrawerTextInput
                       value={eventRoleTaskEditor.description}
                       onChangeText={(value) => setEventRoleTaskEditor((prev) => ({ ...prev, description: value }))}
                       placeholder="Task description"
@@ -3724,14 +3686,11 @@ export default function EventsScreen() {
                   <Pressable style={isDarkMode ? styles.createEventCancelButtonDark : styles.createEventCancelButtonLight} onPress={closeEventRoleTaskEditor}>
                     <Text style={isDarkMode ? styles.createEventCancelButtonTextDark : styles.createEventCancelButtonTextLight}>Cancel</Text>
                   </Pressable>
-                </ScrollView>
+                </KeyboardAwareDrawerScrollView>
               ) : (
-                <ScrollView
-                  automaticallyAdjustKeyboardInsets={false}
+                <KeyboardAwareDrawerScrollView
                   style={styles.createEventScroll}
-                  contentContainerStyle={styles.eventRoleEditorScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                  keyboardDismissMode="on-drag">
+                  contentContainerStyle={styles.eventRoleEditorScrollContent}>
                   <View style={[styles.templateRoleEditor, isDarkMode ? styles.templateRoleEditorDark : styles.templateRoleEditorLight]}>
                     <View style={styles.templateRoleHeader}>
                       <Text style={[styles.rolePreviewName, isDarkMode ? styles.createEventRoleNameDark : styles.createEventRoleNameLight]}>{eventRoleEditor.mode === 'add' ? 'New Role' : 'Role'}</Text>
@@ -3740,7 +3699,7 @@ export default function EventsScreen() {
                       </Text>
                     </View>
 
-                    <TextInput
+                    <KeyboardAwareDrawerTextInput
                       value={eventRoleEditor.name}
                       onChangeText={(value) => setEventRoleEditor((current) => ({ ...current, name: value }))}
                       placeholder="Role name"
@@ -3806,30 +3765,21 @@ export default function EventsScreen() {
                   <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeEventRoleEditor}>
                     <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
                   </Pressable>
-                </ScrollView>
+                </KeyboardAwareDrawerScrollView>
               )}
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={createEventDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateEventDrawer}>
-        <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventDrawer}>
-          <KeyboardAvoidingView
-            style={styles.keyboardAvoidingFill}
-            behavior={Platform.select({ ios: 'padding', android: 'height' })}
-            keyboardVerticalOffset={drawerKeyboardOffset}>
-            <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={Keyboard.dismiss}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.createEventDrawerTitleDark : styles.createEventDrawerTitleLight]}>Create Event</Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.createEventDrawerSubDark : styles.createEventDrawerSubLight]}>Choose a template to start your event setup</Text>
+      <KeyboardAwareDrawer
+        visible={createEventDrawerOpen}
+        onClose={closeCreateEventDrawer}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]}>
+        <Text style={[styles.drawerTitle, isDarkMode ? styles.createEventDrawerTitleDark : styles.createEventDrawerTitleLight]}>Create Event</Text>
+        <Text style={[styles.drawerSub, isDarkMode ? styles.createEventDrawerSubDark : styles.createEventDrawerSubLight]}>Choose a template to start your event setup</Text>
 
-            <ScrollView
-              ref={createEventScrollRef}
+            <KeyboardAwareDrawerScrollView
               style={styles.createEventScroll}
               contentContainerStyle={styles.createEventScrollContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator>
             <View style={isDarkMode ? styles.templateSection : styles.createEventSectionLight}>
               <View style={styles.templateHeaderRow}>
@@ -4040,11 +3990,7 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            <View
-              style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}
-              onLayout={(event) => {
-                eventLocationYRef.current = event.nativeEvent.layout.y;
-              }}>
+            <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
               <LocationAutocompleteField
                 label="Location"
                 value={eventLocationDraft}
@@ -4053,17 +3999,12 @@ export default function EventsScreen() {
                 onPlaceIdChange={(placeId) => setEventLocationPlaceIdDraft(placeId || '')}
                 placeholder="Location"
                 isDarkMode={isDarkMode}
-                onFocus={() => scrollCreateEventFieldAboveKeyboard(eventLocationYRef.current)}
               />
             </View>
 
-            <View
-              style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}
-              onLayout={(event) => {
-                eventDescriptionYRef.current = event.nativeEvent.layout.y;
-              }}>
+            <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Description</Text>
-              <TextInput
+              <KeyboardAwareDrawerTextInput
                 value={eventDescriptionDraft}
                 onChangeText={setEventDescriptionDraft}
                 placeholder="Description"
@@ -4072,7 +4013,6 @@ export default function EventsScreen() {
                 returnKeyType="done"
                 onSubmitEditing={Keyboard.dismiss}
                 blurOnSubmit
-                onFocus={() => scrollCreateEventFieldAboveKeyboard(eventDescriptionYRef.current)}
                 style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
               />
             </View>
@@ -4086,18 +4026,16 @@ export default function EventsScreen() {
             <Pressable style={[isDarkMode ? styles.createEventCancelButtonDark : styles.createEventCancelButtonLight]} onPress={closeCreateEventDrawer}>
               <Text style={[isDarkMode ? styles.createEventCancelButtonTextDark : styles.createEventCancelButtonTextLight]}>Cancel</Text>
             </Pressable>
-            </ScrollView>
-          </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+            </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={templatePickerOpen} animationType="slide" transparent onRequestClose={closeTemplatePicker}>
-        <Pressable style={styles.drawerBackdrop} onPress={closeTemplatePicker}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={templatePickerOpen}
+        onClose={closeTemplatePicker}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Select Template</Text>
-            <ScrollView style={styles.drawerList}>
+            <KeyboardAwareDrawerScrollView style={styles.drawerList}>
               {templateOptions.map((template) => {
                 const selected = template.id === selectedTemplate?.id;
                 return (
@@ -4117,23 +4055,22 @@ export default function EventsScreen() {
                   </Pressable>
                 );
               })}
-            </ScrollView>
+            </KeyboardAwareDrawerScrollView>
             <Pressable style={styles.drawerClose} onPress={closeTemplatePicker}>
               <Text style={styles.drawerCloseText}>Done</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={!!rolePickerRoleId} animationType="slide" transparent onRequestClose={() => setRolePickerRoleId(null)}>
-        <Pressable style={styles.drawerBackdrop} onPress={() => setRolePickerRoleId(null)}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={!!rolePickerRoleId}
+        onClose={() => setRolePickerRoleId(null)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>Assign Worker</Text>
             <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
               Role: {rolePickerTarget?.name || 'Unknown role'}
             </Text>
-            <ScrollView style={styles.drawerList}>
+            <KeyboardAwareDrawerScrollView style={styles.drawerList}>
               {rolePickerTarget?.assignedWorkerId ? (
                 <Pressable style={[styles.drawerButton, styles.drawerDestructiveButton]} onPress={clearWorkerFromCreateEventRole}>
                   <Text style={styles.drawerDestructiveButtonText}>Remove assigned worker</Text>
@@ -4149,18 +4086,18 @@ export default function EventsScreen() {
                   </Pressable>
                 );
               }) : <Text style={[styles.roleEmpty, isDarkMode ? styles.roleEmptyDark : styles.roleEmptyLight]}>No team workers available.</Text>}
-            </ScrollView>
+            </KeyboardAwareDrawerScrollView>
             <Pressable style={styles.drawerClose} onPress={() => setRolePickerRoleId(null)}>
               <Text style={styles.drawerCloseText}>Done</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={createEventRoleEditor.open} animationType="slide" transparent onRequestClose={closeCreateEventRoleEditor}>
-        <Pressable style={styles.drawerBackdrop} onPress={closeCreateEventRoleEditor}>
-          <Pressable style={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]} onPress={() => null}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={createEventRoleEditor.open}
+        onClose={closeCreateEventRoleEditor}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
+        <KeyboardAwareDrawerScrollView>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>
               {createEventRoleEditor.mode === 'add' ? 'Add Role' : 'Edit Role'}
             </Text>
@@ -4169,7 +4106,7 @@ export default function EventsScreen() {
             </Text>
             <View style={styles.formField}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Role name</Text>
-              <TextInput
+              <KeyboardAwareDrawerTextInput
                 value={createEventRoleEditor.name}
                 onChangeText={(value) => setCreateEventRoleEditor((prev) => ({ ...prev, name: value }))}
                 placeholder="Example: Security"
@@ -4191,18 +4128,14 @@ export default function EventsScreen() {
             <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateEventRoleEditor}>
               <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
 
-      <Modal visible={createTemplateDrawerOpen} animationType="slide" transparent onRequestClose={closeCreateTemplateDrawer}>
-        <Pressable style={styles.drawerBackdrop} onPress={templateTaskEditor.open ? closeTemplateTaskEditor : closeCreateTemplateDrawer}>
-          <KeyboardAvoidingView
-            style={styles.keyboardAvoidingFill}
-            behavior={Platform.OS === 'android' ? 'height' : undefined}
-            keyboardVerticalOffset={drawerKeyboardOffset}>
-            <Pressable style={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]} onPress={Keyboard.dismiss}>
-            <DrawerBottomFill backgroundColor={drawerSurfaceColor} />
+      <KeyboardAwareDrawer
+        visible={createTemplateDrawerOpen}
+        onClose={templateTaskEditor.open ? closeTemplateTaskEditor : closeCreateTemplateDrawer}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.drawer, isDarkMode ? styles.createEventDrawerDark : styles.createEventDrawerLight]}>
             <Text style={[styles.drawerTitle, isDarkMode ? styles.createEventDrawerTitleDark : styles.createEventDrawerTitleLight]}>
               {templateTaskEditor.open ? (templateTaskEditor.mode === 'edit' ? 'Edit Task' : 'Add Task') : isEditingTemplate ? 'Edit Template' : 'Create Template'}
             </Text>
@@ -4214,23 +4147,20 @@ export default function EventsScreen() {
                   : 'Add a template you can reuse while creating events.'}
             </Text>
 
-            <ScrollView
+            <KeyboardAwareDrawerScrollView
               ref={createTemplateScrollRef}
-              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
               style={styles.createEventScroll}
               contentContainerStyle={styles.createEventScrollContent}
               onScroll={(event) => {
                 createTemplateScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
               }}
               scrollEventThrottle={16}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator>
             {templateTaskEditor.open ? (
               <>
                 <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task name</Text>
-                  <TextInput
+                  <KeyboardAwareDrawerTextInput
                     value={templateTaskEditor.name}
                     onChangeText={(value) => setTemplateTaskEditor((prev) => ({ ...prev, name: value }))}
                     placeholder="Task name"
@@ -4240,19 +4170,14 @@ export default function EventsScreen() {
                   />
                 </View>
 
-                <View
-                  style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}
-                  onLayout={(event) => {
-                    templateTaskDescriptionYRef.current = event.nativeEvent.layout.y;
-                  }}>
+                <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
                   <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Task description</Text>
-                  <TextInput
+                  <KeyboardAwareDrawerTextInput
                     value={templateTaskEditor.description}
                     onChangeText={(value) => setTemplateTaskEditor((prev) => ({ ...prev, description: value }))}
                     placeholder="Task description"
                     placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
                     multiline
-                    onFocus={() => scrollCreateTemplateFieldAboveKeyboard(templateTaskDescriptionYRef.current)}
                     style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
                   />
                 </View>
@@ -4381,7 +4306,7 @@ export default function EventsScreen() {
               <>
             <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Template name</Text>
-              <TextInput
+              <KeyboardAwareDrawerTextInput
                 value={templateNameDraft}
                 onChangeText={setTemplateNameDraft}
                 placeholder="Example: Saturday Street Crew"
@@ -4426,11 +4351,7 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            <View
-              style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}
-              onLayout={(event) => {
-                templateDefaultLocationYRef.current = event.nativeEvent.layout.y;
-              }}>
+            <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
               <LocationAutocompleteField
                 label="Default location (optional)"
                 value={templateDefaultLocationDraft}
@@ -4439,23 +4360,17 @@ export default function EventsScreen() {
                 onPlaceIdChange={(placeId) => setTemplateDefaultLocationPlaceIdDraft(placeId || '')}
                 placeholder="Downtown"
                 isDarkMode={isDarkMode}
-                onFocus={() => scrollCreateTemplateFieldAboveKeyboard(templateDefaultLocationYRef.current)}
               />
             </View>
 
-            <View
-              style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}
-              onLayout={(event) => {
-                templateDefaultDescriptionYRef.current = event.nativeEvent.layout.y;
-              }}>
+            <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
               <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>Default description (optional)</Text>
-              <TextInput
+              <KeyboardAwareDrawerTextInput
                 value={templateDefaultDescriptionDraft}
                 onChangeText={setTemplateDefaultDescriptionDraft}
                 placeholder="Describe this template"
                 placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
                 multiline
-                onFocus={() => scrollCreateTemplateFieldAboveKeyboard(templateDefaultDescriptionYRef.current)}
                 style={[styles.templateTextArea, isDarkMode ? styles.createEventTextAreaDark : styles.createEventTextAreaLight]}
               />
             </View>
@@ -4487,7 +4402,7 @@ export default function EventsScreen() {
                       </Pressable>
                     </View>
 
-                    <TextInput
+                    <KeyboardAwareDrawerTextInput
                       value={role.name}
                       onChangeText={(value) => updateTemplateRoleDraftName(role.id, value)}
                       placeholder={`Role ${index + 1}`}
@@ -4554,14 +4469,14 @@ export default function EventsScreen() {
                     {false ? role.tasks.map((task, taskIndex) => (
                       <View key={task.id} style={[styles.templateTaskRow, isDarkMode ? styles.templateTaskRowDark : styles.templateTaskRowLight]}>
                         <Text style={[styles.templateTaskLabel, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>Task {taskIndex + 1}</Text>
-                        <TextInput
+                        <KeyboardAwareDrawerTextInput
                           value={task.name}
                           onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { name: value })}
                           placeholder="Task name"
                           placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
                           style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
                         />
-                        <TextInput
+                        <KeyboardAwareDrawerTextInput
                           value={task.description || ''}
                           onChangeText={(value) => updateTemplateTaskDraft(role.id, task.id, { description: value })}
                           placeholder="Task description"
@@ -4619,7 +4534,7 @@ export default function EventsScreen() {
                           </Text>
                         </Pressable>
                         {Number.isFinite(task.expectedOffsetMinutes) ? (
-                          <TextInput
+                          <KeyboardAwareDrawerTextInput
                             value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes || 0)}
                             onChangeText={(value) => {
                               const key = `${role.id}:${task.id}`;
@@ -4666,11 +4581,8 @@ export default function EventsScreen() {
             </Pressable>
               </>
             )}
-            </ScrollView>
-          </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
+            </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
     </View>
   );
 }
@@ -5041,8 +4953,6 @@ const styles = StyleSheet.create({
   templateAttachmentList: { gap: 6 },
   templateAttachmentItem: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   templateAttachmentName: { flex: 1, fontSize: 12, fontWeight: '600' },
-  drawerBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  keyboardAvoidingFill: { width: '100%', flex: 1, justifyContent: 'flex-end' },
   drawer: { borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
   createEventScroll: { marginTop: 8 },
   createEventScrollContent: { paddingBottom: 16 },

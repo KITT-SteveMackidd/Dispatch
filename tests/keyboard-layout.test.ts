@@ -1,23 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   DRAWER_KEYBOARD_CONTENT_GAP,
-  EVENT_ROLE_DRAWER_KEYBOARD_BEHAVIOR,
-  EVENT_ROLE_EDITOR_KEYBOARD_VERTICAL_OFFSET,
-  getEventRoleEditorKeyboardBehavior,
+  getKeyboardAwareDrawerScrollOffset,
   getTemplateEditorReturnOffset,
 } from '../lib/keyboard-layout';
 
 describe('keyboard-aware template editor layout', () => {
-  it('shrinks the event editor viewport instead of translating the full drawer above the keyboard', () => {
-    expect(EVENT_ROLE_DRAWER_KEYBOARD_BEHAVIOR).toBe('height');
-  });
-
-  it('moves the role editor above the iOS keyboard without enabling duplicate scroll insets', () => {
-    expect(getEventRoleEditorKeyboardBehavior('ios')).toBe('padding');
-    expect(getEventRoleEditorKeyboardBehavior('android')).toBe('height');
-    expect(EVENT_ROLE_EDITOR_KEYBOARD_VERTICAL_OFFSET).toBe(-16);
-  });
-
   it('returns to the exact scroll position where the task editor opened', () => {
     expect(DRAWER_KEYBOARD_CONTENT_GAP).toBe(16);
     expect(getTemplateEditorReturnOffset(620, 240)).toBe(240);
@@ -26,5 +14,38 @@ describe('keyboard-aware template editor layout', () => {
   it('never returns a negative offset', () => {
     expect(getTemplateEditorReturnOffset(undefined, 240)).toBe(240);
     expect(getTemplateEditorReturnOffset(8, -4)).toBe(0);
+  });
+
+  it('scrolls a focused drawer input to 16px above the keyboard', () => {
+    expect(getKeyboardAwareDrawerScrollOffset({
+      currentOffset: 120,
+      inputTop: 610,
+      inputHeight: 44,
+      viewportTop: 120,
+      viewportHeight: 620,
+      keyboardTop: 620,
+    })).toBe(170);
+  });
+
+  it('does not move a focused drawer input that is already visible', () => {
+    expect(getKeyboardAwareDrawerScrollOffset({
+      currentOffset: 120,
+      inputTop: 420,
+      inputHeight: 44,
+      viewportTop: 120,
+      viewportHeight: 620,
+      keyboardTop: 620,
+    })).toBe(120);
+  });
+
+  it('scrolls back toward a focused drawer input above the viewport', () => {
+    expect(getKeyboardAwareDrawerScrollOffset({
+      currentOffset: 120,
+      inputTop: 90,
+      inputHeight: 44,
+      viewportTop: 120,
+      viewportHeight: 620,
+      keyboardTop: 620,
+    })).toBe(74);
   });
 });
