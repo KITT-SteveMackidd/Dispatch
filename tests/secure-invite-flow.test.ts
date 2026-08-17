@@ -61,4 +61,13 @@ describe('secure invitation flow wiring', () => {
     expect(setup).toContain('isInviteOnboarding && step === 3');
     expect(setup).toContain('const totalSteps = isInviteOnboarding ? 4 : TOTAL_STEPS;');
   });
+
+  it('lets an unaffiliated Manager finish onboarding without creating an organization', () => {
+    const setup = read('app/(auth)/setup.tsx');
+    expect(setup).toContain('const skipOrganizationSetup = async () =>');
+    expect(setup).toContain('accessibilityLabel="Skip organization setup"');
+    expect(setup).toContain('await completeOnboarding();');
+    expect(setup).toContain("router.replace('/(tabs)/profile');");
+    expect(setup).toContain('continue without one while you wait for an invitation');
+  });
 });

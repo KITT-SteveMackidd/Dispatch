@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SecureInviteScreen } from '@/components/invite/SecureInviteScreen';
@@ -77,6 +78,7 @@ export default function SetupScreen() {
   const [membership, setMembership] = useState<MembershipSummary>(emptyMembership);
   const [organizationName, setOrganizationName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [skippingOrganization, setSkippingOrganization] = useState(false);
   const [membershipLoading, setMembershipLoading] = useState(profile?.onboardingCompleted === false);
   const [errorMessage, setErrorMessage] = useState('');
   const resumeIncompleteProfile = useRef(!isInviteOnboarding && profile?.onboardingCompleted === false);
@@ -209,6 +211,23 @@ export default function SetupScreen() {
     }
   };
 
+  const skipOrganizationSetup = async () => {
+    if (busy) return;
+
+    try {
+      setBusy(true);
+      setSkippingOrganization(true);
+      setErrorMessage('');
+      await completeOnboarding();
+      router.replace('/(tabs)/profile');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to finish setup. Please try again.');
+    } finally {
+      setSkippingOrganization(false);
+      setBusy(false);
+    }
+  };
+
   const renderStepContent = () => {
     if (step === 0) {
       return (
@@ -319,10 +338,36 @@ export default function SetupScreen() {
 
       return (
         <View style={styles.messageBlock}>
-          <Text style={[styles.eyebrow, { color: colors.accent }]}>Create your workspace</Text>
-          <Text style={[styles.title, { color: colors.text }]}>Create your organization</Text>
+          <View style={styles.organizationHeader}>
+            <View style={styles.organizationHeaderCopy}>
+              <Text style={[styles.eyebrow, { color: colors.accent }]}>Create your workspace</Text>
+              <Text style={[styles.title, { color: colors.text }]}>Create your organization</Text>
+            </View>
+            <Pressable
+              accessibilityHint="Finish onboarding without an organization"
+              accessibilityLabel="Skip organization setup"
+              accessibilityRole="button"
+              disabled={busy}
+              hitSlop={8}
+              onPress={skipOrganizationSetup}
+              style={({ pressed }) => [
+                styles.closeButton,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+                busy && styles.disabled,
+                pressed && !busy && styles.pressed,
+              ]}>
+              {skippingOrganization ? (
+                <ActivityIndicator color={colors.text} size="small" />
+              ) : (
+                <Feather color={colors.text} name="x" size={24} />
+              )}
+            </Pressable>
+          </View>
           <Text style={[styles.body, { color: colors.muted }]}>
-            We did not find a manager invitation for this email. Name your organization to create it and get started.
+            We did not find a manager invitation for this email. Create an organization now, or continue without one while you wait for an invitation.
           </Text>
           <Text style={[styles.inputLabel, { color: colors.text }]}>Organization name</Text>
           <TextInput
@@ -403,7 +448,9 @@ export default function SetupScreen() {
     : step === 3
       ? busy ? 'Saving role...' : 'Continue'
       : busy
-        ? selectedRole === 'manager' && !membership.organizationName ? 'Creating organization...' : 'Getting Dispatch ready...'
+        ? skippingOrganization
+          ? 'Finishing setup...'
+          : selectedRole === 'manager' && !membership.organizationName ? 'Creating organization...' : 'Getting Dispatch ready...'
         : selectedRole === 'manager' && !membership.organizationName
           ? 'Create organization and get started'
           : selectedRole === 'worker' && !membership.organizationName && !membership.teamNames.length
@@ -684,6 +731,23 @@ const styles = StyleSheet.create({
   },
   messageBlock: {
     width: '100%',
+  },
+  organizationHeader: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  organizationHeaderCopy: {
+    flex: 1,
+  },
+  closeButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   eyebrow: {
     fontSize: 13,
