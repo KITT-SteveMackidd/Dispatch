@@ -65,7 +65,7 @@ describe('secure invitation flow wiring', () => {
   it('lets an unaffiliated Manager finish onboarding without creating an organization', () => {
     const setup = read('app/(auth)/setup.tsx');
     expect(setup).toContain('const skipOrganizationSetup = async () =>');
-    expect(setup).toContain('accessibilityLabel="Skip organization setup"');
+    expect(setup).toContain("'Skip for now'");
     expect(setup).toContain('await completeOnboarding();');
     expect(setup).toContain("router.replace('/(tabs)/profile');");
     expect(setup).toContain('continue without one while you wait for an invitation');

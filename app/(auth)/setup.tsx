@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SecureInviteScreen } from '@/components/invite/SecureInviteScreen';
@@ -338,34 +337,8 @@ export default function SetupScreen() {
 
       return (
         <View style={styles.messageBlock}>
-          <View style={styles.organizationHeader}>
-            <View style={styles.organizationHeaderCopy}>
-              <Text style={[styles.eyebrow, { color: colors.accent }]}>Create your workspace</Text>
-              <Text style={[styles.title, { color: colors.text }]}>Create your organization</Text>
-            </View>
-            <Pressable
-              accessibilityHint="Finish onboarding without an organization"
-              accessibilityLabel="Skip organization setup"
-              accessibilityRole="button"
-              disabled={busy}
-              hitSlop={8}
-              onPress={skipOrganizationSetup}
-              style={({ pressed }) => [
-                styles.closeButton,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                },
-                busy && styles.disabled,
-                pressed && !busy && styles.pressed,
-              ]}>
-              {skippingOrganization ? (
-                <ActivityIndicator color={colors.text} size="small" />
-              ) : (
-                <Feather color={colors.text} name="x" size={24} />
-              )}
-            </Pressable>
-          </View>
+          <Text style={[styles.eyebrow, { color: colors.accent }]}>Create your workspace</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Create your organization</Text>
           <Text style={[styles.body, { color: colors.muted }]}>
             We did not find a manager invitation for this email. Create an organization now, or continue without one while you wait for an invitation.
           </Text>
@@ -432,6 +405,10 @@ export default function SetupScreen() {
   };
 
   const isInviteStep = isInviteOnboarding && step === 3;
+  const canSkipOrganization = step === 4
+    && selectedRole === 'manager'
+    && !membership.organizationName
+    && !membershipLoading;
   const totalSteps = isInviteOnboarding ? 4 : TOTAL_STEPS;
   const illustrationSource = step === 0
     ? illustrations.welcome
@@ -448,9 +425,7 @@ export default function SetupScreen() {
     : step === 3
       ? busy ? 'Saving role...' : 'Continue'
       : busy
-        ? skippingOrganization
-          ? 'Finishing setup...'
-          : selectedRole === 'manager' && !membership.organizationName ? 'Creating organization...' : 'Getting Dispatch ready...'
+        ? selectedRole === 'manager' && !membership.organizationName ? 'Creating organization...' : 'Getting Dispatch ready...'
         : selectedRole === 'manager' && !membership.organizationName
           ? 'Create organization and get started'
           : selectedRole === 'worker' && !membership.organizationName && !membership.teamNames.length
@@ -526,8 +501,26 @@ export default function SetupScreen() {
                   primaryDisabled && styles.disabled,
                   pressed && !primaryDisabled && styles.pressed,
                 ]}>
-                {busy ? <ActivityIndicator color="#06132A" size="small" /> : null}
+                {busy && !skippingOrganization ? <ActivityIndicator color="#06132A" size="small" /> : null}
                 <Text style={styles.primaryButtonText}>{primaryLabel}</Text>
+              </Pressable>
+            ) : null}
+
+            {canSkipOrganization ? (
+              <Pressable
+                accessibilityHint="Finish onboarding without an organization"
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={skipOrganizationSetup}
+                style={({ pressed }) => [
+                  styles.backButton,
+                  { borderColor: colors.border },
+                  busy && styles.disabled,
+                  pressed && !busy && styles.pressed,
+                ]}>
+                <Text style={[styles.backButtonText, { color: colors.text }]}>
+                  {skippingOrganization ? 'Finishing setup...' : 'Skip for now'}
+                </Text>
               </Pressable>
             ) : null}
 
@@ -731,23 +724,6 @@ const styles = StyleSheet.create({
   },
   messageBlock: {
     width: '100%',
-  },
-  organizationHeader: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  organizationHeaderCopy: {
-    flex: 1,
-  },
-  closeButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   eyebrow: {
     fontSize: 13,
