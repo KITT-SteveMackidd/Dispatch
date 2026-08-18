@@ -47,6 +47,7 @@ export type EventRole = {
   waitlistWorkerIds?: string[];
   eligibleWaitlistWorkerIds?: string[];
   waitlistInviteWorkerIds?: string[];
+  removedWorkerIds?: string[];
   openSlots: number;
   tasks: EventTask[];
 };

@@ -35,6 +35,7 @@ export default function ProfileScreen() {
   const [creatingOrganisation, setCreatingOrganisation] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [resettingDatabase, setResettingDatabase] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportStartDate, setExportStartDate] = useState(startOfCurrentMonth);
   const [exportEndDate, setExportEndDate] = useState(() => new Date());
@@ -239,17 +240,34 @@ export default function ProfileScreen() {
     setActiveDateField(null);
   };
 
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await signOut();
+      router.replace('/(auth)/signin');
+    } catch (error) {
+      console.warn('Unable to sign out safely.', error);
+      Alert.alert(
+        'Unable to sign out',
+        'Dispatch could not complete sign-out safely. Check your connection and try again.'
+      );
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, isDarkMode ? styles.topHeaderDark : styles.topHeaderLight, { paddingTop: insets.top + 16 }]}>
         <Image source={isDarkMode ? darkEventsLogoSource : lightEventsLogoSource} style={isDarkMode ? styles.darkLogo : styles.lightLogo} resizeMode="contain" />
         <Pressable
-          onPress={() => {
-            void signOut();
-            router.replace('/(auth)/signin');
-          }}
+          disabled={signingOut}
+          onPress={() => void handleSignOut()}
           style={[styles.signOutButton, isDarkMode ? styles.signOutButtonDark : styles.signOutButtonLight]}>
-          <Text style={[styles.signOutButtonText, isDarkMode ? styles.signOutButtonTextDark : styles.signOutButtonTextLight]}>Sign out</Text>
+          <Text style={[styles.signOutButtonText, isDarkMode ? styles.signOutButtonTextDark : styles.signOutButtonTextLight]}>
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </Text>
         </Pressable>
       </View>
 

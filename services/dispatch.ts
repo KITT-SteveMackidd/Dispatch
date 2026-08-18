@@ -32,7 +32,7 @@ import { buildEventDetailsUpdate, type EventDetailsDraft } from '@/lib/event-sch
 import { clearWorkerTaskCompletions } from '@/services/event-logic';
 import { buildLateTaskNotificationTargets } from '@/lib/task-notification-targets';
 import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
-import { removeEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
+import { clearWorkerEventRoleRemoval, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
@@ -94,6 +94,7 @@ export type RoleAssignmentNotification = {
   roleWaitlistWorkerIds?: string[];
   roleEligibleWaitlistWorkerIds?: string[];
   roleWaitlistInviteWorkerIds?: string[];
+  roleRemovedWorkerIds?: string[];
   pushSeenBy?: string[];
   createdAt?: { toDate?: () => Date } | Date | null;
 };
@@ -1007,6 +1008,7 @@ export function watchWorkerRoleAssignmentNotifications(workerId: string, cb: (it
         roleWaitlistWorkerIds: role.waitlistWorkerIds || [],
         roleEligibleWaitlistWorkerIds: role.eligibleWaitlistWorkerIds || [],
         roleWaitlistInviteWorkerIds: role.waitlistInviteWorkerIds || [],
+        roleRemovedWorkerIds: role.removedWorkerIds || [],
       };
     });
 
@@ -2671,30 +2673,11 @@ export async function updateEventRoleAssignment(params: {
 
     // Assignments are now pending until worker accepts.
     if (action === 'remove') {
-      const waitlistWorkerIds = role.waitlistWorkerIds || [];
-      const waitlistInviteWorkerIds = waitlistWorkerIds.filter((id) => id !== workerId);
-      nextRoles = roles.map((item) => {
-        if (item.id !== roleId) return item;
-        return {
-          ...item,
-          assignedWorkerIds: assignedWorkerIds.filter((id) => id !== workerId),
-          openSlots: (item.openSlots || 0) + 1,
-          waitlistInviteWorkerIds: [...new Set([
-            ...(item.waitlistInviteWorkerIds || []).filter((id) => id !== workerId),
-            ...waitlistInviteWorkerIds,
-          ])],
-        };
-      });
-
-      const workerIds = [...new Set(nextRoles.flatMap((item) => [
-        ...(item.assignedWorkerIds || []),
-        ...(item.waitlistWorkerIds || []),
-        ...(item.eligibleWaitlistWorkerIds || []),
-        ...(item.waitlistInviteWorkerIds || []),
-      ]))];
+      const removal = removeWorkerFromEventRoleAndRebuildWorkers(roles, roleId, workerId);
+      nextRoles = removal.roles;
       tx.update(ref, {
         roles: nextRoles,
-        workerIds,
+        workerIds: removal.workerIds,
         revision: (event.revision ?? 0) + 1,
         updatedAt: serverTimestamp(),
       });
@@ -2711,7 +2694,7 @@ export async function updateEventRoleAssignment(params: {
         createdAt: serverTimestamp(),
       });
 
-      waitlistInviteWorkerIds.forEach((waitlistWorkerId) => {
+      removal.waitlistWorkerIdsToNotify.forEach((waitlistWorkerId) => {
         const availableNotificationRef = doc(collection(db, 'userNotifications'));
         tx.set(availableNotificationRef, {
           userId: waitlistWorkerId,
@@ -2727,6 +2710,17 @@ export async function updateEventRoleAssignment(params: {
       return;
     }
 
+    const clearedRemoval = clearWorkerEventRoleRemoval(roles, roleId, workerId);
+    nextRoles = clearedRemoval.roles;
+    tx.update(ref, {
+      roles: nextRoles,
+      workerIds: clearedRemoval.workerIds,
+      revision: (event.revision ?? 0) + 1,
+      updatedAt: serverTimestamp(),
+    });
+
+    const inviteRole = nextRoles.find((item) => item.id === roleId) || role;
+
     const notificationRef = doc(collection(db, 'roleAssignmentNotifications'));
     tx.set(notificationRef, {
       workerId,
@@ -2736,13 +2730,14 @@ export async function updateEventRoleAssignment(params: {
       eventName: event.name,
       eventLocation: event.location || '',
       eventStartsAt: event.startsAt || '',
-      roleName: role.name,
-      roleTaskNames: (role.tasks || []).map((task) => task.name).filter(Boolean),
-      roleOpenSlots: Math.max(0, role.openSlots || 0),
-      roleAssignedWorkerIds: role.assignedWorkerIds || [],
-      roleWaitlistWorkerIds: role.waitlistWorkerIds || [],
-      roleEligibleWaitlistWorkerIds: role.eligibleWaitlistWorkerIds || [],
-      roleWaitlistInviteWorkerIds: role.waitlistInviteWorkerIds || [],
+      roleName: inviteRole.name,
+      roleTaskNames: (inviteRole.tasks || []).map((task) => task.name).filter(Boolean),
+      roleOpenSlots: Math.max(0, inviteRole.openSlots || 0),
+      roleAssignedWorkerIds: inviteRole.assignedWorkerIds || [],
+      roleWaitlistWorkerIds: inviteRole.waitlistWorkerIds || [],
+      roleEligibleWaitlistWorkerIds: inviteRole.eligibleWaitlistWorkerIds || [],
+      roleWaitlistInviteWorkerIds: inviteRole.waitlistInviteWorkerIds || [],
+      roleRemovedWorkerIds: inviteRole.removedWorkerIds || [],
       action,
       status: 'pending',
       statusReason: `${event.name}: You were invited to ${role.name}. Accept or decline in Dispatch.`,

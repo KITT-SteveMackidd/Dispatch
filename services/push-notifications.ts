@@ -4,12 +4,13 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
-import {
-  saveUserPushToken,
-} from '@/services/dispatch';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
 import { shouldPresentForegroundNotification } from '@/lib/foreground-chat-notifications';
-import { rememberRegisteredDeviceToken } from '@/services/push-token-session';
+import {
+  beginPushTokenSession,
+  endPushTokenSession,
+  registerCurrentDevicePushToken,
+} from '@/services/push-token-session';
 
 let notificationHandlerConfigured = false;
 const PUSH_REGISTRATION_RETRY_MS = 15_000;
@@ -92,11 +93,13 @@ export function usePushNotificationBridge() {
   useEffect(() => {
     if (!profile?.uid) return;
     ensureNotificationHandler();
+    const userId = profile.uid;
+    const pushTokenSessionGeneration = beginPushTokenSession(userId);
 
     let disposed = false;
     let tokenSubscription: Notifications.EventSubscription | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let registrationPromise: Promise<'registered' | 'denied' | 'retry'> | null = null;
+    let registrationPromise: Promise<'registered' | 'denied' | 'retry' | 'stale'> | null = null;
     let permissionAlertShown = false;
 
     const registerPushToken = async () => {
@@ -122,14 +125,14 @@ export function usePushNotificationBridge() {
           const expoToken = await Notifications.getExpoPushTokenAsync({ projectId });
           if (!expoToken.data?.trim()) throw new Error('Expo did not return a push token for this device.');
 
-          await saveUserPushToken({
-            userId: profile.uid,
+          const registered = await registerCurrentDevicePushToken({
+            userId,
+            generation: pushTokenSessionGeneration,
             token: expoToken.data,
             platform: Platform.OS === 'ios' || Platform.OS === 'android' || Platform.OS === 'web' ? Platform.OS : 'unknown',
             permissionStatus: 'granted',
           });
-          await rememberRegisteredDeviceToken(profile.uid, expoToken.data);
-          return 'registered' as const;
+          return registered ? 'registered' as const : 'stale' as const;
         } catch (error) {
           console.warn('Unable to register this device for Dispatch push notifications.', error);
           return 'retry' as const;
@@ -169,6 +172,7 @@ export function usePushNotificationBridge() {
 
     return () => {
       disposed = true;
+      endPushTokenSession(userId, pushTokenSessionGeneration);
       if (retryTimer) clearTimeout(retryTimer);
       appStateSubscription.remove();
       tokenSubscription?.remove();

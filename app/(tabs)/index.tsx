@@ -56,6 +56,7 @@ import {
   getWorkerRoleAction,
   getWorkerRoleActionFromNotification,
   getWorkerVisibleRoles,
+  isWorkerRoleNotificationVisible,
   keepLatestWorkerRoleNotifications,
   mergeWorkerRoleAvailability,
 } from '@/lib/worker-role-action';
@@ -372,6 +373,7 @@ export default function EventsScreen() {
     roleWaitlistWorkerIds?: string[];
     roleEligibleWaitlistWorkerIds?: string[];
     roleWaitlistInviteWorkerIds?: string[];
+    roleRemovedWorkerIds?: string[];
   }>>([]);
   const [pendingInviteWorkerIdsByRoleKey, setPendingInviteWorkerIdsByRoleKey] = useState<Record<string, string[]>>({});
   const [inviteStatusByRoleWorkerKey, setInviteStatusByRoleWorkerKey] = useState<Record<string, InviteStatus>>({});
@@ -788,6 +790,7 @@ export default function EventsScreen() {
         roleWaitlistWorkerIds: item.roleWaitlistWorkerIds,
         roleEligibleWaitlistWorkerIds: item.roleEligibleWaitlistWorkerIds,
         roleWaitlistInviteWorkerIds: item.roleWaitlistInviteWorkerIds,
+        roleRemovedWorkerIds: item.roleRemovedWorkerIds,
       })));
     });
   }, [profile]);
@@ -1449,6 +1452,15 @@ export default function EventsScreen() {
     [pendingRoleNotifications]
   );
 
+  const visibleRoleNotifications = useMemo(
+    () => profile?.role === 'worker' && profile.uid
+      ? latestRoleNotifications.filter((notification) => (
+          isWorkerRoleNotificationVisible(notification, profile.uid)
+        ))
+      : [],
+    [latestRoleNotifications, profile?.role, profile?.uid]
+  );
+
   const allEvents = useMemo(
     () => {
       const buildPendingInviteRole = (notification: (typeof pendingRoleNotifications)[number]): EventRole => ({
@@ -1458,6 +1470,7 @@ export default function EventsScreen() {
         waitlistWorkerIds: notification.roleWaitlistWorkerIds || [],
         eligibleWaitlistWorkerIds: notification.roleEligibleWaitlistWorkerIds || [],
         waitlistInviteWorkerIds: notification.roleWaitlistInviteWorkerIds || [],
+        removedWorkerIds: notification.roleRemovedWorkerIds || [],
         openSlots: getAvailableRoleSlots({
           openSlots: notification.roleOpenSlots,
           assignedWorkerIds: notification.roleAssignedWorkerIds,
@@ -1474,9 +1487,7 @@ export default function EventsScreen() {
       const pendingNotificationsByEvent = new Map<string, typeof pendingRoleNotifications>();
 
       if (profile?.role === 'worker') {
-        latestRoleNotifications
-          .filter((notification) => notification.action === 'assign')
-          .filter((notification) => notification.status === 'pending' || notification.status === 'declined' || notification.status === 'waitlisted')
+        visibleRoleNotifications
           .filter((notification) => Number.isFinite(new Date(notification.eventStartsAt || '').getTime()))
           .forEach((notification) => {
             const current = pendingNotificationsByEvent.get(notification.eventId) || [];
@@ -1514,9 +1525,7 @@ export default function EventsScreen() {
       });
 
       const pendingInviteEvents: DispatchEvent[] = profile?.role === 'worker'
-        ? latestRoleNotifications
-            .filter((notification) => notification.action === 'assign')
-            .filter((notification) => notification.status === 'pending' || notification.status === 'declined' || notification.status === 'waitlisted')
+        ? visibleRoleNotifications
             .filter((notification) => !activeEventIds.has(notification.eventId))
             .filter((notification) => Number.isFinite(new Date(notification.eventStartsAt || '').getTime()))
             .reduce<DispatchEvent[]>((acc, notification) => {
@@ -1550,7 +1559,7 @@ export default function EventsScreen() {
       const validEvents = unique.filter((event) => Number.isFinite(new Date(event.startsAt).getTime()));
       return sortDispatchEvents(validEvents);
     },
-    [events, latestRoleNotifications, optimisticCreatedEvents, profile?.role, profile?.uid]
+    [events, optimisticCreatedEvents, profile?.role, profile?.uid, visibleRoleNotifications]
   );
 
   const acceptedWorkerEventIds = useMemo(() => {
@@ -2746,8 +2755,10 @@ export default function EventsScreen() {
       });
 
       Alert.alert(
-        action === 'assign' ? 'Assignment sent' : 'Removal sent',
-        `${workerLabel(params.workerId)} can now accept or decline this ${action === 'assign' ? 'role assignment' : 'role removal'} notification.`
+        action === 'assign' ? 'Assignment sent' : 'Removal complete',
+        action === 'assign'
+          ? `${workerLabel(params.workerId)} can now accept or decline this role assignment notification.`
+          : `${workerLabel(params.workerId)} was removed immediately. Prior invites for this role are inactive and can no longer be acted on.`
       );
     } catch (error) {
       Alert.alert('Unable to update role', error instanceof Error ? error.message : 'Please try again.');
@@ -2832,7 +2843,10 @@ export default function EventsScreen() {
         toRemoveAssigned.length ? `removed ${toRemoveAssigned.length} assigned Worker${toRemoveAssigned.length === 1 ? '' : 's'}` : '',
         toWithdrawPending.length ? `withdrew ${toWithdrawPending.length} pending invite${toWithdrawPending.length === 1 ? '' : 's'}` : '',
       ].filter(Boolean);
-      Alert.alert('Invites updated', `${updates.join(', ')}. Waitlisted Workers are notified when a role opens.`);
+      const removalNote = toRemoveAssigned.length
+        ? ' Removal is immediate; previous invites for the removed role can no longer be acted on.'
+        : '';
+      Alert.alert('Invites updated', `${updates.join(', ')}.${removalNote} Waitlisted Workers are notified when a role opens.`);
       setInviteDrawer(INITIAL_DRAWER);
     } catch (error) {
       Alert.alert('Unable to send invites', error instanceof Error ? error.message : 'Please try again.');

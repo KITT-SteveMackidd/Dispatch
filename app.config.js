@@ -27,6 +27,7 @@ module.exports = ({ config: baseConfig }) => {
   config.ios = {
     ...(config.ios || {}),
     bundleIdentifier: config.ios?.bundleIdentifier || 'com.smackidd.dispatch',
+    runtimeVersion: 'dispatch-sdk54-rn081-newarch-delegate-textlayout-v5',
     usesAppleSignIn: true,
     associatedDomains: [
       ...new Set([
@@ -100,6 +101,7 @@ module.exports = ({ config: baseConfig }) => {
       'expo-build-properties',
       {
         ios: {
+          buildReactNativeFromSource: true,
           extraPods: [
             { name: 'GoogleUtilities', modular_headers: true },
             { name: 'RecaptchaInterop', modular_headers: true },

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mergePersistedAndOptimisticEvents, removeEventRoleAndRebuildWorkers } from '../lib/event-role-deletion';
+import {
+  clearWorkerEventRoleRemoval,
+  mergePersistedAndOptimisticEvents,
+  removeEventRoleAndRebuildWorkers,
+  removeWorkerFromEventRoleAndRebuildWorkers,
+} from '../lib/event-role-deletion';
 import type { DispatchEvent, EventRole } from '../types/dispatch';
 
 describe('event role deletion', () => {
@@ -11,6 +16,69 @@ describe('event role deletion', () => {
     expect(removeEventRoleAndRebuildWorkers(roles, 'remove')).toEqual({
       roles: [roles[1]],
       workerIds: ['worker-3', 'worker-4'],
+    });
+  });
+
+  it('removes every target-role membership while retaining the worker through another role', () => {
+    const roles: EventRole[] = [
+      {
+        id: 'remove-from',
+        name: 'Box Office',
+        assignedWorkerIds: ['worker-1'],
+        waitlistWorkerIds: ['worker-1', 'worker-2'],
+        eligibleWaitlistWorkerIds: ['worker-1', 'worker-3'],
+        waitlistInviteWorkerIds: ['worker-1', 'worker-4'],
+        openSlots: 0,
+        tasks: [],
+      },
+      {
+        id: 'keep-in',
+        name: 'Usher',
+        assignedWorkerIds: ['worker-1'],
+        openSlots: 0,
+        tasks: [],
+      },
+    ];
+
+    const result = removeWorkerFromEventRoleAndRebuildWorkers(roles, 'remove-from', 'worker-1');
+
+    expect(result.roles[0]).toMatchObject({
+      assignedWorkerIds: [],
+      waitlistWorkerIds: ['worker-2'],
+      eligibleWaitlistWorkerIds: ['worker-3'],
+      waitlistInviteWorkerIds: ['worker-4', 'worker-2'],
+      removedWorkerIds: ['worker-1'],
+      openSlots: 1,
+    });
+    expect(result.roles[1]).toBe(roles[1]);
+    expect(result.workerIds).toEqual(['worker-2', 'worker-3', 'worker-4', 'worker-1']);
+    expect(result.waitlistWorkerIdsToNotify).toEqual(['worker-2']);
+  });
+
+  it('removes the worker from the event index when the target role was their only membership', () => {
+    const roles: EventRole[] = [
+      { id: 'role-1', name: 'Box Office', assignedWorkerIds: ['worker-1'], openSlots: 0, tasks: [] },
+    ];
+
+    expect(removeWorkerFromEventRoleAndRebuildWorkers(roles, 'role-1', 'worker-1').workerIds)
+      .toEqual([]);
+  });
+
+  it('clears only the re-invited worker tombstone without indexing the pending invite', () => {
+    const roles: EventRole[] = [
+      {
+        id: 'role-1',
+        name: 'Box Office',
+        assignedWorkerIds: [],
+        removedWorkerIds: ['worker-1', 'worker-2'],
+        openSlots: 1,
+        tasks: [],
+      },
+    ];
+
+    expect(clearWorkerEventRoleRemoval(roles, 'role-1', 'worker-1')).toEqual({
+      roles: [{ ...roles[0], removedWorkerIds: ['worker-2'] }],
+      workerIds: [],
     });
   });
 

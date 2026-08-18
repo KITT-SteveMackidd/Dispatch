@@ -10,11 +10,17 @@ export type WorkerRoleAvailabilitySnapshot = {
   roleWaitlistWorkerIds?: string[];
   roleEligibleWaitlistWorkerIds?: string[];
   roleWaitlistInviteWorkerIds?: string[];
+  roleRemovedWorkerIds?: string[];
 };
 
 export type WorkerRoleNotificationSnapshot = WorkerRoleAvailabilitySnapshot & {
   eventId: string;
   roleId: string;
+};
+
+type WorkerRoleNotificationVisibilitySnapshot = WorkerRoleAvailabilitySnapshot & {
+  action: 'assign' | 'remove';
+  status: 'pending' | 'accepted' | 'declined' | 'waitlisted';
 };
 
 export function getAvailableRoleSlots(role: RoleAvailability): number {
@@ -39,6 +45,7 @@ export function mergeWorkerRoleAvailability(
     waitlistWorkerIds: snapshot.roleWaitlistWorkerIds ?? role.waitlistWorkerIds ?? [],
     eligibleWaitlistWorkerIds: snapshot.roleEligibleWaitlistWorkerIds ?? role.eligibleWaitlistWorkerIds ?? [],
     waitlistInviteWorkerIds: snapshot.roleWaitlistInviteWorkerIds ?? role.waitlistInviteWorkerIds ?? [],
+    removedWorkerIds: snapshot.roleRemovedWorkerIds ?? role.removedWorkerIds ?? [],
     openSlots,
   };
 }
@@ -72,6 +79,22 @@ export function getWorkerVisibleRoles(roles: EventRole[], workerId: string, pend
     || (role.waitlistInviteWorkerIds || []).includes(workerId)
     || pending.has(role.id)
   ));
+}
+
+export function isWorkerRoleNotificationVisible(
+  notification: WorkerRoleNotificationVisibilitySnapshot,
+  workerId: string
+) {
+  if ((notification.roleRemovedWorkerIds || []).includes(workerId)) return false;
+  if (notification.action !== 'assign') return false;
+  if (notification.status === 'pending') return true;
+  if (notification.status !== 'declined' && notification.status !== 'waitlisted') return false;
+
+  return [
+    notification.roleWaitlistWorkerIds,
+    notification.roleEligibleWaitlistWorkerIds,
+    notification.roleWaitlistInviteWorkerIds,
+  ].some((workerIds) => (workerIds || []).includes(workerId));
 }
 
 export function keepLatestWorkerRoleNotifications<T extends WorkerRoleNotificationSnapshot>(

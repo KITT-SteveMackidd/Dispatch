@@ -10,3 +10,13 @@ diff --git a/node_modules/react-native/Libraries/AppDelegate/RCTReactNativeFacto
  
  @end
  
+diff --git a/node_modules/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/ios/react/renderer/textlayoutmanager/RCTTextLayoutManager.mm b/node_modules/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/ios/react/renderer/textlayoutmanager/RCTTextLayoutManager.mm
+--- a/node_modules/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/ios/react/renderer/textlayoutmanager/RCTTextLayoutManager.mm
++++ b/node_modules/react-native/ReactCommon/react/renderer/textlayoutmanager/platform/ios/react/renderer/textlayoutmanager/RCTTextLayoutManager.mm
+@@ -389,3 +389,4 @@
++  CGFloat epsilon = 0.001;
+   size = (CGSize){
+-      ceil(size.width * layoutContext.pointScaleFactor) / layoutContext.pointScaleFactor,
+-      ceil(size.height * layoutContext.pointScaleFactor) / layoutContext.pointScaleFactor};
++      ceil((size.width + epsilon) * layoutContext.pointScaleFactor) / layoutContext.pointScaleFactor,
++      ceil((size.height + epsilon) * layoutContext.pointScaleFactor) / layoutContext.pointScaleFactor};

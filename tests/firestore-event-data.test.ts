@@ -74,6 +74,19 @@ describe('sanitizeEventRoleForFirestore', () => {
     });
   });
 
+  it('preserves and deduplicates removed-worker tombstones during role edits', () => {
+    const role = sanitizeEventRoleForFirestore({
+      id: 'role-1',
+      name: 'Box Office',
+      assignedWorkerIds: [],
+      removedWorkerIds: ['worker-1', 'worker-1', 'worker-2', ''],
+      openSlots: 1,
+      tasks: [],
+    });
+
+    expect(role.removedWorkerIds).toEqual(['worker-1', 'worker-2']);
+  });
+
   it('builds an assignable open role without changing template-shaped task input', () => {
     const tasks = [{ id: 'task-1', name: 'Briefing', expectedOffsetMinutes: 15 }];
     const role = buildNewEventRoleForFirestore('role-new', ' Floor Crew ', tasks, Date.parse('2026-07-31T10:00:00.000Z'));

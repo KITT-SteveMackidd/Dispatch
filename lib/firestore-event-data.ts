@@ -36,6 +36,7 @@ export function sanitizeEventRoleForFirestore(role: EventRole, tasks = role.task
     waitlistWorkerIds: [...new Set((role.waitlistWorkerIds || []).filter(Boolean))],
     eligibleWaitlistWorkerIds: [...new Set((role.eligibleWaitlistWorkerIds || []).filter(Boolean))],
     waitlistInviteWorkerIds: [...new Set((role.waitlistInviteWorkerIds || []).filter(Boolean))],
+    removedWorkerIds: [...new Set((role.removedWorkerIds || []).filter(Boolean))],
     openSlots: Number.isFinite(role.openSlots) ? Math.max(0, role.openSlots) : 0,
     tasks: (tasks || []).map(sanitizeEventTaskForFirestore),
   };
@@ -75,6 +76,7 @@ export function buildNewEventRoleForFirestore(
     waitlistWorkerIds: [],
     eligibleWaitlistWorkerIds: [],
     waitlistInviteWorkerIds: [],
+    removedWorkerIds: [],
     openSlots: 1,
     tasks: tasks.map((task, index) => buildEventTaskFromTemplate(task, eventStartsAtMs, index)),
   });

@@ -335,8 +335,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authUser]);
 
+  const signOutExistingUserBeforeCredential = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    await unregisterCurrentDevicePushToken(currentUser.uid);
+    await firebaseSignOut(auth);
+    forgetRegisteredDevicePushToken();
+    setAuthUser(null);
+    setEmailVerified(false);
+    setProfile(null);
+    setNeedsProfile(false);
+  };
+
   const signIn = async (email: string, password: string) => {
     assertFirebaseConfigured();
+    await signOutExistingUserBeforeCredential();
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
 
     if (!cred.user.emailVerified) {
@@ -381,6 +395,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async (params: { idToken: string; accessToken?: string; displayName?: string; mode: SocialAuthMode }): Promise<SocialAuthResult> => {
     assertFirebaseConfigured();
+    await signOutExistingUserBeforeCredential();
     const credential = GoogleAuthProvider.credential(params.idToken, params.accessToken);
     const cred = await signInWithCredential(auth, credential);
     const displayName = cleanDisplayName(params.displayName || cred.user.displayName, cred.user.email);
@@ -409,6 +424,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithApple = async (params: { idToken: string; rawNonce: string; displayName?: string; mode: SocialAuthMode }): Promise<SocialAuthResult> => {
     assertFirebaseConfigured();
+    await signOutExistingUserBeforeCredential();
     const provider = new OAuthProvider('apple.com');
     const credential = provider.credential({ idToken: params.idToken, rawNonce: params.rawNonce });
     const cred = await signInWithCredential(auth, credential);
@@ -443,6 +459,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = async (params: { email: string; password: string; displayName: string }) => {
     assertFirebaseConfigured();
+    await signOutExistingUserBeforeCredential();
     const normalizedEmail = params.email.trim();
     const trimmedName = params.displayName.trim();
 
@@ -566,7 +583,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const revokeSession = async () => {
     assertFirebaseConfigured();
-    if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid).catch(() => undefined);
+    if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);
@@ -596,7 +613,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     assertFirebaseConfigured();
-    if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid).catch(() => undefined);
+    if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);

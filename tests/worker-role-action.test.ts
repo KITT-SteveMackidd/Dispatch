@@ -4,6 +4,7 @@ import {
   getWorkerRoleAction,
   getWorkerRoleActionFromNotification,
   getWorkerVisibleRoles,
+  isWorkerRoleNotificationVisible,
   keepLatestWorkerRoleNotifications,
   mergeWorkerRoleAvailability,
 } from '../lib/worker-role-action';
@@ -80,5 +81,83 @@ describe('getWorkerRoleAction', () => {
 
     expect(getWorkerVisibleRoles(roles, 'worker-1', ['pending']).map((role) => role.id))
       .toEqual(['assigned', 'pending', 'waitlisted']);
+  });
+});
+
+describe('isWorkerRoleNotificationVisible', () => {
+  it('keeps pending, declined-eligible, and waitlisted role states visible', () => {
+    expect(isWorkerRoleNotificationVisible({
+      action: 'assign',
+      status: 'pending',
+    }, 'worker-1')).toBe(true);
+
+    expect(isWorkerRoleNotificationVisible({
+      action: 'assign',
+      status: 'declined',
+      roleEligibleWaitlistWorkerIds: ['worker-1'],
+    }, 'worker-1')).toBe(true);
+
+    expect(isWorkerRoleNotificationVisible({
+      action: 'assign',
+      status: 'waitlisted',
+      roleWaitlistWorkerIds: ['worker-1'],
+    }, 'worker-1')).toBe(true);
+  });
+
+  it('hides a backend-synced declined invite after every live role membership is removed', () => {
+    expect(isWorkerRoleNotificationVisible({
+      action: 'assign',
+      status: 'declined',
+      roleAssignedWorkerIds: [],
+      roleWaitlistWorkerIds: [],
+      roleEligibleWaitlistWorkerIds: [],
+      roleWaitlistInviteWorkerIds: [],
+    }, 'worker-1')).toBe(false);
+  });
+
+  it('lets a removal tombstone override a duplicate pending invite from another Manager', () => {
+    const notifications = keepLatestWorkerRoleNotifications([
+      {
+        id: 'other-manager-pending',
+        managerId: 'manager-2',
+        eventId: 'event-1',
+        roleId: 'role-1',
+        action: 'assign' as const,
+        status: 'pending' as const,
+        roleRemovedWorkerIds: ['worker-1'],
+      },
+      {
+        id: 'accepted-then-removed',
+        managerId: 'manager-1',
+        eventId: 'event-1',
+        roleId: 'role-1',
+        action: 'assign' as const,
+        status: 'declined' as const,
+        roleRemovedWorkerIds: ['worker-1'],
+      },
+    ]);
+
+    expect(notifications.map((notification) => notification.id)).toEqual(['other-manager-pending']);
+    expect(isWorkerRoleNotificationVisible(notifications[0], 'worker-1')).toBe(false);
+  });
+
+  it('shows a new pending invite after the Manager clears the removal tombstone', () => {
+    expect(isWorkerRoleNotificationVisible({
+      action: 'assign',
+      status: 'pending',
+      roleRemovedWorkerIds: [],
+    }, 'worker-1')).toBe(true);
+  });
+
+  it('hides accepted and remove notifications from invite cards', () => {
+    expect(isWorkerRoleNotificationVisible({
+      action: 'assign',
+      status: 'accepted',
+    }, 'worker-1')).toBe(false);
+    expect(isWorkerRoleNotificationVisible({
+      action: 'remove',
+      status: 'declined',
+      roleEligibleWaitlistWorkerIds: ['worker-1'],
+    }, 'worker-1')).toBe(false);
   });
 });
