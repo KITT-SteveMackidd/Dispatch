@@ -6,7 +6,7 @@ diff --git a/node_modules/react-native/Libraries/AppDelegate/RCTReactNativeFacto
  @property (nonatomic, nullable) RCTSurfacePresenterBridgeAdapter *bridgeAdapter;
  
 -@property (nonatomic, weak) id<RCTReactNativeFactoryDelegate> delegate;
-+@property (nonatomic, strong) id<RCTReactNativeFactoryDelegate> delegate;
++@property (nonatomic, strong, nullable) id<RCTReactNativeFactoryDelegate> delegate;
  
  @end
  
