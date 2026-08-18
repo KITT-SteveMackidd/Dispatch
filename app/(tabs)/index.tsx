@@ -95,6 +95,7 @@ const INITIAL_DRAWER: DrawerState = {
 };
 
 type EventRoleEditorState = DrawerState & {
+  source: 'event' | 'create-event';
   mode: 'add' | 'edit';
   name: string;
   editingTasks: boolean;
@@ -106,6 +107,7 @@ const INITIAL_EVENT_ROLE_EDITOR: EventRoleEditorState = {
   open: false,
   eventId: null,
   roleId: null,
+  source: 'event',
   mode: 'edit',
   name: '',
   editingTasks: false,
@@ -128,13 +130,6 @@ type TemplateRolePreview = {
 
 type EventTemplateOption = EventTemplate;
 
-type CreateEventRoleEditorState = {
-  open: boolean;
-  mode: 'add' | 'edit';
-  roleId: string | null;
-  name: string;
-};
-
 type EventEditState = {
   open: boolean;
   eventId: string | null;
@@ -156,13 +151,6 @@ const INITIAL_EVENT_EDIT_STATE: EventEditState = {
   location: '',
   locationPlaceId: '',
   description: '',
-};
-
-const INITIAL_CREATE_EVENT_ROLE_EDITOR: CreateEventRoleEditorState = {
-  open: false,
-  mode: 'add',
-  roleId: null,
-  name: '',
 };
 
 type TemplateRoleDraft = {
@@ -402,7 +390,6 @@ export default function EventsScreen() {
   const [eventLocationPlaceIdDraft, setEventLocationPlaceIdDraft] = useState('');
   const [eventDescriptionDraft, setEventDescriptionDraft] = useState('');
   const [createEventRolesDraft, setCreateEventRolesDraft] = useState<CreateEventRoleDraft[]>([]);
-  const [createEventRoleEditor, setCreateEventRoleEditor] = useState<CreateEventRoleEditorState>(INITIAL_CREATE_EVENT_ROLE_EDITOR);
   const [eventEdit, setEventEdit] = useState<EventEditState>(INITIAL_EVENT_EDIT_STATE);
   const [eventEditBusy, setEventEditBusy] = useState(false);
   const [optimisticCreatedEvents, setOptimisticCreatedEvents] = useState<DispatchEvent[]>([]);
@@ -2045,6 +2032,7 @@ export default function EventsScreen() {
       open: true,
       eventId: event.id,
       roleId: role.id,
+      source: 'event',
       mode: 'edit',
       name: role.name,
       editingTasks: false,
@@ -2054,9 +2042,14 @@ export default function EventsScreen() {
   };
 
   const closeEventRoleEditor = () => {
+    const returnToCreateEvent = eventRoleEditor.source === 'create-event';
     setEventRoleTaskEditor(INITIAL_TEMPLATE_TASK_EDITOR);
     setTemplateTaskOffsetSelectorPart(null);
     setEventRoleEditor(INITIAL_EVENT_ROLE_EDITOR);
+    if (returnToCreateEvent) {
+      resumeCreateEventAfterRoleEditorRef.current = true;
+      setCreateEventDrawerOpen(true);
+    }
   };
 
   const openEventRoleTaskEditor = () => {
@@ -2087,6 +2080,13 @@ export default function EventsScreen() {
       attachments: [...(task.attachments || [])],
     });
     setTemplateTaskOffsetSelectorPart(null);
+  };
+
+  const removeEventRoleTaskEditor = (taskId: string) => {
+    setEventRoleEditor((current) => ({
+      ...current,
+      tasks: current.tasks.filter((task) => task.id !== taskId),
+    }));
   };
 
   const closeEventRoleTaskEditor = () => {
@@ -2219,29 +2219,51 @@ export default function EventsScreen() {
   };
 
   const saveEventRoleEditor = async () => {
-    if (!profile?.uid || !eventRoleEditor.eventId) return;
-
     const nextName = eventRoleEditor.name.trim();
     if (!nextName.length) {
       Alert.alert('Role name required', 'Please enter a role name.');
       return;
     }
 
+    const tasks = eventRoleEditor.tasks.map((task, index) => {
+      const { description: _description, ...taskWithoutDescription } = task;
+      const description = task.description?.trim() || '';
+      return {
+        ...taskWithoutDescription,
+        name: task.name.trim() || `Task ${index + 1}`,
+        ...(description ? { description } : {}),
+      };
+    });
+
+    if (eventRoleEditor.source === 'create-event') {
+      if (eventRoleEditor.mode === 'add') {
+        setCreateEventRolesDraft((current) => [
+          ...current,
+          {
+            id: `role-${Date.now()}-${current.length + 1}`,
+            name: nextName,
+            tasks,
+            assignedWorkerId: null,
+          },
+        ]);
+      } else if (eventRoleEditor.roleId) {
+        setCreateEventRolesDraft((current) => current.map((role) => (
+          role.id === eventRoleEditor.roleId
+            ? { ...role, name: nextName, tasks }
+            : role
+        )));
+      }
+      closeEventRoleEditor();
+      return;
+    }
+
+    if (!profile?.uid || !eventRoleEditor.eventId) return;
+
     const busyKey = `${eventRoleEditor.eventId}:${eventRoleEditor.roleId || 'new'}:${eventRoleEditor.mode}`;
     if (roleMutationBusyKey === busyKey) return;
 
     try {
       setRoleMutationBusyKey(busyKey);
-      const tasks = eventRoleEditor.tasks.map((task, index) => {
-        const { description: _description, ...taskWithoutDescription } = task;
-        const description = task.description?.trim() || '';
-        return {
-          ...taskWithoutDescription,
-          name: task.name.trim() || `Task ${index + 1}`,
-          ...(description ? { description } : {}),
-        };
-      });
-
       if (eventRoleEditor.mode === 'add') {
         await addEventRole({
           eventId: eventRoleEditor.eventId,
@@ -2612,10 +2634,24 @@ export default function EventsScreen() {
   const selectedTemplate = templateOptions.find((template) => template.id === selectedTemplateId) || templateOptions[0];
   const rolePickerTarget = createEventRolesDraft.find((role) => role.id === rolePickerRoleId) || null;
   const isEditingTemplate = !!editingTemplateId;
+  const isCreateEventRoleEditor = eventRoleEditor.source === 'create-event';
+  const createEventRoleEditorIndex = eventRoleEditor.roleId
+    ? createEventRolesDraft.findIndex((role) => role.id === eventRoleEditor.roleId)
+    : createEventRolesDraft.length;
+  const createEventRoleEditorLabel = `Role ${Math.max(0, createEventRoleEditorIndex) + 1}`;
 
   const openAddCreateEventRoleEditor = () => {
     setCreateEventDrawerOpen(false);
-    setCreateEventRoleEditor({ open: true, mode: 'add', roleId: null, name: '' });
+    setEventRoleEditor({
+      open: true,
+      eventId: null,
+      roleId: null,
+      source: 'create-event',
+      mode: 'add',
+      name: `Role ${createEventRolesDraft.length + 1}`,
+      editingTasks: false,
+      tasks: [],
+    });
   };
 
   const openAddEventRoleEditor = (event: DispatchEvent) => {
@@ -2623,6 +2659,7 @@ export default function EventsScreen() {
       open: true,
       eventId: event.id,
       roleId: null,
+      source: 'event',
       mode: 'add',
       name: '',
       editingTasks: false,
@@ -2633,50 +2670,30 @@ export default function EventsScreen() {
 
   const openEditCreateEventRoleEditor = (role: CreateEventRoleDraft) => {
     setCreateEventDrawerOpen(false);
-    setCreateEventRoleEditor({ open: true, mode: 'edit', roleId: role.id, name: role.name });
-  };
-
-  const closeCreateEventRoleEditor = () => {
-    setCreateEventRoleEditor(INITIAL_CREATE_EVENT_ROLE_EDITOR);
-    resumeCreateEventAfterRoleEditorRef.current = true;
-    setCreateEventDrawerOpen(true);
-  };
-
-  const saveCreateEventRoleEditor = () => {
-    const nextName = createEventRoleEditor.name.trim();
-    if (!nextName.length) {
-      Alert.alert('Role name required', 'Please enter a role name.');
-      return;
-    }
-
-    if (createEventRoleEditor.mode === 'add') {
-      setCreateEventRolesDraft((prev) => [
-        ...prev,
-        {
-          id: `role-${Date.now()}-${prev.length + 1}`,
-          name: nextName,
-          tasks: [],
-          assignedWorkerId: null,
-        },
-      ]);
-      closeCreateEventRoleEditor();
-      return;
-    }
-
-    if (!createEventRoleEditor.roleId) return;
-    setCreateEventRolesDraft((prev) => prev.map((role) => (role.id === createEventRoleEditor.roleId ? { ...role, name: nextName } : role)));
-    closeCreateEventRoleEditor();
+    setEventRoleEditor({
+      open: true,
+      eventId: null,
+      roleId: role.id,
+      source: 'create-event',
+      mode: 'edit',
+      name: role.name,
+      editingTasks: false,
+      tasks: role.tasks.map((task) => ({
+        ...task,
+        attachments: task.attachments?.map((attachment) => ({ ...attachment })),
+      })),
+    });
   };
 
   const deleteCreateEventRoleDraft = (roleId: string) => {
-    const deletingFromEditor = createEventRoleEditor.open && createEventRoleEditor.roleId === roleId;
     setCreateEventRolesDraft((prev) => prev.filter((role) => role.id !== roleId));
     setRolePickerRoleId((prev) => (prev === roleId ? null : prev));
-    setCreateEventRoleEditor((prev) => (prev.roleId === roleId ? INITIAL_CREATE_EVENT_ROLE_EDITOR : prev));
-    if (deletingFromEditor) {
-      resumeCreateEventAfterRoleEditorRef.current = true;
-      setCreateEventDrawerOpen(true);
-    }
+  };
+
+  const deleteCreateEventRoleFromEditor = () => {
+    if (!eventRoleEditor.roleId || eventRoleEditor.source !== 'create-event') return;
+    deleteCreateEventRoleDraft(eventRoleEditor.roleId);
+    closeEventRoleEditor();
   };
 
   const assignWorkerToCreateEventRole = (workerId: string) => {
@@ -2838,7 +2855,7 @@ export default function EventsScreen() {
     setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
     setCreateEventRolesDraft(buildCreateEventRoleDrafts(selectedTemplate));
     setRolePickerRoleId(null);
-    setCreateEventRoleEditor(INITIAL_CREATE_EVENT_ROLE_EDITOR);
+    setEventRoleEditor(INITIAL_EVENT_ROLE_EDITOR);
   }, [createEventDrawerOpen, selectedTemplate?.id]);
 
   const handleRoleNotificationResponse = async (notificationId: string, response: 'accept' | 'decline') => {
@@ -3543,7 +3560,9 @@ export default function EventsScreen() {
         <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
                 {eventRoleTaskEditor.open
                   ? (eventRoleTaskEditor.mode === 'edit' ? 'Update the task details, then save your changes.' : 'Add the task details, then confirm it for this role.')
-                  : eventRoleEditorTarget?.event.name || events.find((event) => event.id === eventRoleEditor.eventId)?.name || 'Event role'}
+                  : isCreateEventRoleEditor
+                    ? 'Configure the role and its tasks before creating the event.'
+                    : eventRoleEditorTarget?.event.name || events.find((event) => event.id === eventRoleEditor.eventId)?.name || 'Event role'}
         </Text>
         {eventRoleTaskEditor.open ? (
                 <KeyboardAwareDrawerScrollView
@@ -3693,10 +3712,22 @@ export default function EventsScreen() {
                   contentContainerStyle={styles.eventRoleEditorScrollContent}>
                   <View style={[styles.templateRoleEditor, isDarkMode ? styles.templateRoleEditorDark : styles.templateRoleEditorLight]}>
                     <View style={styles.templateRoleHeader}>
-                      <Text style={[styles.rolePreviewName, isDarkMode ? styles.createEventRoleNameDark : styles.createEventRoleNameLight]}>{eventRoleEditor.mode === 'add' ? 'New Role' : 'Role'}</Text>
-                      <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>
-                        {eventRoleEditor.tasks.length} tasks
+                      <Text style={[styles.rolePreviewName, isDarkMode ? styles.createEventRoleNameDark : styles.createEventRoleNameLight]}>
+                        {isCreateEventRoleEditor ? createEventRoleEditorLabel : eventRoleEditor.mode === 'add' ? 'New Role' : 'Role'}
                       </Text>
+                      {isCreateEventRoleEditor && eventRoleEditor.mode === 'edit' ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Delete ${eventRoleEditor.name || createEventRoleEditorLabel}`}
+                          style={[styles.templateActionButton, isDarkMode ? styles.createEventDeleteButtonDark : styles.createEventDeleteButtonLight]}
+                          onPress={deleteCreateEventRoleFromEditor}>
+                          <Text style={[styles.templateActionButtonText, isDarkMode ? styles.createEventDeleteButtonTextDark : styles.createEventDeleteButtonTextLight]}>Delete</Text>
+                        </Pressable>
+                      ) : (
+                        <Text style={[styles.rolePreviewMeta, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>
+                          {eventRoleEditor.tasks.length} tasks
+                        </Text>
+                      )}
                     </View>
 
                     <KeyboardAwareDrawerTextInput
@@ -3704,6 +3735,7 @@ export default function EventsScreen() {
                       onChangeText={(value) => setEventRoleEditor((current) => ({ ...current, name: value }))}
                       placeholder="Role name"
                       placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.45)' : '#64748b'}
+                      autoFocus={isCreateEventRoleEditor}
                       style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
                     />
 
@@ -3726,9 +3758,20 @@ export default function EventsScreen() {
                               </View>
                               <View style={styles.templateTaskSummaryRight}>
                                 <Pressable
-                                  style={[styles.templateActionButton, isDarkMode ? styles.createEventEditButtonDark : styles.createEventEditButtonLight]}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Edit ${task.name || `task ${taskIndex + 1}`}`}
+                                  hitSlop={6}
+                                  style={[styles.templateTaskIconButton, isDarkMode ? styles.createEventEditButtonDark : styles.createEventEditButtonLight]}
                                   onPress={() => editEventRoleTaskEditor(task)}>
-                                  <Text style={[styles.templateActionButtonText, isDarkMode ? styles.createEventEditButtonTextDark : styles.createEventEditButtonTextLight]}>Edit</Text>
+                                  <MaterialIcons name="edit" size={20} color="#F98D2F" />
+                                </Pressable>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Delete ${task.name || `task ${taskIndex + 1}`}`}
+                                  hitSlop={6}
+                                  style={[styles.templateTaskIconButton, isDarkMode ? styles.createEventDeleteButtonDark : styles.createEventDeleteButtonLight]}
+                                  onPress={() => removeEventRoleTaskEditor(task.id)}>
+                                  <MaterialIcons name="delete-outline" size={20} color={isDarkMode ? '#12274D' : '#F7F7F7'} />
                                 </Pressable>
                                 {task.attachments?.length ? (
                                   <Pressable onPress={() => openTaskAttachment(task.name || `Task ${taskIndex + 1}`, task.attachments || [])} hitSlop={6}>
@@ -4090,45 +4133,6 @@ export default function EventsScreen() {
             <Pressable style={styles.drawerClose} onPress={() => setRolePickerRoleId(null)}>
               <Text style={styles.drawerCloseText}>Done</Text>
             </Pressable>
-      </KeyboardAwareDrawer>
-
-      <KeyboardAwareDrawer
-        visible={createEventRoleEditor.open}
-        onClose={closeCreateEventRoleEditor}
-        backgroundColor={drawerSurfaceColor}
-        surfaceStyle={[styles.drawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
-        <KeyboardAwareDrawerScrollView>
-            <Text style={[styles.drawerTitle, isDarkMode ? styles.drawerTitleDark : styles.drawerTitleLight]}>
-              {createEventRoleEditor.mode === 'add' ? 'Add Role' : 'Edit Role'}
-            </Text>
-            <Text style={[styles.drawerSub, isDarkMode ? styles.drawerSubDark : styles.drawerSubLight]}>
-              {createEventRoleEditor.mode === 'add' ? 'Create a role for this event.' : 'Update this event role name.'}
-            </Text>
-            <View style={styles.formField}>
-              <Text style={[styles.templateLabel, isDarkMode ? styles.templateLabelDark : styles.templateLabelLight]}>Role name</Text>
-              <KeyboardAwareDrawerTextInput
-                value={createEventRoleEditor.name}
-                onChangeText={(value) => setCreateEventRoleEditor((prev) => ({ ...prev, name: value }))}
-                placeholder="Example: Security"
-                placeholderTextColor={isDarkMode ? '#F4F8FF' : '#94a3b8'}
-                autoFocus
-                style={[styles.templateInput, isDarkMode ? styles.templateInputDark : styles.templateInputLight]}
-              />
-            </View>
-            <Pressable style={styles.drawerClose} onPress={saveCreateEventRoleEditor}>
-              <Text style={styles.drawerCloseText}>{createEventRoleEditor.mode === 'add' ? 'Add role' : 'Save role'}</Text>
-            </Pressable>
-            {createEventRoleEditor.mode === 'edit' && createEventRoleEditor.roleId ? (
-              <Pressable
-                style={[styles.drawerButton, styles.drawerDestructiveButton]}
-                onPress={() => deleteCreateEventRoleDraft(createEventRoleEditor.roleId as string)}>
-                <Text style={styles.drawerDestructiveButtonText}>Delete role</Text>
-              </Pressable>
-            ) : null}
-            <Pressable style={[styles.drawerSecondaryButton, isDarkMode ? styles.drawerSecondaryButtonDark : styles.drawerSecondaryButtonLight]} onPress={closeCreateEventRoleEditor}>
-              <Text style={[styles.drawerSecondaryButtonText, isDarkMode ? styles.drawerSecondaryButtonTextDark : styles.drawerSecondaryButtonTextLight]}>Cancel</Text>
-            </Pressable>
-        </KeyboardAwareDrawerScrollView>
       </KeyboardAwareDrawer>
 
       <KeyboardAwareDrawer
