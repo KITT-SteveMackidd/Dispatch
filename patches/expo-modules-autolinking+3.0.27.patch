@@ -1,7 +1,8 @@
 diff --git a/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js b/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js
+index 0fe4be5..34a1bbc 100644
 --- a/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js
 +++ b/node_modules/expo-modules-autolinking/build/commands/generateModulesProviderCommand.js
-@@ -26,8 +26,12 @@ function generateModulesProviderCommand(cli) {
+@@ -24,8 +24,12 @@ function generateModulesProviderCommand(cli) {
              appRoot: commandArguments.appRoot ?? (await autolinkingOptionsLoader.getAppRoot()),
          });
          const expoModulesResolveResults = await (0, resolveModules_1.resolveModulesAsync)(expoModulesSearchResults, autolinkingOptions);
@@ -17,9 +18,10 @@ diff --git a/node_modules/expo-modules-autolinking/build/commands/generateModule
              platform,
              targetPath: commandArguments.target,
 diff --git a/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts b/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts
+index cfb219d..58ab528 100644
 --- a/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts
 +++ b/node_modules/expo-modules-autolinking/src/commands/generateModulesProviderCommand.ts
-@@ -50,10 +50,12 @@ export function generateModulesProviderCommand(cli: commander.CommanderStatic) {
+@@ -47,10 +47,12 @@ export function generateModulesProviderCommand(cli: commander.CommanderStatic) {
            autolinkingOptions
          );
  

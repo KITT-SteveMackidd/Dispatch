@@ -526,7 +526,7 @@ async function loadActiveInvite(params: { managerId: string; teamId?: string; em
 }
 
 function getInviteAppLink() {
-  return process.env.EXPO_PUBLIC_DISPATCH_APP_LINK?.trim() || 'https://dispatch.app/download';
+  return process.env.EXPO_PUBLIC_DISPATCH_APP_LINK?.trim() || 'https://dispatchcrewmanager.com';
 }
 
 async function loadOrganisationManagerIds(organizationId?: string | null) {
@@ -1692,7 +1692,7 @@ export async function inviteWorkerToTeam(params: { managerId: string; teamId: st
     return { inviteId: existingInvite.id, queued: existingInvite.status !== 'delivered', via: existingInvite.emailDelivery || 'firebase-mail-collection', reused: true };
   }
 
-  const appLink = (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatch.app/download';
+  const appLink = (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatchcrewmanager.com';
   const { inviteRef } = await createWorkerInviteRecord({
     managerId,
     teamId,
@@ -1895,7 +1895,7 @@ export async function retryWorkerInviteDelivery(params: { managerId: string; inv
   if (invite.status === 'revoked' || invite.status === 'cancelled') throw new Error('Revoked or cancelled invites cannot be retried');
 
   const teamName = invite.teamName || 'Dispatch Team';
-  const appLink = invite.appLink || (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatch.app/download';
+  const appLink = invite.appLink || (process.env.EXPO_PUBLIC_DISPATCH_APP_LINK || '').trim() || 'https://dispatchcrewmanager.com';
 
   const expired = await expireInviteIfNeeded(inviteRef, invite);
   const refreshedInvite = expired ? { ...invite, status: 'expired' as WorkerInviteStatus } : invite;

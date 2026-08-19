@@ -11,7 +11,7 @@ describe('buildWorkerInviteEmailDocument', () => {
   it('creates a solo invite without undefined Firestore fields', () => {
     const document = buildWorkerInviteEmailDocument({
       email: 'worker@example.com',
-      appLink: 'https://dispatch.app/download',
+      appLink: 'https://dispatchcrewmanager.com',
       inviteId: 'invite-1',
       managerId: 'manager-1',
     });
@@ -26,7 +26,7 @@ describe('buildWorkerInviteEmailDocument', () => {
       email: 'worker@example.com',
       teamName: undefined,
       teamId: 'team-1',
-      appLink: 'https://dispatch.app/download',
+      appLink: 'https://dispatchcrewmanager.com',
       inviteId: 'invite-2',
       managerId: 'manager-1',
     });
