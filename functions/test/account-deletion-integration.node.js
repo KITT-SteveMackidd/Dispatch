@@ -150,9 +150,11 @@ class FakeStorageFile {
 }
 
 class FakeStorageBucket {
-  constructor(names) {
+  constructor(names, lateChatFile = null) {
     this.files = new Set(names);
     this.deleted = new Set();
+    this.lateChatFile = lateChatFile;
+    this.chatListCount = 0;
   }
 
   file(name) {
@@ -160,9 +162,14 @@ class FakeStorageBucket {
   }
 
   async getFiles({ prefix }) {
-    return [[...this.files]
+    const files = [...this.files]
       .filter((name) => name.startsWith(prefix))
-      .map((name) => new FakeStorageFile(this, name))];
+      .map((name) => new FakeStorageFile(this, name));
+    if (prefix === 'chatAttachments/' && this.chatListCount === 0 && this.lateChatFile) {
+      this.files.add(this.lateChatFile);
+    }
+    if (prefix === 'chatAttachments/') this.chatListCount += 1;
+    return [files];
   }
 }
 
@@ -176,6 +183,7 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
       organizationId: 'org-1',
       organizationName: 'Steve Manager Events',
       pushTokens: ['ExponentPushToken[delete]'],
+      avatarStoragePath: 'chatAttachments/organization:org-1:all/manager-keep/keep.jpg',
     },
     'users/manager-keep': {
       displayName: 'Keep Manager',
@@ -191,20 +199,71 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
       scheduledEventReminderKeys: [
         'event-delete:two-hours',
         'event-orphan:two-hours',
+        'event-orphaned:two-hours',
         'event-keep:two-hours',
       ],
     },
     'users/manager-other': { displayName: 'Other', role: 'manager', organizationId: 'org-2' },
     'organizations/org-1': {
       name: 'Steve Manager Events',
-      managerIds: [deletingUid, 'manager-keep'],
+      managerIds: [deletingUid, 'manager-stale', 'manager-keep'],
       workerIds: ['worker-1'],
       createdBy: deletingUid,
+      billingManagerId: deletingUid,
+      billingManagerTransferredBy: deletingUid,
     },
-    'organizations/org-2': { name: 'Other Org', managerIds: ['manager-other'], workerIds: [] },
+    'organizations/org-2': { name: 'Steve Manager Other Org', managerIds: ['manager-other'], workerIds: [] },
+    'organizationBilling/org-1': {
+      planId: 'production',
+      billingPeriod: 'annual',
+      status: 'active',
+      accessMode: 'full',
+      seatLimit: 50,
+      purchaserUserId: deletingUid,
+      sourceStore: 'app_store',
+      productIdentifier: 'dispatch_production_50_annual',
+      willRenew: true,
+      pendingPlanId: 'crew',
+    },
+    'organizationBilling/org-2': {
+      planId: 'crew',
+      billingPeriod: 'monthly',
+      status: 'grace',
+      accessMode: 'full',
+      seatLimit: 20,
+      purchaserUserId: deletingUid,
+      sourceStore: 'play_store',
+      productIdentifier: 'dispatch_crew_20_monthly',
+      willRenew: true,
+    },
+    'billingAuditEvents/audit-scrub': {
+      organizationId: 'org-1',
+      actorUserId: 'manager-keep',
+      targetUserId: deletingUid,
+      previousBillingManagerId: deletingUid,
+      nextBillingManagerId: 'manager-keep',
+    },
+    'revenueCatCustomers/customer-delete': {
+      purchaserUserId: deletingUid,
+      organizationId: 'org-1',
+      active: true,
+      state: 'active',
+    },
+    'revenueCatCustomers/customer-delete-second': {
+      purchaserUserId: deletingUid,
+      organizationId: 'org-2',
+      active: true,
+      state: 'active',
+    },
+    'revenueCatWebhookEvents/transfer-scrub': {
+      organizationId: 'org-2',
+      purchaserUserId: deletingUid,
+      sourcePurchaserUserIds: [deletingUid, 'manager-other'],
+      destinationPurchaserUserIds: ['manager-other', deletingUid],
+    },
     'teams/team-1': {
       managerId: deletingUid,
-      managerIds: [deletingUid, 'manager-keep'],
+      managerIds: [deletingUid, 'manager-stale', 'manager-keep'],
       organizationId: 'org-1',
       organizationName: 'Steve Manager Events',
       name: 'Steve Manager Team',
@@ -313,6 +372,11 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
       attachments: [{ id: `chatAttachments/organization:org-1:all/${deletingUid}/photo.jpg` }],
       createdAt: new Date('2026-08-07T10:00:00Z'),
     },
+    'chatThreads/organization:org-1:all/messages/x': {
+      senderId: deletingUid,
+      text: 'Short attacker-controlled message ID',
+      createdAt: new Date('2026-08-07T08:30:00Z'),
+    },
     'chatThreads/organization:org-1:all/messages/keep-message': {
       senderId: 'manager-keep',
       senderName: 'Keep Manager',
@@ -339,15 +403,22 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
     [`dispatchBetaChecklistRuns/${deletingUid}`]: { userId: deletingUid },
     [`dispatchBetaChecklistRuns/${deletingUid}/items/one`]: { done: true },
     'mail/mail-1': { to: ['steve+dispatch@example.com'], message: { text: 'Hello Steve Manager' } },
+    'mail/mail-deleted-invite': {
+      to: ['unrelated@example.com'],
+      dispatchInvite: { inviteId: 'invite-in' },
+      message: { text: 'Typed invitation provenance' },
+    },
+    'mail/mail-other': { to: ['other@example.com'], message: { text: 'Steve Manager ExponentPushToken[delete]' } },
     'mail/mail-1/delivery/status': { state: 'SUCCESS' },
     'pushDeliveries/push-1': { userId: deletingUid, deliveryId: 'delivery-1' },
     'pushTickets/ticket-1': { userId: deletingUid, deliveryId: 'delivery-1' },
   });
+  const lateChatFile = `chatAttachments/dm:${deletingUid}__worker-1/manager-keep/late.jpg`;
   const bucket = new FakeStorageBucket([
     `dispatchTemplateAttachments/${deletingUid}/task-1/brief.pdf`,
     `chatAttachments/organization:org-1:all/${deletingUid}/photo.jpg`,
     'chatAttachments/organization:org-1:all/manager-keep/keep.jpg',
-  ]);
+  ], lateChatFile);
 
   const result = await deleteDispatchUserData({
     db,
@@ -356,6 +427,7 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
     authUser: {
       uid: deletingUid,
       email: 'steve+dispatch@example.com',
+      emailVerified: true,
       displayName: 'Steve Manager',
       providerData: [],
     },
@@ -364,22 +436,51 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
   assert.equal(db.documents.has(`users/${deletingUid}`), false);
   assert.deepEqual(db.documents.get('organizations/org-1').managerIds, ['manager-keep']);
   assert.equal(db.documents.get('organizations/org-1').createdBy, 'manager-keep');
-  assert.equal(db.documents.get('organizations/org-1').name, 'Deleted user Events');
-  assert.equal(db.documents.get('users/worker-1').organizationName, 'Deleted user Events');
+  assert.equal(db.documents.get('organizations/org-1').billingManagerId, 'manager-keep');
+  assert.equal(db.documents.get('organizations/org-1').billingManagerTransferReason, 'account_deleted');
+  assert.equal('billingManagerTransferredBy' in db.documents.get('organizations/org-1'), false);
+  assert.equal(db.documents.get('organizations/org-1').name, 'Steve Manager Events');
+  assert.equal(db.documents.get('organizations/org-2').name, 'Steve Manager Other Org');
+  assert.equal(db.documents.get('organizationBilling/org-1').planId, 'free');
+  assert.equal(db.documents.get('organizationBilling/org-1').status, 'revoked');
+  assert.equal(db.documents.get('organizationBilling/org-1').accessMode, 'read_only');
+  assert.equal(db.documents.get('organizationBilling/org-1').seatLimit, 5);
+  assert.equal(db.documents.get('organizationBilling/org-1').purchaserUserId, null);
+  assert.equal(db.documents.get('organizationBilling/org-2').planId, 'free');
+  assert.equal(db.documents.get('organizationBilling/org-2').status, 'revoked');
+  assert.equal(db.documents.get('organizationBilling/org-2').accessMode, 'read_only');
+  assert.equal(db.documents.get('organizationBilling/org-2').purchaserUserId, null);
+  assert.equal('targetUserId' in db.documents.get('billingAuditEvents/audit-scrub'), false);
+  assert.equal('previousBillingManagerId' in db.documents.get('billingAuditEvents/audit-scrub'), false);
+  assert.equal(db.documents.get('billingAuditEvents/audit-scrub').actorUserId, 'manager-keep');
+  assert.equal(db.documents.has('revenueCatCustomers/customer-delete'), false);
+  assert.equal(db.documents.has('revenueCatCustomers/customer-delete-second'), false);
+  assert.equal('purchaserUserId' in db.documents.get('revenueCatWebhookEvents/transfer-scrub'), false);
+  assert.deepEqual(
+    db.documents.get('revenueCatWebhookEvents/transfer-scrub').sourcePurchaserUserIds,
+    ['manager-other']
+  );
+  assert.deepEqual(
+    db.documents.get('revenueCatWebhookEvents/transfer-scrub').destinationPurchaserUserIds,
+    ['manager-other']
+  );
+  assert.equal(db.documents.get('users/worker-1').organizationName, 'Steve Manager Events');
   assert.deepEqual(db.documents.get('users/worker-1').scheduledEventReminderKeys, [
     'event-delete:two-hours',
+    'event-orphaned:two-hours',
     'event-keep:two-hours',
   ]);
   assert.equal(db.documents.get('teams/team-1').managerId, 'manager-keep');
-  assert.equal(db.documents.get('teams/team-1').name, 'Deleted user Team');
+  assert.deepEqual(db.documents.get('teams/team-1').managerIds, ['manager-keep']);
+  assert.equal(db.documents.get('teams/team-1').name, 'Steve Manager Team');
   assert.equal(db.documents.get('events/event-keep').managerId, 'manager-keep');
-  assert.equal(db.documents.get('events/event-keep').name, 'Deleted user Launch');
+  assert.equal(db.documents.get('events/event-keep').name, 'Steve Manager Launch');
   assert.deepEqual(db.documents.get('events/event-keep').roles[0].tasks[0].attachments, []);
   assert.equal(db.documents.get('events/event-delete').managerId, 'manager-other');
   assert.equal(db.documents.has('events/event-orphan'), false);
   assert.equal(db.documents.get('eventTemplates/template-1').managerId, 'manager-keep');
   assert.equal(db.documents.get('workerInvites/invite-out').managerId, 'manager-keep');
-  assert.equal(db.documents.get('workerInvites/invite-out').statusReason, 'Invited by Deleted user');
+  assert.equal(db.documents.get('workerInvites/invite-out').statusReason, 'Invited by Steve Manager');
   assert.equal(db.documents.has('workerInvites/invite-in'), false);
   assert.equal(db.documents.has('workerInvites/invite-other-alias'), true);
   assert.equal(db.documents.get('managerInvites/manager-invite').inviterId, 'manager-keep');
@@ -387,33 +488,199 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
   assert.equal(db.documents.has('inviteTokens/invite-in'), false);
   assert.equal(db.documents.has('inviteTokens/invite-other-alias'), true);
   assert.equal(db.documents.get('roleAssignmentNotifications/role-note').managerId, 'manager-keep');
-  assert.equal(db.documents.get('roleAssignmentNotifications/role-note').eventName, 'Deleted user Launch');
+  assert.equal(db.documents.get('roleAssignmentNotifications/role-note').eventName, 'Steve Manager Launch');
   assert.equal(db.documents.has('userNotifications/delete-note'), false);
-  assert.equal(db.documents.get('userNotifications/redact-note').body, 'Deleted user accepted the invite.');
+  assert.equal(db.documents.get('userNotifications/redact-note').body, 'Steve Manager accepted the invite.');
 
   const sharedThread = db.documents.get('chatThreads/organization:org-1:all');
   assert.deepEqual(sharedThread.participants, ['manager-keep', 'worker-1']);
-  assert.equal(sharedThread.title, 'Deleted user Events');
-  assert.equal(sharedThread.lastMessage, 'Thanks Deleted user');
+  assert.equal(sharedThread.title, 'Steve Manager Events');
+  assert.equal(sharedThread.lastMessage, 'Thanks Steve Manager');
   assert.equal(db.documents.has('chatThreads/organization:org-1:all/messages/deleted-message'), false);
   assert.equal(
     db.documents.get('chatThreads/organization:org-1:all/messages/keep-message').text,
-    'Thanks Deleted user'
+    'Thanks Steve Manager'
   );
   assert.deepEqual(
     db.documents.get('chatThreads/organization:org-1:all/messages/keep-message').recipientIds,
     ['worker-1']
   );
-  assert.equal(db.documents.has(`chatThreads/dm:${deletingUid}__worker-1`), false);
+  assert.equal(db.documents.has(`chatThreads/dm:${deletingUid}__worker-1`), true);
+  assert.deepEqual(
+    db.documents.get(`chatThreads/dm:${deletingUid}__worker-1`).participants,
+    ['worker-1']
+  );
+  assert.equal(
+    db.documents.has(`chatThreads/dm:${deletingUid}__worker-1/messages/direct-message`),
+    true
+  );
   assert.equal(db.documents.has(`chatUnread/${deletingUid}__organization:org-1:all`), false);
   assert.equal(db.documents.get('chatUnread/worker-1__organization:org-1:all').unreadCount, 0);
   assert.equal(db.documents.has(`dispatchBetaChecklistRuns/${deletingUid}`), false);
   assert.equal(db.documents.has('mail/mail-1'), false);
+  assert.equal(db.documents.has('mail/mail-deleted-invite'), false);
+  assert.equal(db.documents.has('mail/mail-other'), true);
   assert.equal(db.documents.has('pushDeliveries/push-1'), false);
   assert.equal(db.documents.has('pushTickets/ticket-1'), false);
   assert.equal(bucket.deleted.has(`dispatchTemplateAttachments/${deletingUid}/task-1/brief.pdf`), true);
   assert.equal(bucket.deleted.has(`chatAttachments/organization:org-1:all/${deletingUid}/photo.jpg`), true);
+  assert.equal(bucket.deleted.has(lateChatFile), false);
+  assert.equal(bucket.files.has(lateChatFile), true);
   assert.equal(bucket.files.has('chatAttachments/organization:org-1:all/manager-keep/keep.jpg'), true);
   assert.ok(result.firestoreDocumentsDeleted > 0);
   assert.ok(result.firestoreDocumentsUpdated > 0);
+});
+
+test('deleteDispatchUserData preserves worker-only organizations in read-only recovery and deletes empty organizations', async () => {
+  const deletingUid = 'sole-manager-delete';
+  const db = new FakeFirestore({
+    [`users/${deletingUid}`]: {
+      displayName: 'Only Manager',
+      email: 'only.manager@example.com',
+      role: 'manager',
+      organizationId: 'org-workers',
+      organizationName: 'Worker Organization',
+    },
+    'users/worker-keep': {
+      displayName: 'Accepted Worker',
+      role: 'worker',
+      organizationId: 'org-workers',
+      organizationName: 'Worker Organization',
+    },
+    'organizations/org-workers': {
+      name: 'Worker Organization',
+      managerIds: [deletingUid, 'stale-manager'],
+      workerIds: ['worker-keep', 'stale-worker'],
+      createdBy: deletingUid,
+      billingManagerId: deletingUid,
+      billingManagerTransferredBy: deletingUid,
+    },
+    'organizations/org-empty': {
+      name: 'Empty Organization',
+      managerIds: [deletingUid, 'stale-manager'],
+      workerIds: ['stale-worker'],
+      createdBy: deletingUid,
+      billingManagerId: deletingUid,
+    },
+    'organizationBilling/org-workers': {
+      planId: 'production',
+      billingPeriod: 'annual',
+      status: 'active',
+      accessMode: 'full',
+      seatLimit: 50,
+      purchaserUserId: deletingUid,
+      sourceStore: 'app_store',
+      productIdentifier: 'dispatch_production_50_annual',
+      willRenew: true,
+    },
+    'organizationBilling/org-empty': {
+      planId: 'free',
+      status: 'free',
+      accessMode: 'full',
+      seatLimit: 5,
+      purchaserUserId: null,
+    },
+    'teams/team-workers': {
+      managerId: deletingUid,
+      managerIds: [deletingUid, 'stale-manager'],
+      organizationId: 'org-workers',
+      workerIds: ['worker-keep'],
+      name: 'Worker Team',
+    },
+    'teams/team-empty': {
+      managerId: deletingUid,
+      managerIds: [deletingUid],
+      organizationId: 'org-empty',
+      workerIds: [],
+      name: 'Empty Team',
+    },
+    'events/event-workers': {
+      managerId: deletingUid,
+      organizationId: 'org-workers',
+      workerIds: ['worker-keep'],
+      name: 'Worker Event',
+      roles: [{
+        id: 'role-workers',
+        assignedWorkerIds: ['worker-keep'],
+        tasks: [],
+      }],
+    },
+    'events/event-empty': {
+      managerId: deletingUid,
+      organizationId: 'org-empty',
+      workerIds: [],
+      name: 'Empty Event',
+      roles: [],
+    },
+    'eventTemplates/template-workers': {
+      managerId: deletingUid,
+      organizationId: 'org-workers',
+      name: 'Worker Template',
+      roles: [],
+    },
+    'eventTemplates/template-empty': {
+      managerId: deletingUid,
+      organizationId: 'org-empty',
+      name: 'Empty Template',
+      roles: [],
+    },
+  });
+  const bucket = new FakeStorageBucket([]);
+
+  const result = await deleteDispatchUserData({
+    db,
+    bucket,
+    FieldValue,
+    authUser: {
+      uid: deletingUid,
+      email: 'only.manager@example.com',
+      emailVerified: true,
+      displayName: 'Only Manager',
+      providerData: [],
+    },
+  });
+
+  const organization = db.documents.get('organizations/org-workers');
+  assert.ok(organization);
+  assert.deepEqual(organization.managerIds, []);
+  assert.deepEqual(organization.workerIds, ['worker-keep']);
+  assert.equal('createdBy' in organization, false);
+  assert.equal('billingManagerId' in organization, false);
+  assert.equal('billingManagerTransferredBy' in organization, false);
+  assert.equal(organization.recoveryState, 'orphaned_no_manager');
+  assert.equal(organization.billingManagerTransferReason, 'account_deleted_orphaned');
+
+  const billing = db.documents.get('organizationBilling/org-workers');
+  assert.equal(billing.planId, 'free');
+  assert.equal(billing.status, 'revoked');
+  assert.equal(billing.accessMode, 'read_only');
+  assert.equal(billing.purchaserUserId, null);
+  assert.equal(billing.recoveryState, 'orphaned_no_manager');
+
+  const team = db.documents.get('teams/team-workers');
+  assert.ok(team);
+  assert.equal('managerId' in team, false);
+  assert.deepEqual(team.managerIds, []);
+  assert.deepEqual(team.workerIds, ['worker-keep']);
+  assert.equal(team.ownershipState, 'orphaned');
+
+  const event = db.documents.get('events/event-workers');
+  assert.ok(event);
+  assert.equal('managerId' in event, false);
+  assert.deepEqual(event.workerIds, ['worker-keep']);
+  assert.equal(event.ownershipState, 'orphaned');
+
+  const template = db.documents.get('eventTemplates/template-workers');
+  assert.ok(template);
+  assert.equal('managerId' in template, false);
+  assert.equal(template.ownershipState, 'orphaned');
+  assert.equal(db.documents.get('users/worker-keep').organizationId, 'org-workers');
+
+  assert.equal(db.documents.has('organizations/org-empty'), false);
+  assert.equal(db.documents.has('organizationBilling/org-empty'), false);
+  assert.equal(db.documents.has('teams/team-empty'), false);
+  assert.equal(db.documents.has('events/event-empty'), false);
+  assert.equal(db.documents.has('eventTemplates/template-empty'), false);
+  assert.equal(result.organizationsDeleted, 1);
+  assert.equal(result.orphanedOrganizations, 1);
 });

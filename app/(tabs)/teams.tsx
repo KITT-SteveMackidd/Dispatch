@@ -32,6 +32,8 @@ import {
 } from '@/services/dispatch';
 import { getWorkerInviteErrorMessage } from '@/lib/worker-invite-validation';
 import { createSecureDispatchInvite, secureInviteErrorMessage } from '@/lib/secure-invites';
+import { billingErrorMessage, transferOrganizationBillingManager, watchOrganizationBilling } from '@/services/billing';
+import { defaultOrganizationBilling, getOrganizationSeatUsage, getSubscriptionPlan, isLivePaidSubscription, type OrganizationBilling } from '@/lib/subscriptions';
 import type { Organisation, Team, UserProfile } from '@/types/dispatch';
 import { buildCurrentManagerIds, buildManagerChatParticipants, getVisibleManagerChatWorkerIds } from '@/lib/chat-list-membership';
 import {
@@ -73,6 +75,11 @@ export default function TeamsScreen() {
   const [unreadCountByThreadId, setUnreadCountByThreadId] = useState<Record<string, number>>({});
   const [legacyUnreadCountByTeamId, setLegacyUnreadCountByTeamId] = useState<Record<string, number>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [organizationBilling, setOrganizationBilling] = useState<OrganizationBilling>(() => defaultOrganizationBilling());
+  const [billingTransferOpen, setBillingTransferOpen] = useState(false);
+  const [selectedBillingManagerId, setSelectedBillingManagerId] = useState<string | null>(null);
+  const [transferringBillingManager, setTransferringBillingManager] = useState(false);
+  const [billingTransferError, setBillingTransferError] = useState<string | null>(null);
 
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
@@ -138,16 +145,29 @@ export default function TeamsScreen() {
   }, [profile, teams]);
 
   useEffect(() => {
-    if (!profile?.uid) return;
+    if (!profile?.organizationId) {
+      setOrganizationBilling(defaultOrganizationBilling());
+      return;
+    }
+    return watchOrganizationBilling(
+      profile.organizationId,
+      setOrganizationBilling,
+      () => setLoadError('Unable to load subscription capacity. Please try again.')
+    );
+  }, [profile?.organizationId]);
+
+  useEffect(() => {
+    if (!profile?.uid || !profile.organizationId) return;
     return watchIncomingChatThreadHeads(
       profile.uid,
+      profile.organizationId,
       (items) => {
         setThreadHeads(items);
         setLoadError(null);
       },
       () => setLoadError('Unable to load chat activity. Please try again.')
     );
-  }, [profile?.uid]);
+  }, [profile?.organizationId, profile?.uid]);
 
   useEffect(() => {
     if (!profile?.uid) return;
@@ -167,6 +187,28 @@ export default function TeamsScreen() {
 
   const memberById = useMemo(() => new Map(members.map((member) => [member.uid, member])), [members]);
   const threadHeadById = useMemo(() => new Map(threadHeads.map((thread) => [thread.id, thread])), [threadHeads]);
+  const billingManager = organization?.billingManagerId
+    ? memberById.get(organization.billingManagerId)
+    : null;
+  const livePaidPayerId = isLivePaidSubscription(organizationBilling)
+    ? organizationBilling.purchaserUserId
+    : null;
+  const billingManagerCandidates = members
+    .filter((member) => member.role === 'manager' && member.uid !== organization?.billingManagerId)
+    .filter((member) => organization?.managerIds.includes(member.uid))
+    .filter((member) => !livePaidPayerId || member.uid === livePaidPayerId)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  const canTransferBilling = Boolean(
+    profile?.uid &&
+    organization?.billingManagerId === profile.uid &&
+    billingManagerCandidates.length
+  );
+  const organizationSeatUsage = getOrganizationSeatUsage({
+    managerIds: organization?.managerIds || [],
+    workerIds: organization?.workerIds || [],
+    billing: organizationBilling,
+  });
+  const subscriptionPlan = getSubscriptionPlan(organizationBilling.planId);
 
   const chatItems = useMemo<ChatListItem[]>(() => {
     if (!profile) return [];
@@ -332,6 +374,11 @@ export default function TeamsScreen() {
 
   const handleSubmitDrawer = async () => {
     if (!profile || profile.role !== 'manager' || saving) return;
+    if (drawerMode !== 'add-team' && !organizationSeatUsage.canReserveSeat) {
+      setDrawerMessageTone('error');
+      setDrawerMessage(`Your ${subscriptionPlan.name} plan has no open member seats. Ask the Billing Manager to upgrade before sending another invitation.`);
+      return;
+    }
     try {
       setSaving(true);
       setDrawerMessage(null);
@@ -368,6 +415,46 @@ export default function TeamsScreen() {
     }
   };
 
+  const openBillingTransfer = () => {
+    if (!canTransferBilling) return;
+    setSelectedBillingManagerId(null);
+    setBillingTransferError(null);
+    setBillingTransferOpen(true);
+  };
+
+  const performBillingTransfer = async () => {
+    if (!selectedBillingManagerId || transferringBillingManager) return;
+    try {
+      setTransferringBillingManager(true);
+      setBillingTransferError(null);
+      await transferOrganizationBillingManager(selectedBillingManagerId);
+      if (profile?.organizationId) {
+        const result = await loadOrganizationMembers(profile.organizationId);
+        setOrganization(result.organization);
+        setMembers(result.members);
+      }
+      setBillingTransferOpen(false);
+      Alert.alert('Billing Manager updated', 'Billing responsibility was passed successfully.');
+    } catch (error) {
+      setBillingTransferError(billingErrorMessage(error));
+    } finally {
+      setTransferringBillingManager(false);
+    }
+  };
+
+  const confirmBillingTransfer = () => {
+    const target = billingManagerCandidates.find((member) => member.uid === selectedBillingManagerId);
+    if (!target) return;
+    Alert.alert(
+      'Pass billing responsibility?',
+      `${target.displayName} will become the only Manager who can change the Dispatch subscription. Existing Apple or Google payment ownership does not transfer.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Pass role', style: 'destructive', onPress: () => { void performBillingTransfer(); } },
+      ]
+    );
+  };
+
   return (
     <View style={[styles.container, isDarkMode ? styles.containerDark : styles.containerLight]}>
       <View style={[styles.topHeader, { paddingTop: insets.top + 16 }]}>
@@ -388,12 +475,40 @@ export default function TeamsScreen() {
         data={chatItems}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={loadError ? (
-          <View style={styles.loadErrorBanner}>
-            <MaterialIcons name="error-outline" size={18} color="#991b1b" />
-            <Text style={styles.loadErrorText}>{loadError}</Text>
-          </View>
-        ) : null}
+        ListHeaderComponent={(
+          <>
+            {organization?.billingManagerId ? (
+              <Pressable
+                accessibilityRole={canTransferBilling ? 'button' : undefined}
+                accessibilityLabel={canTransferBilling ? 'Transfer Billing Manager role' : undefined}
+                disabled={!canTransferBilling}
+                onPress={openBillingTransfer}
+                style={[styles.billingOwnerBanner, isDarkMode ? styles.cardDark : styles.cardLight]}>
+                <MaterialIcons name="payments" size={18} color="#0EC3C9" />
+                <View style={styles.flex}>
+                  <Text style={[styles.billingOwnerText, isDarkMode ? styles.textDark : styles.textLight]}>
+                    Billing Manager: {billingManager?.displayName || (organization.billingManagerId === profile?.uid ? 'You' : 'Manager')}
+                  </Text>
+                  {canTransferBilling ? (
+                    <Text style={[styles.billingOwnerHint, isDarkMode ? styles.mutedDark : styles.mutedLight]}>Tap to pass the role to another Manager</Text>
+                  ) : organization.billingManagerId === profile?.uid && livePaidPayerId ? (
+                    <Text style={[styles.billingOwnerHint, isDarkMode ? styles.mutedDark : styles.mutedLight]}>The active store payer must keep this role until paid access ends</Text>
+                  ) : null}
+                  <Text style={[styles.billingOwnerHint, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
+                    {organizationSeatUsage.acceptedSeats} members{organizationSeatUsage.reservedSeats ? ` + ${organizationSeatUsage.reservedSeats} pending` : ''} / {organizationSeatUsage.memberCap ?? 'custom'} · {subscriptionPlan.name}
+                  </Text>
+                </View>
+                {canTransferBilling ? <MaterialIcons name="chevron-right" size={22} color="#0EC3C9" /> : null}
+              </Pressable>
+            ) : null}
+            {loadError ? (
+              <View style={styles.loadErrorBanner}>
+                <MaterialIcons name="error-outline" size={18} color="#991b1b" />
+                <Text style={styles.loadErrorText}>{loadError}</Text>
+              </View>
+            ) : null}
+          </>
+        )}
         ListEmptyComponent={<Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>No conversations yet.</Text>}
         renderItem={({ item }) => {
           const head = threadHeadById.get(item.id);
@@ -490,6 +605,11 @@ export default function TeamsScreen() {
                   </>
                 ) : (
                   <>
+                    <Text style={[styles.capacityHint, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
+                      {organizationSeatUsage.remainingSeats === null
+                        ? 'Custom member capacity'
+                        : `${organizationSeatUsage.remainingSeats} member seat${organizationSeatUsage.remainingSeats === 1 ? '' : 's'} available`}
+                    </Text>
                     {drawerMode === 'invite-worker' ? (
                       <>
                         <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Team</Text>
@@ -507,11 +627,57 @@ export default function TeamsScreen() {
                   </>
                 )}
                 {drawerMessage ? <Text selectable style={drawerMessageTone === 'error' ? styles.errorText : styles.successText}>{drawerMessage}</Text> : null}
-                <Pressable style={[styles.chatButton, saving && styles.disabled]} disabled={saving} onPress={handleSubmitDrawer}>
+                <Pressable
+                  style={[styles.chatButton, (saving || (drawerMode !== 'add-team' && !organizationSeatUsage.canReserveSeat)) && styles.disabled]}
+                  disabled={saving || (drawerMode !== 'add-team' && !organizationSeatUsage.canReserveSeat)}
+                  onPress={handleSubmitDrawer}>
                   <Text style={styles.chatButtonText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
                 </Pressable>
                 <Pressable style={styles.closeButton} onPress={() => setDrawerOpen(false)}><Text style={[styles.closeText, isDarkMode ? styles.textDark : styles.textLight]}>Close</Text></Pressable>
               </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
+
+      <KeyboardAwareDrawer
+        visible={billingTransferOpen}
+        onClose={() => setBillingTransferOpen(false)}
+        backgroundColor={drawerSurfaceColor}
+        surfaceStyle={[styles.actionDrawer, isDarkMode ? styles.drawerDark : styles.drawerLight]}>
+        <KeyboardAwareDrawerScrollView contentContainerStyle={styles.drawerContent}>
+          <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>Pass Billing Manager role</Text>
+          <Text style={[styles.billingTransferCopy, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
+            Select an active Manager. They will control future plan changes and restores. An active Apple or Google subscription cannot be handed to a different store account, so the verified payer must retain this role until paid access ends.
+          </Text>
+          <View style={styles.memberList}>
+            {billingManagerCandidates.map((member) => (
+              <Pressable
+                key={member.uid}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: selectedBillingManagerId === member.uid }}
+                onPress={() => setSelectedBillingManagerId(member.uid)}
+                style={styles.memberRow}>
+                <MaterialIcons
+                  name={selectedBillingManagerId === member.uid ? 'radio-button-checked' : 'radio-button-unchecked'}
+                  size={23}
+                  color="#0EC3C9"
+                />
+                <View style={styles.flex}>
+                  <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]}>{member.displayName}</Text>
+                  <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]}>{member.email || 'Manager'}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+          {billingTransferError ? <Text selectable style={styles.errorText}>{billingTransferError}</Text> : null}
+          <Pressable
+            disabled={!selectedBillingManagerId || transferringBillingManager}
+            onPress={confirmBillingTransfer}
+            style={[styles.chatButton, (!selectedBillingManagerId || transferringBillingManager) && styles.disabled]}>
+            <Text style={styles.chatButtonText}>{transferringBillingManager ? 'Passing role...' : 'Pass Billing Manager role'}</Text>
+          </Pressable>
+          <Pressable style={styles.closeButton} onPress={() => setBillingTransferOpen(false)}>
+            <Text style={[styles.closeText, isDarkMode ? styles.textDark : styles.textLight]}>Cancel</Text>
+          </Pressable>
+        </KeyboardAwareDrawerScrollView>
       </KeyboardAwareDrawer>
     </View>
   );
@@ -526,6 +692,11 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', gap: 10 },
   iconButton: { width: MINIMUM_TOUCH_TARGET, height: MINIMUM_TOUCH_TARGET, borderRadius: MINIMUM_TOUCH_TARGET / 2, backgroundColor: '#0EC3C9', alignItems: 'center', justifyContent: 'center' },
   listContent: { paddingBottom: 24 },
+  billingOwnerBanner: { minHeight: 48, marginBottom: 10, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1 },
+  billingOwnerText: { flex: 1, fontSize: 13, fontWeight: '700' },
+  billingOwnerHint: { marginTop: 2, fontSize: 11, lineHeight: 15 },
+  billingTransferCopy: { marginBottom: 12, fontSize: 13, lineHeight: 19 },
+  capacityHint: { marginBottom: 8, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   chatCard: { minHeight: 76, borderRadius: 8, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1 },
   loadErrorBanner: { minHeight: 48, marginBottom: 10, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fecaca' },
   loadErrorText: { flex: 1, color: '#991b1b', fontSize: 13, fontWeight: '600' },

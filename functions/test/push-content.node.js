@@ -51,7 +51,7 @@ test('never sends a chat push to the sender', () => {
   assert.deepEqual(chatPushRecipientIds({
     senderId: 'manager-1',
     recipientIds: ['manager-1', 'worker-1', 'worker-1'],
-  }), ['worker-1']);
+  }, { participants: ['manager-1', 'worker-1'] }), ['worker-1']);
   assert.deepEqual(chatPushRecipientIds({ senderId: 'manager-1' }, {
     participants: ['manager-1', 'worker-1'],
   }), ['worker-1']);
@@ -61,7 +61,21 @@ test('does not push a chat message to a recipient actively viewing the thread', 
   assert.deepEqual(chatPushRecipientIds({
     senderId: 'manager-1',
     recipientIds: ['worker-1', 'worker-2'],
-  }, {}, ['worker-1']), ['worker-2']);
+  }, { participants: ['manager-1', 'worker-1', 'worker-2'] }, ['worker-1']), ['worker-2']);
+});
+
+test('never pushes to a recipient removed from the current chat thread', () => {
+  assert.deepEqual(chatPushRecipientIds({
+    senderId: 'manager-1',
+    recipientIds: ['worker-removed', 'worker-current'],
+  }, {
+    participants: ['manager-1', 'worker-current'],
+  }), ['worker-current']);
+
+  assert.deepEqual(chatPushRecipientIds({
+    senderId: 'manager-1',
+    recipientIds: ['worker-removed'],
+  }, {}), []);
 });
 
 test('builds role invite content', () => {

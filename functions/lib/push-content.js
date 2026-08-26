@@ -33,8 +33,15 @@ function documentKey(value) {
 
 function chatPushRecipientIds(message, thread = {}, activeViewerIds = []) {
   const activeViewers = new Set(uniqueStrings(activeViewerIds));
-  return uniqueStrings(message.recipientIds?.length ? message.recipientIds : thread.participants)
-    .filter((userId) => userId !== message.senderId && !activeViewers.has(userId));
+  const participants = uniqueStrings(thread.participants);
+  if (!participants.length) return [];
+  const participantIds = new Set(participants);
+  return uniqueStrings(message.recipientIds?.length ? message.recipientIds : participants)
+    .filter((userId) => (
+      participantIds.has(userId)
+      && userId !== message.senderId
+      && !activeViewers.has(userId)
+    ));
 }
 
 function rolePushContent(notification) {

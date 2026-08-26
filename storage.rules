@@ -1,0 +1,81 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function authenticated() {
+      return request.auth != null;
+    }
+
+    function userProfileExists() {
+      return authenticated()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function userProfile() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function canReadDispatchStorage() {
+      return userProfileExists()
+        && !('accountDeletionStartedAt' in userProfile().data);
+    }
+
+    function organizationStorageWriteEnabled(organizationId) {
+      return organizationId is string
+        && firestore.exists(/databases/(default)/documents/organizationBilling/$(organizationId))
+        && (
+          !('accessMode' in firestore.get(/databases/(default)/documents/organizationBilling/$(organizationId)).data)
+          || firestore.get(/databases/(default)/documents/organizationBilling/$(organizationId)).data.accessMode != 'read_only'
+        );
+    }
+
+    function participatesInExplicitOrganizationChat(threadId) {
+      return firestore.exists(/databases/(default)/documents/chatThreads/$(threadId))
+        && firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationId is string
+        && firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.participants is list
+        && request.auth.uid in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.participants;
+    }
+
+    function canReadChat(threadId) {
+      return canReadDispatchStorage()
+        && participatesInExplicitOrganizationChat(threadId)
+        && userProfile().data.organizationId
+          == firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationId;
+    }
+
+    function canMutateChat(threadId) {
+      // Storage Rules may access at most two Firestore documents. Mutations use
+      // the explicit thread (participation) plus authoritative billing state;
+      // member-removal/account-deletion cleanup strips stale participants, and
+      // the finalizer reaps any race or legacy organization mismatch.
+      return authenticated()
+        && participatesInExplicitOrganizationChat(threadId)
+        && organizationStorageWriteEnabled(
+          firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationId
+        );
+    }
+
+    match /dispatchTemplateAttachments/{ownerId}/{allPaths=**} {
+      allow get: if canReadDispatchStorage() && request.auth.uid == ownerId;
+      allow list: if false;
+      allow create: if canReadDispatchStorage()
+        && request.auth.uid == ownerId
+        && organizationStorageWriteEnabled(userProfile().data.organizationId);
+      // This legacy path has no immutable organization segment. Client-side
+      // replacement/deletion could otherwise mutate an old organization's
+      // retained attachment after the owner joins a different organization.
+      allow update, delete: if false;
+    }
+
+    match /chatAttachments/{threadId}/{ownerId}/{allPaths=**} {
+      allow get: if canReadChat(threadId);
+      allow list: if false;
+      allow create, update, delete: if canMutateChat(threadId)
+        && request.auth.uid == ownerId
+        && request.auth.uid in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.participants;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

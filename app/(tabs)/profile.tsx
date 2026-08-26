@@ -121,22 +121,30 @@ export default function ProfileScreen() {
     if (!profile?.uid || deletingAccount) return;
 
     const managerSoleOrgMessage = profile.role === 'manager' && profile.organizationId
-      ? ' If you are the only manager in this organization, the organization will also be deleted and workers will no longer belong to it.'
+      ? ' If you are the only Manager, an organization with remaining members is preserved read-only until Manager recovery; an empty organization is deleted.'
       : '';
 
     Alert.alert(
       'Delete account?',
-      `This permanently deletes your Dispatch account, messages, invitations, notifications, assignments, and uploaded files. This cannot be undone.${managerSoleOrgMessage}${usesAppleProvider(authUser) ? ' Apple will ask you to confirm your identity before deletion begins.' : ''}`,
+      `This permanently deletes your Dispatch account, messages, invitations, notifications, assignments, and uploaded files. This cannot be undone.${managerSoleOrgMessage} Deleting Dispatch does not cancel an Apple or Google subscription. If this account pays for an organization, paid access is released immediately, Billing Manager responsibility passes to another Manager when available, and store renewal may keep charging until you cancel it with Apple or Google. RevenueCat customer data is never deleted automatically: a minimal fenced record remains for secure manual review after signed-in devices have drained.${usesAppleProvider(authUser) ? ' Apple will ask you to confirm your identity before deletion begins.' : ''}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Delete now',
           style: 'destructive',
           onPress: async () => {
             try {
               setDeletingAccount(true);
-              await deleteAccount();
+              const deletionResult = await deleteAccount({ confirmActiveSubscriptionDeletion: true });
               router.replace('/(auth)/signin');
+              if (deletionResult.revenueCatManualReviewRequired) {
+                Alert.alert(
+                  deletionResult.authDeletionPending ? 'Deletion cleanup queued' : 'Dispatch account deleted',
+                  `${deletionResult.authDeletionPending
+                    ? 'Your Dispatch data was deleted and this device signed out. Firebase sign-in deletion is still retrying in the background.'
+                    : 'Your Dispatch data and Firebase sign-in were deleted.'} A minimal RevenueCat customer record remains fenced for secure manual review; Apple or Google subscription renewal must still be cancelled in the paying store account.`
+                );
+              }
             } catch (error) {
               const message = error instanceof Error ? error.message : 'Unable to delete account.';
               const needsRecentLogin = /recent|requires-recent-login|auth\/requires-recent-login/i.test(message);
@@ -297,6 +305,15 @@ export default function ProfileScreen() {
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Account Settings</Text>
       </Pressable>
+      {profile?.organizationId ? (
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]}
+          onPress={() => router.push('/billing')}>
+          <MaterialIcons name="payments" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
+          <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Organization Billing</Text>
+        </Pressable>
+      ) : null}
       <Pressable style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/invite/index')}>
         <MaterialIcons name="vpn-key" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Use Invitation Code</Text>

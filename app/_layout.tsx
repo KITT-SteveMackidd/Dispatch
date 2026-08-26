@@ -74,6 +74,7 @@ function RootNavigator({ modules }: { modules: StartupModules }) {
         <Stack.Screen name="invite/[token]" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="account-settings" options={{ title: 'Account Settings' }} />
+        <Stack.Screen name="billing" options={{ title: 'Organization Billing' }} />
         <Stack.Screen name="team/[teamId]" options={{ title: 'Team' }} />
         <Stack.Screen name="chat/[workerId]" options={{ headerShown: false }} />
         <Stack.Screen name="event/[id]" options={{ presentation: 'modal', title: 'Event Details' }} />

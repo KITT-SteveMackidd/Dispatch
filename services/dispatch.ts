@@ -21,6 +21,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
 import { buildEventTaskFromTemplate, buildNewEventRoleForFirestore, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
@@ -35,6 +36,7 @@ import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
 import { clearWorkerEventRoleRemoval, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
+import { resolveBillingManagerId } from '@/lib/billing-manager';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 export type { InviteToken, InviteTokenStatus, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
 
@@ -102,7 +104,7 @@ export type RoleAssignmentNotification = {
 export type UserNotification = {
   id: string;
   userId: string;
-  kind: 'role_invite_response' | 'role_removed' | 'role_available' | 'task_behind_schedule' | 'worker_team_invite' | 'worker_role_cancelled' | 'manager_organisation_invite';
+  kind: 'role_invite_response' | 'role_removed' | 'role_available' | 'task_behind_schedule' | 'worker_team_invite' | 'worker_role_cancelled' | 'manager_organisation_invite' | 'billing_manager_transfer';
   title: string;
   body: string;
   relatedEventId?: string;
@@ -131,6 +133,22 @@ export type UpsertEventTemplateInput = {
 
 const ACTIVE_INVITE_STATUSES: WorkerInviteStatus[] = ['created', 'delivery_queued', 'delivered', 'delivery_failed', 'pending_acceptance'];
 const INVITE_AUTO_EXPIRY_MS = 1000 * 60 * 60 * 24 * 7;
+
+type WorkerEventActionResult = {
+  eventId: string;
+  actionType: string;
+  outcome: string;
+  eventChanged: boolean;
+};
+
+async function mutateWorkerEvent(params: Record<string, unknown>) {
+  const callable = httpsCallable<Record<string, unknown>, WorkerEventActionResult>(
+    getFunctions(undefined, 'us-central1'),
+    'mutateWorkerEvent'
+  );
+  const result = await callable(params);
+  return result.data;
+}
 
 function toDateMs(value?: { toDate?: () => Date } | Date | null) {
   if (!value) return 0;
@@ -220,13 +238,25 @@ export async function setChatThreadViewerPresence(params: {
 
 export function watchIncomingChatThreadHeads(
   userId: string,
+  organizationId: string,
   cb: (items: ChatThreadHead[]) => void,
   onError?: (error: Error) => void
 ) {
-  const withOrderQuery = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), orderBy('updatedAt', 'desc'), limit(30));
+  const withOrderQuery = query(
+    collection(db, 'chatThreads'),
+    where('organizationId', '==', organizationId),
+    where('participants', 'array-contains', userId),
+    orderBy('updatedAt', 'desc'),
+    limit(30)
+  );
 
   const subscribeWithoutOrder = () => {
-    const fallbackQuery = query(collection(db, 'chatThreads'), where('participants', 'array-contains', userId), limit(100));
+    const fallbackQuery = query(
+      collection(db, 'chatThreads'),
+      where('organizationId', '==', organizationId),
+      where('participants', 'array-contains', userId),
+      limit(100)
+    );
     return onSnapshot(
       fallbackQuery,
       (snap) => {
@@ -333,6 +363,8 @@ export async function uploadTemplateTaskAttachment(params: {
 export async function sendChatMessage(params: {
   threadId: string;
   teamId?: string;
+  organizationId?: string;
+  kind?: ChatThreadHead['kind'];
   senderId: string;
   senderName?: string;
   recipientIds: string[];
@@ -342,7 +374,17 @@ export async function sendChatMessage(params: {
   const text = params.text.trim();
   const attachments = params.attachments || [];
   if (!text && !attachments.length) return;
-  const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
+  const requestedRecipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
+  const currentParticipants = await prepareChatThreadForSend({
+    threadId: params.threadId,
+    teamId: params.teamId,
+    organizationId: params.organizationId,
+    kind: params.kind,
+    senderId: params.senderId,
+    recipientIds: requestedRecipientIds,
+  });
+  const threadRef = doc(db, 'chatThreads', params.threadId);
+  const recipientIds = requestedRecipientIds.filter((userId) => currentParticipants.includes(userId));
 
   await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
     threadId: params.threadId,
@@ -355,19 +397,12 @@ export async function sendChatMessage(params: {
     createdAt: serverTimestamp(),
   });
 
-  await setDoc(
-    doc(db, 'chatThreads', params.threadId),
-    {
-      id: params.threadId,
-      teamId: params.teamId || null,
-      participants: [...new Set([params.senderId, ...params.recipientIds].filter(Boolean))],
-      pushSeenBy: [params.senderId],
-      lastMessageText: text || (attachments.length ? `Sent ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` : ''),
-      lastMessageSenderId: params.senderId,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  await updateDoc(threadRef, {
+    pushSeenBy: [params.senderId],
+    lastMessageText: text || (attachments.length ? `Sent ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` : ''),
+    lastMessageSenderId: params.senderId,
+    updatedAt: serverTimestamp(),
+  });
 
   await Promise.all(
     recipientIds.map((userId) =>
@@ -1495,6 +1530,7 @@ export async function createOrganisationForManager(params: { managerId: string; 
     managerIds: [params.managerId],
     workerIds: [],
     createdBy: params.managerId,
+    billingManagerId: params.managerId,
   };
 
   await runTransaction(db, async (tx) => {
@@ -2592,7 +2628,53 @@ export async function loadOrganizationMembers(organizationId: string): Promise<{
     ])],
   };
 
+  organization.billingManagerId = resolveBillingManagerId(organization) || undefined;
+
   return { organization, members };
+}
+
+export async function prepareChatThreadForSend(params: {
+  threadId: string;
+  teamId?: string;
+  organizationId?: string;
+  kind?: ChatThreadHead['kind'];
+  senderId: string;
+  recipientIds: string[];
+}) {
+  const requestedRecipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
+  const threadRef = doc(db, 'chatThreads', params.threadId);
+  let threadSnapshot = await getDoc(threadRef);
+  if (!threadSnapshot.exists()) {
+    if (!params.organizationId && !params.teamId) {
+      throw new Error('This legacy chat has no organization authority. Start a new organization chat.');
+    }
+    await setDoc(threadRef, {
+      id: params.threadId,
+      teamId: params.teamId || null,
+      organizationId: params.organizationId || null,
+      kind: params.kind || 'direct',
+      participants: [...new Set([params.senderId, ...requestedRecipientIds])],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    threadSnapshot = await getDoc(threadRef);
+  } else {
+    const currentThread = threadSnapshot.data() as Partial<ChatThreadHead>;
+    if (!currentThread.organizationId && currentThread.teamId && params.organizationId) {
+      await updateDoc(threadRef, {
+        organizationId: params.organizationId,
+        updatedAt: serverTimestamp(),
+      });
+      threadSnapshot = await getDoc(threadRef);
+    }
+  }
+  const currentParticipants = [...new Set(
+    ((threadSnapshot.data() as Partial<ChatThreadHead>).participants || []).filter(Boolean)
+  )];
+  if (!currentParticipants.includes(params.senderId)) {
+    throw new Error('You are no longer a member of this chat. Refresh your chats and try again.');
+  }
+  return currentParticipants;
 }
 
 export async function ensureOrganizationCommunicationThreads(organizationId: string) {
@@ -2948,6 +3030,18 @@ export async function cancelWorkerEventRole(params: {
   roleId: string;
   workerId: string;
 }) {
+  await mutateWorkerEvent({
+    actionType: 'cancel_worker_role',
+    eventId: params.eventId,
+    roleId: params.roleId,
+  });
+}
+
+async function legacyCancelWorkerEventRole(params: {
+  eventId: string;
+  roleId: string;
+  workerId: string;
+}) {
   const { eventId, roleId, workerId } = params;
 
   await runTransaction(db, async (tx) => {
@@ -3030,6 +3124,16 @@ export async function joinRoleWaitlist(params: {
   notificationId: string;
   workerId: string;
 }) {
+  await mutateWorkerEvent({
+    actionType: 'join_event_waitlist',
+    notificationId: params.notificationId,
+  });
+}
+
+async function legacyJoinRoleWaitlist(params: {
+  notificationId: string;
+  workerId: string;
+}) {
   await runTransaction(db, async (tx) => {
     const notificationRef = doc(db, 'roleAssignmentNotifications', params.notificationId);
     const notificationSnap = await tx.get(notificationRef);
@@ -3087,6 +3191,18 @@ export async function joinEventRoleWaitlist(params: {
   roleId: string;
   workerId: string;
 }) {
+  await mutateWorkerEvent({
+    actionType: 'join_event_waitlist',
+    eventId: params.eventId,
+    roleId: params.roleId,
+  });
+}
+
+async function legacyJoinEventRoleWaitlist(params: {
+  eventId: string;
+  roleId: string;
+  workerId: string;
+}) {
   await runTransaction(db, async (tx) => {
     const eventRef = doc(db, 'events', params.eventId);
     const eventSnap = await tx.get(eventRef);
@@ -3125,6 +3241,18 @@ export async function joinEventRoleWaitlist(params: {
 }
 
 export async function acceptEventRoleWaitlistInvite(params: {
+  eventId: string;
+  roleId: string;
+  workerId: string;
+}) {
+  await mutateWorkerEvent({
+    actionType: 'accept_waitlist_invite',
+    eventId: params.eventId,
+    roleId: params.roleId,
+  });
+}
+
+async function legacyAcceptEventRoleWaitlistInvite(params: {
   eventId: string;
   roleId: string;
   workerId: string;
@@ -3229,6 +3357,18 @@ export async function acceptEventRoleWaitlistInvite(params: {
 }
 
 export async function respondToRoleAssignmentNotification(params: {
+  notificationId: string;
+  workerId: string;
+  response: 'accept' | 'decline';
+}) {
+  await mutateWorkerEvent({
+    actionType: 'respond_role_notification',
+    notificationId: params.notificationId,
+    response: params.response,
+  });
+}
+
+async function legacyRespondToRoleAssignmentNotification(params: {
   notificationId: string;
   workerId: string;
   response: 'accept' | 'decline';
@@ -3385,6 +3525,22 @@ export async function respondToRoleAssignmentNotification(params: {
 }
 
 export async function toggleTaskCompletion(params: {
+  eventId: string;
+  roleId: string;
+  taskId: string;
+  workerId: string;
+  complete: boolean;
+}) {
+  await mutateWorkerEvent({
+    actionType: 'toggle_task_completion',
+    eventId: params.eventId,
+    roleId: params.roleId,
+    taskId: params.taskId,
+    complete: params.complete,
+  });
+}
+
+async function legacyToggleTaskCompletion(params: {
   eventId: string;
   roleId: string;
   taskId: string;

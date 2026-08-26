@@ -7,7 +7,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, renameCustomChat, sendChatMessage, setChatThreadViewerPresence, updateTeamWorkerMembership, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
+import { addChatParticipants, buildChatThreadId, ChatAttachment, ChatThreadHead, leaveCustomChat, loadOrganizationMembers, markChatThreadRead, prepareChatThreadForSend, renameCustomChat, sendChatMessage, setChatThreadViewerPresence, updateTeamWorkerMembership, uploadChatAttachment, watchChatMessages, watchChatThread } from '@/services/dispatch';
 import type { UserProfile } from '@/types/dispatch';
 import { clearActiveChatThread, setActiveChatThread } from '@/lib/foreground-chat-notifications';
 import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
@@ -90,6 +90,7 @@ export default function WorkerChatScreen() {
   const [chatNameDraft, setChatNameDraft] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [threadReady, setThreadReady] = useState(false);
 
   const organizationMemberById = useMemo(
     () => new Map(organizationMembers.map((member) => [member.uid, member])),
@@ -130,9 +131,42 @@ export default function WorkerChatScreen() {
     });
   }, [isTeamBroadcast, params.teamThreadId, profile, teamId, workerId]);
 
+  useEffect(() => {
+    if (!profile || !threadId) {
+      setThreadReady(false);
+      return;
+    }
+    let active = true;
+    setThreadReady(false);
+    const recipientIds = isTeamBroadcast
+      ? initialMemberIds.filter((id) => id !== profile.uid)
+      : [workerId].filter((id) => id && id !== profile.uid);
+    prepareChatThreadForSend({
+      threadId,
+      teamId,
+      organizationId: profile.organizationId || undefined,
+      kind: isCustomChat ? 'custom' : isTeamChat ? 'direct' : undefined,
+      senderId: profile.uid,
+      recipientIds,
+    })
+      .then(() => {
+        if (!active) return;
+        setLoadError(null);
+        setThreadReady(true);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setThreadReady(false);
+        setLoadError(error instanceof Error ? error.message : 'Unable to open this chat.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [initialMemberIds, isCustomChat, isTeamBroadcast, isTeamChat, profile, teamId, threadId, workerId]);
+
   useFocusEffect(
     useCallback(() => {
-      if (!threadId || !profile?.uid) return undefined;
+      if (!threadReady || !threadId || !profile?.uid) return undefined;
       const userId = profile.uid;
       const writePresence = (active: boolean) => {
         setChatThreadViewerPresence({ threadId, userId, active }).catch(() => undefined);
@@ -153,16 +187,16 @@ export default function WorkerChatScreen() {
         appStateSubscription.remove();
         writePresence(false);
       };
-    }, [profile?.uid, threadId])
+    }, [profile?.uid, threadId, threadReady])
   );
 
   useEffect(() => {
-    if (!usesLiveThreadParticipants || !threadId) {
+    if (!threadReady || !usesLiveThreadParticipants || !threadId) {
       setChatThread(null);
       return;
     }
     return watchChatThread(threadId, setChatThread);
-  }, [threadId, usesLiveThreadParticipants]);
+  }, [threadId, threadReady, usesLiveThreadParticipants]);
 
   useEffect(() => {
     if (!profile?.organizationId) {
@@ -184,7 +218,7 @@ export default function WorkerChatScreen() {
   }, [profile]);
 
   useEffect(() => {
-    if (!threadId) {
+    if (!threadReady || !threadId) {
       setMessages([]);
       return;
     }
@@ -213,16 +247,16 @@ export default function WorkerChatScreen() {
       },
       () => setLoadError('Unable to load this chat. Please go back and try again.')
     );
-  }, [threadId]);
+  }, [threadId, threadReady]);
 
   useEffect(() => {
     listRef.current?.scrollToEnd({ animated: true });
   }, [messages.length]);
 
   useEffect(() => {
-    if (!profile || !threadId) return;
+    if (!threadReady || !profile || !threadId) return;
     markChatThreadRead({ userId: profile.uid, threadId, teamId }).catch(() => undefined);
-  }, [messages.length, profile, teamId, threadId]);
+  }, [messages.length, profile, teamId, threadId, threadReady]);
 
   const emojiOptions = ['😀', '😂', '😍', '🙏', '👍', '🔥', '✅', '🎉', '📍', '⏰'];
   const attachmentOptions = [
@@ -450,6 +484,15 @@ export default function WorkerChatScreen() {
 
     setSending(true);
     try {
+      const recipientIdsForSend = recipientIds;
+      await prepareChatThreadForSend({
+        threadId,
+        teamId,
+        organizationId: profile.organizationId || undefined,
+        kind: isCustomChat ? 'custom' : isTeamChat ? 'direct' : undefined,
+        senderId: profile.uid,
+        recipientIds: recipientIdsForSend,
+      });
       const uploadedAttachments: ChatAttachment[] = [];
       for (const attachment of pendingAttachments) {
         const uploaded = await uploadChatAttachment({
@@ -466,9 +509,11 @@ export default function WorkerChatScreen() {
       await sendChatMessage({
         threadId,
         teamId,
+        organizationId: profile.organizationId || undefined,
+        kind: isCustomChat ? 'custom' : isTeamChat ? 'direct' : undefined,
         senderId: profile.uid,
         senderName: profile.displayName,
-        recipientIds,
+        recipientIds: recipientIdsForSend,
         text,
         attachments: uploadedAttachments,
       });

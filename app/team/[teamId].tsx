@@ -64,13 +64,13 @@ export default function TeamMemberListScreen() {
   }, [memberIds]);
 
   useEffect(() => {
-    if (!profile?.uid) {
+    if (!profile?.uid || !profile.organizationId) {
       setThreadHeads([]);
       return;
     }
 
-    return watchIncomingChatThreadHeads(profile.uid, setThreadHeads);
-  }, [profile?.uid]);
+    return watchIncomingChatThreadHeads(profile.uid, profile.organizationId, setThreadHeads);
+  }, [profile?.uid, profile?.organizationId]);
 
   const memberInfoById = useMemo(() => {
     const entries = members.map((member) => [member.uid, member] as const);

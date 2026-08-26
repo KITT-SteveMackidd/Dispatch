@@ -25,6 +25,8 @@ import {
 } from '@/services/push-token-session';
 import { shouldLinkPendingWorkerInvites } from '@/lib/chat-list-membership';
 import { requestDispatchAccountDeletion } from '@/lib/account-deletion';
+import type { DeleteDispatchAccountResult } from '@/lib/account-deletion';
+import { logOutDispatchRevenueCatUser } from '@/services/revenuecat';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
@@ -48,7 +50,7 @@ type SessionContextType = {
   sendVerificationEmail: () => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
   revokeSession: () => Promise<void>;
-  deleteAccount: () => Promise<void>;
+  deleteAccount: (options?: { confirmActiveSubscriptionDeletion?: boolean }) => Promise<DeleteDispatchAccountResult>;
   signOut: () => Promise<void>;
 };
 
@@ -114,29 +116,15 @@ function cleanDisplayName(displayName?: string | null, email?: string | null) {
   return displayNameFromEmail(email) || 'Dispatch User';
 }
 
-function getDispatchServices() {
-  return require('@/services/dispatch') as typeof import('@/services/dispatch');
+function getInviteServices() {
+  return require('@/lib/secure-invites') as typeof import('@/lib/secure-invites');
 }
 
 async function syncInviteLinking(userId: string, email?: string | null, role?: AppRole | null) {
   const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail) return;
-
-  if (role === 'worker') {
-    const { acceptPendingWorkerInvitesForUser } = getDispatchServices();
-    await acceptPendingWorkerInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
-    return;
-  }
-
-  if (role === 'manager') {
-    const { linkPendingManagerInvites } = getDispatchServices();
-    await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
-    return;
-  }
-
-  const { acceptPendingInvitesForUser, linkPendingManagerInvites } = getDispatchServices();
-  await acceptPendingInvitesForUser({ userId, email: normalizedEmail }).catch(() => null);
-  await linkPendingManagerInvites({ userId, email: normalizedEmail }).catch(() => null);
+  if (!userId || !normalizedEmail || (role && !['manager', 'worker'].includes(role))) return;
+  const { adoptLegacyDispatchInvites } = getInviteServices();
+  await adoptLegacyDispatchInvites().catch(() => null);
 }
 
 function assertFirebaseConfigured() {
@@ -236,6 +224,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setEmailVerified(Boolean(user?.emailVerified));
 
         if (!user) {
+          // Firebase can invalidate this device remotely (for example after
+          // account deletion on another device). Clear the native RevenueCat
+          // identity so a deleted custom App User ID is not recreated.
+          await logOutDispatchRevenueCatUser().catch(() => false);
           setProfile(null);
           setNeedsProfile(false);
           setLoading(false);
@@ -340,6 +332,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!currentUser) return;
 
     await unregisterCurrentDevicePushToken(currentUser.uid);
+    await logOutDispatchRevenueCatUser().catch(() => false);
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setAuthUser(null);
@@ -495,8 +488,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     if (params.role === 'worker') {
       if (shouldLinkPendingWorkerInvites(previousRole, params.role)) {
-        const { acceptPendingWorkerInvitesForUser } = getDispatchServices();
-        await acceptPendingWorkerInvitesForUser({ userId: user.uid, email: user.email || '' }).catch(() => null);
+        await syncInviteLinking(user.uid, user.email, 'worker');
       }
     } else {
       await syncInviteLinking(user.uid, user.email, 'manager');
@@ -584,6 +576,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const revokeSession = async () => {
     assertFirebaseConfigured();
     if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
+    await logOutDispatchRevenueCatUser().catch(() => false);
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);
@@ -591,16 +584,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNeedsProfile(false);
   };
 
-  const deleteAccount = async () => {
+  const deleteAccount = async (options: { confirmActiveSubscriptionDeletion?: boolean } = {}) => {
     assertFirebaseConfigured();
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
 
     const appleAuthorizationCode = await getAppleDeletionAuthorizationCode(user);
     if (!appleAuthorizationCode) await user.getIdToken(true);
-    await requestDispatchAccountDeletion({
+    await logOutDispatchRevenueCatUser(user.uid);
+    const deletionResult = await requestDispatchAccountDeletion({
       appleAuthorizationCode,
       firebaseApiKey: auth.app.options.apiKey,
+      confirmActiveSubscriptionDeletion: options.confirmActiveSubscriptionDeletion === true,
     });
     await clearDispatchNotificationState();
     await firebaseSignOut(auth).catch(() => undefined);
@@ -609,11 +604,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setEmailVerified(false);
     setProfile(null);
     setNeedsProfile(false);
+    return deletionResult;
   };
 
   const signOut = async () => {
     assertFirebaseConfigured();
     if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
+    await logOutDispatchRevenueCatUser().catch(() => false);
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);

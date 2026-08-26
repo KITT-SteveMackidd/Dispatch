@@ -19,12 +19,22 @@ export type CreateSecureInviteResult = {
   expiresAt: string;
   deliveryQueued: boolean;
   reused: boolean;
+  seatUsage?: number;
+  memberCap?: number | null;
 };
 
 export type ClaimSecureInviteResult = SecureInvitePreview & {
   claimed: true;
   organizationId: string;
   teamId: string | null;
+};
+
+export type PendingOrganizationInvite = {
+  inviteId: string;
+  inviteKind: SecureInviteKind;
+  deliveryEmailHint: string;
+  teamName: string | null;
+  expiresAt: number;
 };
 
 function getDispatchFunctions() {
@@ -60,6 +70,34 @@ export async function claimSecureDispatchInvite(tokenOrCode: string) {
   );
   const result = await callable({ tokenOrCode });
   return result.data;
+}
+
+export async function cancelSecureDispatchInvite(inviteId: string) {
+  const callable = httpsCallable<{ inviteId: string }, { cancelled: true; inviteId: string }>(
+    getDispatchFunctions(),
+    'cancelDispatchInvite'
+  );
+  const result = await callable({ inviteId });
+  return result.data;
+}
+
+export async function adoptLegacyDispatchInvites() {
+  const callable = httpsCallable<Record<string, never>, {
+    adopted: boolean;
+    organizationId?: string;
+    role?: SecureInviteKind;
+  }>(getDispatchFunctions(), 'adoptLegacyDispatchInvites');
+  const result = await callable({});
+  return result.data;
+}
+
+export async function listOrganizationPendingInvites() {
+  const callable = httpsCallable<Record<string, never>, { invites: PendingOrganizationInvite[] }>(
+    getDispatchFunctions(),
+    'listOrganizationPendingInvites'
+  );
+  const result = await callable({});
+  return result.data.invites;
 }
 
 export function secureInviteErrorMessage(error: unknown) {

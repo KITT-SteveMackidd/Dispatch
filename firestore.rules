@@ -2,7 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null && !activeAccountDeletionTombstone();
+    }
+
+    function activeAccountDeletionTombstone() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/accountDeletionTombstones/$(request.auth.uid))
+        && (
+          get(/databases/$(database)/documents/accountDeletionTombstones/$(request.auth.uid)).data.status in ['deleting', 'ready_for_revenuecat_deletion', 'ready_for_auth_deletion', 'manual_revenuecat_review']
+          ||
+          !('denyUntil' in get(/databases/$(database)/documents/accountDeletionTombstones/$(request.auth.uid)).data)
+          || get(/databases/$(database)/documents/accountDeletionTombstones/$(request.auth.uid)).data.denyUntil > request.time
+        );
     }
 
     function userDoc() {
@@ -22,7 +33,9 @@ service cloud.firestore {
     }
 
     function userOrganizationId() {
-      return userDocExists() ? userDoc().data.organizationId : null;
+      return userDocExists() && 'organizationId' in userDoc().data
+        ? userDoc().data.organizationId
+        : null;
     }
 
     function isManager() {
@@ -64,6 +77,101 @@ service cloud.firestore {
         && userOrganizationId() == organizationId;
     }
 
+    function isOrganizationWorker(userId, organizationId) {
+      return userId is string
+        && organizationId is string
+        && exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.organizationId == organizationId
+        && get(/databases/$(database)/documents/users/$(userId)).data.role in ['worker', 'Worker'];
+    }
+
+    function organizationWriteEnabled(organizationId) {
+      return isOrganizationMember(organizationId)
+        && !activeGlobalAccountDeletionLock()
+        && exists(/databases/$(database)/documents/organizationBilling/$(organizationId))
+        && (
+          !('accessMode' in get(/databases/$(database)/documents/organizationBilling/$(organizationId)).data)
+          || get(/databases/$(database)/documents/organizationBilling/$(organizationId)).data.accessMode != 'read_only'
+        );
+    }
+
+    function activeGlobalAccountDeletionLock() {
+      return exists(/databases/$(database)/documents/maintenanceLocks/accountDeletion)
+        && (
+          !('leaseExpiresAt' in get(/databases/$(database)/documents/maintenanceLocks/accountDeletion).data)
+          || get(/databases/$(database)/documents/maintenanceLocks/accountDeletion).data.leaseExpiresAt > request.time
+        );
+    }
+
+    function mutationAllowed() {
+      return signedIn() && !activeGlobalAccountDeletionLock();
+    }
+
+    function teamOrganizationId(teamId) {
+      return teamId is string && teamDocExists(teamId)
+        && 'organizationId' in teamDoc(teamId).data
+        ? teamDoc(teamId).data.organizationId
+        : null;
+    }
+
+    function organizationIdFromData(data) {
+      return ('organizationId' in data && data.organizationId is string)
+        ? data.organizationId
+        : (('teamId' in data && data.teamId is string) ? teamOrganizationId(data.teamId) : null);
+    }
+
+    function eventOrganizationId(eventId) {
+      return eventId is string && exists(/databases/$(database)/documents/events/$(eventId))
+        ? organizationIdFromData(get(/databases/$(database)/documents/events/$(eventId)).data)
+        : null;
+    }
+
+    function threadOrganizationId(threadId) {
+      return exists(/databases/$(database)/documents/chatThreads/$(threadId))
+        ? organizationIdFromData(get(/databases/$(database)/documents/chatThreads/$(threadId)).data)
+        : null;
+    }
+
+    function isThreadParticipant(threadId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/chatThreads/$(threadId))
+        && get(/databases/$(database)/documents/chatThreads/$(threadId)).data.participants is list
+        && request.auth.uid in get(/databases/$(database)/documents/chatThreads/$(threadId)).data.participants;
+    }
+
+    function canReadThreadData(data) {
+      return organizationIdFromData(data) is string
+        && isOrganizationMember(organizationIdFromData(data))
+        && data.participants is list
+        && request.auth.uid in data.participants;
+    }
+
+    function canReadThread(threadId) {
+      return exists(/databases/$(database)/documents/chatThreads/$(threadId))
+        && canReadThreadData(get(/databases/$(database)/documents/chatThreads/$(threadId)).data);
+    }
+
+    function canWriteThread(threadId) {
+      return canReadThread(threadId)
+        && organizationWriteEnabled(
+          threadOrganizationId(threadId)
+        );
+    }
+
+    function participantsAreActiveOrganizationMembers(data) {
+      let organizationId = organizationIdFromData(data);
+      return organizationId is string
+        && exists(/databases/$(database)/documents/organizations/$(organizationId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)).data.managerIds is list
+        && get(/databases/$(database)/documents/organizations/$(organizationId)).data.workerIds is list
+        && data.participants is list
+        && data.participants.hasOnly(
+          get(/databases/$(database)/documents/organizations/$(organizationId)).data.managerIds.concat(
+            get(/databases/$(database)/documents/organizations/$(organizationId)).data.workerIds
+          )
+        );
+    }
+
     function acceptedWorkerInviteForTeam(teamId) {
       return signedIn()
         && request.resource.data.lastAcceptedInviteId is string
@@ -103,9 +211,18 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
+    function createsOwnedOrganization(organizationId) {
+      return organizationId is string
+        && existsAfter(/databases/$(database)/documents/organizations/$(organizationId))
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)).data.createdBy == request.auth.uid
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)).data.billingManagerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)).data.managerIds == [request.auth.uid];
+    }
+
     function isSameOrganizationProfile() {
       return signedIn()
         && userOrganizationId() is string
+        && 'organizationId' in resource.data
         && resource.data.organizationId == userOrganizationId();
     }
 
@@ -117,19 +234,74 @@ service cloud.firestore {
       return !(fieldName in request.resource.data) || request.resource.data[fieldName] == null;
     }
 
+    function optionalFieldUnchanged(fieldName) {
+      return (
+        !(fieldName in request.resource.data)
+        && !(fieldName in resource.data)
+      ) || (
+        fieldName in request.resource.data
+        && fieldName in resource.data
+        && request.resource.data[fieldName] == resource.data[fieldName]
+      );
+    }
+
     match /users/{userId} {
       allow read: if isSelf(userId) || isSameOrganizationProfile();
-      allow create: if isSelf(userId);
-      allow update: if isSelf(userId)
-        || (
-          isManager()
-          && userOrganizationId() is string
-          && resource.data.organizationId == userOrganizationId()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['organizationId', 'organizationName', 'updatedAt'])
-          && request.resource.data.organizationId == null
-          && request.resource.data.organizationName == null
-        );
-      allow delete: if isSelf(userId);
+      allow create: if mutationAllowed()
+        && isSelf(userId)
+        && request.resource.data.role in ['manager', 'worker']
+        && missingOrNull('organizationId')
+        && missingOrNull('organizationName');
+      allow update: if mutationAllowed() && (
+        (
+          isSelf(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'uid',
+            'displayName',
+            'role',
+            'email',
+            'canonicalEmail',
+            'phoneNumber',
+            'avatarUrl',
+            'pushTokens',
+            'pushPermissionStatus',
+            'pushTokenUpdatedAt',
+            'pushPlatform',
+            'scheduledEventReminderKeys',
+            'onboardingCompleted',
+            'onboardingCompletedAt',
+            'onboardingStartedAt',
+            'updatedAt'
+          ])
+          && optionalFieldUnchanged('organizationId')
+          && optionalFieldUnchanged('organizationName')
+          && (
+            request.resource.data.role == resource.data.role
+            || missingOrNull('organizationId')
+          )
+        ) || (
+          isSelf(userId)
+          && (!('organizationId' in resource.data) || resource.data.organizationId == null)
+          && request.resource.data.organizationId is string
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'role',
+            'organizationId',
+            'organizationName',
+            'updatedAt'
+          ])
+          && request.resource.data.role == 'manager'
+          && createsOwnedOrganization(request.resource.data.organizationId)
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /accountDeletionTombstones/{userId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /maintenanceLocks/{lockId} {
+      allow read, create, update, delete: if false;
     }
 
     match /teams/{teamId} {
@@ -143,53 +315,61 @@ service cloud.firestore {
         );
 
       allow create: if isManager()
+        && organizationWriteEnabled(request.resource.data.organizationId)
         && request.resource.data.managerId == request.auth.uid
         && request.resource.data.workerIds is list
         && request.resource.data.workerIds.size() == 0;
 
-      allow update: if isTeamManager(teamId)
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.workerIds is list
-      || (
-        isOrganizationManager(resource.data.organizationId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerId', 'managerIds', 'updatedAt'])
+      allow update: if organizationWriteEnabled(resource.data.organizationId)
         && request.resource.data.organizationId == resource.data.organizationId
-        && request.resource.data.managerIds is list
-        && request.resource.data.managerIds.size() > 0
-        && request.resource.data.managerId in request.resource.data.managerIds
-      )
-      || (
-        isOrganizationManager(resource.data.organizationId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'managerIds', 'updatedAt'])
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.organizationId == resource.data.organizationId
-        && request.resource.data.workerIds is list
-        && request.resource.data.managerIds is list
-        && request.resource.data.managerIds.hasAll(resource.data.managerIds)
-        && request.auth.uid in request.resource.data.managerIds
-      )
-      || (
-        acceptedWorkerInviteForTeam(teamId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'lastAcceptedInviteId', 'updatedAt'])
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.organizationId == resource.data.organizationId
-        && request.resource.data.workerIds is list
-        && request.resource.data.workerIds.hasAll(resource.data.workerIds)
-        && request.auth.uid in request.resource.data.workerIds
-      )
-      || (
-        signedIn()
-        && request.auth.uid in resource.data.workerIds
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'updatedAt'])
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.organizationId == resource.data.organizationId
-        && request.resource.data.workerIds is list
-        && resource.data.workerIds.hasAll(request.resource.data.workerIds)
-        && !(request.auth.uid in request.resource.data.workerIds)
-        && request.resource.data.workerIds.size() == resource.data.workerIds.size() - 1
-      );
+        && (
+          (
+            isTeamManager(teamId)
+            && request.resource.data.managerId == resource.data.managerId
+            && request.resource.data.workerIds is list
+          )
+          || (
+            isOrganizationManager(resource.data.organizationId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerId', 'managerIds', 'updatedAt'])
+            && request.resource.data.organizationId == resource.data.organizationId
+            && request.resource.data.managerIds is list
+            && request.resource.data.managerIds.size() > 0
+            && request.resource.data.managerId in request.resource.data.managerIds
+          )
+          || (
+            isOrganizationManager(resource.data.organizationId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'managerIds', 'updatedAt'])
+            && request.resource.data.managerId == resource.data.managerId
+            && request.resource.data.organizationId == resource.data.organizationId
+            && request.resource.data.workerIds is list
+            && request.resource.data.managerIds is list
+            && request.resource.data.managerIds.hasAll(resource.data.managerIds)
+            && request.auth.uid in request.resource.data.managerIds
+          )
+          || (
+            acceptedWorkerInviteForTeam(teamId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'lastAcceptedInviteId', 'updatedAt'])
+            && request.resource.data.managerId == resource.data.managerId
+            && request.resource.data.organizationId == resource.data.organizationId
+            && request.resource.data.workerIds is list
+            && request.resource.data.workerIds.hasAll(resource.data.workerIds)
+            && request.auth.uid in request.resource.data.workerIds
+          )
+          || (
+            signedIn()
+            && request.auth.uid in resource.data.workerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'updatedAt'])
+            && request.resource.data.managerId == resource.data.managerId
+            && request.resource.data.organizationId == resource.data.organizationId
+            && request.resource.data.workerIds is list
+            && resource.data.workerIds.hasAll(request.resource.data.workerIds)
+            && !(request.auth.uid in request.resource.data.workerIds)
+            && request.resource.data.workerIds.size() == resource.data.workerIds.size() - 1
+          )
+        );
 
-      allow delete: if isTeamManager(teamId) || isOrganizationManager(resource.data.organizationId);
+      allow delete: if organizationWriteEnabled(resource.data.organizationId)
+        && (isTeamManager(teamId) || isOrganizationManager(resource.data.organizationId));
     }
 
     match /organizations/{organizationId} {
@@ -200,81 +380,50 @@ service cloud.firestore {
           || (resource.data.workerIds is list && request.auth.uid in resource.data.workerIds)
         );
 
-      allow create: if isManager()
-        && request.auth.uid in request.resource.data.managerIds
-        && request.resource.data.createdBy == request.auth.uid
-      || (
-        isManagerAfterWrite()
-        && request.auth.uid in request.resource.data.managerIds
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.workerIds is list
-        && request.resource.data.workerIds.size() == 0
-      );
+      allow create: if mutationAllowed()
+        && (
+          isManager()
+          && request.auth.uid in request.resource.data.managerIds
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.billingManagerId == request.auth.uid
+          && request.resource.data.managerIds == [request.auth.uid]
+          && request.resource.data.workerIds == []
+          || (
+            isManagerAfterWrite()
+            && request.auth.uid in request.resource.data.managerIds
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.billingManagerId == request.auth.uid
+            && request.resource.data.managerIds == [request.auth.uid]
+            && request.resource.data.workerIds is list
+            && request.resource.data.workerIds.size() == 0
+          )
+        );
 
-      allow update: if isOrganizationManager(organizationId)
-        && request.resource.data.managerIds is list
-        && request.resource.data.workerIds is list
-      || (
-        acceptedWorkerInviteForOrganization(organizationId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'lastAcceptedInviteId', 'updatedAt'])
-        && request.resource.data.managerIds == resource.data.managerIds
-        && request.resource.data.workerIds is list
-        && request.resource.data.workerIds.hasAll(resource.data.workerIds)
-        && request.auth.uid in request.resource.data.workerIds
-        && request.resource.data.workerIds.size() == resource.data.workerIds.size() + 1
-      )
-      || (
-        isManager()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerIds', 'updatedAt'])
-        && resource.data.pendingManagerInviteEmails is list
-        && request.auth.token.email in resource.data.pendingManagerInviteEmails
-        && !(request.auth.uid in resource.data.managerIds)
-        && request.auth.uid in request.resource.data.managerIds
-        && request.resource.data.managerIds.hasAll(resource.data.managerIds)
-        && request.resource.data.managerIds.size() == resource.data.managerIds.size() + 1
-      ) || (
-        signedIn()
-        && request.auth.uid in resource.data.workerIds
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workerIds', 'updatedAt'])
-        && request.resource.data.managerIds == resource.data.managerIds
-        && request.resource.data.workerIds is list
-        && resource.data.workerIds.hasAll(request.resource.data.workerIds)
-        && !(request.auth.uid in request.resource.data.workerIds)
-        && request.resource.data.workerIds.size() == resource.data.workerIds.size() - 1
-      );
+      // Membership, billing ownership, and deletion are server-authoritative.
+      allow update, delete: if false;
+    }
 
-      allow delete: if isOrganizationManager(organizationId)
-        && resource.data.managerIds is list
-        && resource.data.managerIds.size() == 1
-        && request.auth.uid in resource.data.managerIds;
+    match /billingAuditEvents/{eventId} {
+      allow read: if signedIn() && isOrganizationManager(resource.data.organizationId);
+      allow write: if false;
+    }
+
+    match /organizationBilling/{organizationId} {
+      allow read: if isOrganizationMember(organizationId);
+      allow write: if false;
+    }
+
+    match /revenueCatCustomers/{customerId} {
+      allow read, write: if false;
+    }
+
+    match /revenueCatWebhookEvents/{eventId} {
+      allow read, write: if false;
     }
 
     match /workerInvites/{inviteId} {
       allow read: if isInviteManager() || workerOwnsInvite();
-
-      allow create: if isManager()
-        && request.resource.data.managerId == request.auth.uid
-        && validInviteStatus(request.resource.data.status)
-        && request.resource.data.expiresAt is timestamp
-        && missingOrNull('consumedAt')
-        && missingOrNull('inviteTokenId');
-
-      allow update: if (
-        isInviteManager()
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.teamId == resource.data.teamId
-        && request.resource.data.workerId == resource.data.workerId
-        && validInviteStatus(request.resource.data.status)
-      ) || (
-        workerOwnsInvite()
-        && validInviteStatus(request.resource.data.status)
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.teamId == resource.data.teamId
-        && request.resource.data.workerId == request.auth.uid
-        && request.resource.data.status in ['pending_acceptance', 'accepted', 'declined']
-      );
+      allow create, update, delete: if false;
     }
 
     match /managerInvites/{inviteId} {
@@ -290,27 +439,7 @@ service cloud.firestore {
           )
         );
 
-      allow create: if isManager()
-        && request.resource.data.inviterId == request.auth.uid
-        && request.resource.data.status == 'pending';
-
-      allow update: if (
-        isManager()
-        && resource.data.inviterId == request.auth.uid
-        && request.resource.data.inviterId == resource.data.inviterId
-        && request.resource.data.organizationId == resource.data.organizationId
-      ) || (
-        isManager()
-        && resource.data.claimRequired != true
-        && (
-          resource.data.email == request.auth.token.email
-          || resource.data.normalizedEmail == request.auth.token.email
-        )
-        && request.resource.data.organizationId == resource.data.organizationId
-        && request.resource.data.status == 'accepted'
-        && request.resource.data.managerUserId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerUserId', 'status', 'statusReason', 'acceptedAt', 'updatedAt'])
-      );
+      allow create, update, delete: if false;
     }
 
     match /inviteTokens/{inviteId} {
@@ -319,27 +448,7 @@ service cloud.firestore {
         || (resource.data.email == request.auth.token.email)
       );
 
-      allow create: if isManager()
-        && request.resource.data.inviteId == inviteId
-        && request.resource.data.managerId == request.auth.uid
-        && request.resource.data.status == 'active'
-        && request.resource.data.expiresAt is timestamp;
-
-      allow update: if (
-        signedIn()
-        && resource.data.managerId == request.auth.uid
-        && request.resource.data.inviteId == resource.data.inviteId
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.status in ['active', 'expired', 'revoked', 'cancelled']
-      ) || (
-        signedIn()
-        && request.resource.data.inviteId == resource.data.inviteId
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.status == 'consumed'
-        && resource.data.email == request.auth.token.email
-      );
+      allow create, update, delete: if false;
     }
 
     // Raw invitation tokens and fallback-code mappings are server-only. The
@@ -358,9 +467,73 @@ service cloud.firestore {
         || resource.data.managerId == request.auth.uid
         || (isManager() && isEventOwner(resource.data.eventId))
       );
-      allow create: if isManager() && request.resource.data.managerId == request.auth.uid && request.resource.data.action == 'assign';
-      allow update: if signedIn() && resource.data.workerId == request.auth.uid;
-      allow delete: if isManager() && isEventOwner(resource.data.eventId);
+      allow create: if isManager()
+        && organizationWriteEnabled(eventOrganizationId(request.resource.data.eventId))
+        && eventOrganizationId(request.resource.data.eventId) is string
+        && request.resource.data.managerId == request.auth.uid
+        && isOrganizationWorker(
+          request.resource.data.workerId,
+          eventOrganizationId(request.resource.data.eventId)
+        )
+        && request.resource.data.action == 'assign'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.eventId is string
+        && request.resource.data.roleId is string
+        && request.resource.data.eventName is string
+        && request.resource.data.eventName.size() <= 160
+        && request.resource.data.eventLocation is string
+        && request.resource.data.eventLocation.size() <= 300
+        && request.resource.data.eventStartsAt is string
+        && request.resource.data.roleName is string
+        && request.resource.data.roleName.size() <= 160
+        && request.resource.data.roleTaskNames is list
+        && request.resource.data.roleTaskNames.size() <= 100
+        && request.resource.data.responseOptions == ['accept', 'decline']
+        && request.resource.data.createdAt == request.time
+        && !('pushAuthorized' in request.resource.data)
+        && request.resource.data.keys().hasOnly([
+          'workerId',
+          'managerId',
+          'eventId',
+          'roleId',
+          'eventName',
+          'eventLocation',
+          'eventStartsAt',
+          'roleName',
+          'roleTaskNames',
+          'roleOpenSlots',
+          'roleAssignedWorkerIds',
+          'roleWaitlistWorkerIds',
+          'roleEligibleWaitlistWorkerIds',
+          'roleWaitlistInviteWorkerIds',
+          'roleRemovedWorkerIds',
+          'action',
+          'status',
+          'statusReason',
+          'responseOptions',
+          'createdAt'
+        ]);
+      allow update: if signedIn()
+        && organizationWriteEnabled(eventOrganizationId(resource.data.eventId))
+        && resource.data.workerId == request.auth.uid
+        && !('pushAuthorized' in request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pushSeenBy'])
+        && request.resource.data.pushSeenBy is list
+        && (
+          (
+            !('pushSeenBy' in resource.data)
+            && request.resource.data.pushSeenBy == [request.auth.uid]
+          )
+          || (
+            resource.data.pushSeenBy is list
+            && request.resource.data.pushSeenBy.hasAll(resource.data.pushSeenBy)
+            && request.resource.data.pushSeenBy.hasOnly(resource.data.pushSeenBy.concat([request.auth.uid]))
+            && request.resource.data.pushSeenBy.size() <= resource.data.pushSeenBy.size() + 1
+          )
+        );
+      allow delete: if isManager()
+        && organizationWriteEnabled(eventOrganizationId(resource.data.eventId))
+        && isEventOwner(resource.data.eventId);
     }
 
     match /userNotifications/{notificationId} {
@@ -368,43 +541,208 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid
         || (isManager() && isEventOwner(resource.data.relatedEventId))
       );
-      allow create: if signedIn();
-      allow update: if signedIn() && resource.data.userId == request.auth.uid;
-      allow delete: if signedIn() && (
+      // Legacy client-created in-app notices are same-organization, bounded,
+      // untrusted records. Only Admin SDK writers may set pushAuthorized.
+      allow create: if mutationAllowed()
+        && organizationWriteEnabled(userOrganizationId())
+        && request.resource.data.userId is string
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.userId))
+        && get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.organizationId == userOrganizationId()
+        && request.resource.data.kind in [
+          'worker_team_invite',
+          'role_removed',
+          'role_available',
+          'worker_role_cancelled',
+          'role_invite_response',
+          'task_behind_schedule'
+        ]
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 160
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 1000
+        && request.resource.data.read == false
+        && request.resource.data.createdAt == request.time
+        && !('pushAuthorized' in request.resource.data)
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'kind',
+          'title',
+          'body',
+          'relatedEventId',
+          'relatedRoleId',
+          'relatedTaskId',
+          'sourceNotificationId',
+          'statusReason',
+          'dueAt',
+          'read',
+          'createdAt'
+        ]);
+      allow update: if mutationAllowed()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      allow delete: if mutationAllowed() && (
         resource.data.userId == request.auth.uid
         || (isManager() && isEventOwner(resource.data.relatedEventId))
       );
     }
 
     match /chatThreads/{threadId} {
-      allow read, write: if signedIn();
+      // A sender must be able to observe that an authorized thread is missing
+      // before creating its parent document. Existing threads and all queries
+      // remain constrained to live organization membership + participation.
+      allow get: if (
+          !exists(/databases/$(database)/documents/chatThreads/$(threadId))
+          && organizationWriteEnabled(userOrganizationId())
+        )
+        || (
+          exists(/databases/$(database)/documents/chatThreads/$(threadId))
+          && canReadThreadData(resource.data)
+        );
+      allow list: if canReadThreadData(resource.data);
+      allow create: if signedIn()
+        && organizationWriteEnabled(organizationIdFromData(request.resource.data))
+        && participantsAreActiveOrganizationMembers(request.resource.data)
+        && request.auth.uid in request.resource.data.participants;
+      allow update: if signedIn()
+        && canWriteThread(threadId)
+        && organizationIdFromData(request.resource.data) == organizationIdFromData(resource.data)
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'lastMessageText',
+            'lastMessageSenderId',
+            'pushSeenBy',
+            'title',
+            'updatedAt'
+          ])
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'participants',
+              'pushSeenBy',
+              'teamName',
+              'title',
+              'updatedAt'
+            ])
+            && participantsAreActiveOrganizationMembers(request.resource.data)
+            && (
+              (
+                resource.data.kind == 'custom'
+                && (
+                  (
+                    request.auth.uid in request.resource.data.participants
+                    && request.resource.data.participants.hasAll(resource.data.participants)
+                  )
+                  || request.resource.data.participants == resource.data.participants.removeAll([request.auth.uid])
+                )
+              )
+              || isOrganizationManager(organizationIdFromData(resource.data))
+            )
+          )
+          || (
+            resource.data.teamId is string
+            && (
+              !('organizationId' in resource.data)
+              || resource.data.organizationId == null
+            )
+            && request.resource.data.organizationId == teamOrganizationId(resource.data.teamId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'organizationId',
+              'updatedAt'
+            ])
+          )
+        );
+      // Thread deletion is server-authoritative so a participant cannot erase
+      // the shared parent and orphan the organization's message history.
+      allow delete: if false;
       match /messages/{messageId} {
-        allow read, write: if signedIn();
+        allow read: if canReadThread(threadId);
+        allow create: if canWriteThread(threadId)
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.recipientIds is list
+          && request.resource.data.recipientIds.hasOnly(
+            get(/databases/$(database)/documents/chatThreads/$(threadId)).data.participants
+          );
+        allow update, delete: if false;
       }
       match /activeViewers/{userId} {
-        allow read, create, update, delete: if signedIn() && request.auth.uid == userId;
+        allow read: if signedIn()
+          && request.auth.uid == userId
+          && canReadThread(threadId);
+        allow create, update, delete: if mutationAllowed()
+          && request.auth.uid == userId
+          && canReadThread(threadId);
       }
     }
 
     match /chatUnread/{docId} {
-      allow read, write: if signedIn();
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if mutationAllowed()
+        && request.resource.data.userId is string
+        && request.resource.data.threadId is string
+        && canWriteThread(request.resource.data.threadId)
+        && request.resource.data.userId in get(
+          /databases/$(database)/documents/chatThreads/$(request.resource.data.threadId)
+        ).data.participants;
+      allow update: if mutationAllowed()
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.threadId == resource.data.threadId
+        && (
+          request.auth.uid == resource.data.userId
+          || canWriteThread(resource.data.threadId)
+        );
+      allow delete: if mutationAllowed()
+        && (
+          request.auth.uid == resource.data.userId
+          || canWriteThread(resource.data.threadId)
+        );
     }
 
     match /eventTemplates/{templateId} {
-      allow read, write: if signedIn();
+      allow read: if signedIn() && resource.data.managerId == request.auth.uid;
+      allow create: if organizationWriteEnabled(userOrganizationId())
+        && request.resource.data.managerId == request.auth.uid;
+      allow update: if organizationWriteEnabled(userOrganizationId())
+        && resource.data.managerId == request.auth.uid
+        && request.resource.data.managerId == resource.data.managerId;
+      allow delete: if organizationWriteEnabled(userOrganizationId())
+        && resource.data.managerId == request.auth.uid;
     }
 
     match /events/{eventId} {
-      allow read, write: if signedIn();
+      allow read: if signedIn() && (
+        isOrganizationMember(organizationIdFromData(resource.data))
+        || (
+          organizationIdFromData(resource.data) == null
+          && (
+            resource.data.managerId == request.auth.uid
+            || (resource.data.workerIds is list && request.auth.uid in resource.data.workerIds)
+          )
+        )
+      );
+      allow create: if signedIn()
+        && organizationWriteEnabled(organizationIdFromData(request.resource.data))
+        && isOrganizationManager(organizationIdFromData(request.resource.data))
+        && request.resource.data.managerId == request.auth.uid;
+      // Worker role responses and task completion are server-authoritative;
+      // clients cannot replace an event's complete roles/schedule document.
+      allow update: if signedIn()
+        && organizationWriteEnabled(organizationIdFromData(resource.data))
+        && isOrganizationManager(organizationIdFromData(resource.data))
+        && organizationIdFromData(request.resource.data) == organizationIdFromData(resource.data);
+      allow delete: if signedIn()
+        && organizationWriteEnabled(organizationIdFromData(resource.data))
+        && isOrganizationManager(organizationIdFromData(resource.data));
     }
 
     // Private beta checklist state. Each tester can access only their own run.
     match /dispatchBetaChecklistRuns/{userId} {
-      allow read, create, update, delete: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update, delete: if mutationAllowed() && request.auth.uid == userId;
     }
 
     match /mail/{mailId} {
-      allow create: if signedIn();
+      // Email is queued only by trusted callable/Admin SDK writers.
+      allow read, create, update, delete: if false;
     }
   }
 }

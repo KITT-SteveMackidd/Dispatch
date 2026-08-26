@@ -20,6 +20,9 @@ export type Organisation = {
   managerIds: string[];
   workerIds?: string[];
   createdBy?: string;
+  billingManagerId?: string;
+  billingManagerTransferredBy?: string;
+  billingManagerTransferredAt?: { toDate?: () => Date } | Date | null;
 };
 
 export type EventTaskAttachment = {

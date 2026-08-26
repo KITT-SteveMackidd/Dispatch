@@ -1,9 +1,13 @@
 const BATCH_SIZE = 400;
 const PAGE_SIZE = 400;
-const GENERIC_NAMES = new Set(['dispatch user', 'manager', 'worker', 'deleted user']);
 const ACCOUNT_DELETION_COLLECTIONS = [
   'users',
+  'accountDeletionTombstones',
   'organizations',
+  'organizationBilling',
+  'billingAuditEvents',
+  'revenueCatCustomers',
+  'revenueCatWebhookEvents',
   'teams',
   'events',
   'eventTemplates',
@@ -37,30 +41,47 @@ function uniqueStrings(values) {
     .filter(Boolean))];
 }
 
+function activeOrganizationProfileIds(organizationUsers, deletingUserId, deletionFencedUserIds = new Set()) {
+  const memberIds = {
+    managerIds: [],
+    workerIds: [],
+  };
+
+  (Array.isArray(organizationUsers) ? organizationUsers : []).forEach((member) => {
+    if (!member
+      || member.id === deletingUserId
+      || typeof member.id !== 'string'
+      || deletionFencedUserIds.has(member.id)) return;
+    const role = String(member.data?.role || '').trim().toLowerCase();
+    if (role === 'manager') memberIds.managerIds.push(member.id);
+    if (role === 'worker') memberIds.workerIds.push(member.id);
+  });
+
+  memberIds.managerIds = uniqueStrings(memberIds.managerIds).sort();
+  memberIds.workerIds = uniqueStrings(memberIds.workerIds).sort();
+  return memberIds;
+}
+
 function sameArray(left, right) {
   return JSON.stringify(left || []) === JSON.stringify(right || []);
 }
 
 function buildDeletionIdentity(authUser, userData = {}) {
-  const accountEmails = uniqueStrings([
-    authUser?.email,
-    userData.email,
-    ...(authUser?.providerData || []).map((provider) => provider.email),
+  const providerEmails = (authUser?.providerData || [])
+    .filter((provider) => provider?.providerId && provider.providerId !== 'password')
+    .map((provider) => provider.email);
+  const emails = uniqueStrings([
+    authUser?.emailVerified === true ? authUser.email : null,
+    ...providerEmails,
   ].map(normalizeEmail));
-  const emails = accountEmails.length
-    ? accountEmails
-    : uniqueStrings([normalizeEmail(userData.canonicalEmail)]);
-  const names = uniqueStrings([
-    authUser?.displayName,
-    userData.displayName,
-    ...(authUser?.providerData || []).map((provider) => provider.displayName),
-  ]).filter((name) => name.length >= 3 && !GENERIC_NAMES.has(name.toLowerCase()));
 
   return {
     uid: authUser.uid,
     emails,
-    names: names.sort((left, right) => right.length - left.length),
-    pushTokens: uniqueStrings(userData.pushTokens),
+    // Display names, profile emails, canonical emails, and push tokens are all
+    // mutable by the client. They must never become global deletion keys.
+    names: [],
+    pushTokens: [],
   };
 }
 
@@ -76,7 +97,7 @@ function escapeRegExp(value) {
 function redactIdentityText(value, identity) {
   if (typeof value !== 'string' || !value) return value;
   let next = value;
-  const needles = uniqueStrings([identity.uid, ...identity.emails, ...identity.names])
+  const needles = uniqueStrings([identity.uid, ...identity.emails])
     .sort((left, right) => right.length - left.length);
   needles.forEach((needle) => {
     next = next.replace(new RegExp(escapeRegExp(needle), 'gi'), 'Deleted user');
@@ -93,16 +114,15 @@ function redactStringFields(data, fields, identity) {
   return updates;
 }
 
-function textContainsIdentity(value, identity, includeNames = false) {
+function textContainsIdentity(value, identity) {
   if (typeof value !== 'string') return false;
   const normalized = value.toLowerCase();
-  const needles = [identity.uid, ...identity.emails, ...identity.pushTokens];
-  if (includeNames) needles.push(...identity.names);
+  const needles = [identity.uid, ...identity.emails];
   return needles.some((needle) => needle && normalized.includes(needle.toLowerCase()));
 }
 
 function valueReferencesIdentity(value, identity, includeNames = false, seen = new Set()) {
-  if (typeof value === 'string') return textContainsIdentity(value, identity, includeNames);
+  if (typeof value === 'string') return textContainsIdentity(value, identity);
   if (!value || typeof value !== 'object') return false;
   if (seen.has(value)) return false;
   seen.add(value);
@@ -110,18 +130,6 @@ function valueReferencesIdentity(value, identity, includeNames = false, seen = n
     return value.some((item) => valueReferencesIdentity(item, identity, includeNames, seen));
   }
   return Object.values(value).some((item) => valueReferencesIdentity(item, identity, includeNames, seen));
-}
-
-function valueContainsAny(value, needles, seen = new Set()) {
-  if (!needles.size) return false;
-  if (typeof value === 'string') {
-    return [...needles].some((needle) => needle && value.includes(needle));
-  }
-  if (!value || typeof value !== 'object') return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (Array.isArray(value)) return value.some((item) => valueContainsAny(item, needles, seen));
-  return Object.values(value).some((item) => valueContainsAny(item, needles, seen));
 }
 
 function safeDecodeURIComponent(value) {
@@ -162,12 +170,12 @@ function storagePathBelongsToUser(path, uid) {
   return parts[0] === 'chatAttachments' && parts[2] === uid;
 }
 
-function collectAttachmentPaths(roles, target) {
+function collectAttachmentPaths(roles, target, uid) {
   (Array.isArray(roles) ? roles : []).forEach((role) => {
     (Array.isArray(role?.tasks) ? role.tasks : []).forEach((task) => {
       (Array.isArray(task?.attachments) ? task.attachments : []).forEach((attachment) => {
         const path = storagePathFromAttachment(attachment);
-        if (path) target.add(path);
+        if (path && storagePathBelongsToUser(path, uid)) target.add(path);
       });
     });
   });
@@ -270,10 +278,6 @@ function sanitizeTemplateRoles(roles, uid, storagePaths, identity) {
   return { roles: nextRoles, changed };
 }
 
-function threadIdReferencesUser(threadId, uid) {
-  return typeof threadId === 'string' && threadId.includes(uid);
-}
-
 function timestampMs(value) {
   if (!value) return 0;
   if (typeof value.toMillis === 'function') return value.toMillis();
@@ -356,7 +360,9 @@ async function commitOperations(db, operations) {
 
 async function collectOwnedStorageFiles(bucket, uid, deletedThreadIds, explicitPaths) {
   const filesByName = new Map();
-  for (const path of explicitPaths) filesByName.set(path, bucket.file(path));
+  for (const path of explicitPaths) {
+    if (storagePathBelongsToUser(path, uid)) filesByName.set(path, bucket.file(path));
+  }
 
   const [templateFiles] = await bucket.getFiles({ prefix: `dispatchTemplateAttachments/${uid}/` });
   templateFiles.forEach((file) => filesByName.set(file.name, file));
@@ -389,7 +395,6 @@ async function deleteResidualIdentityRecords(params) {
     identity,
     collectionNames,
     deletedSourcePaths,
-    sensitiveIds,
   } = params;
   const queue = createOperationQueue();
 
@@ -398,8 +403,7 @@ async function deleteResidualIdentityRecords(params) {
     records.forEach((record) => {
       const referencesIdentity = valueReferencesIdentity(record.data, identity, true)
         || textContainsIdentity(record.id, identity)
-        || deletedSourcePaths.has(record.data.sourcePath)
-        || valueContainsAny(record.data, sensitiveIds);
+        || deletedSourcePaths.has(record.data.sourcePath);
       if (!referencesIdentity) return;
       if (collectionName === 'mail') queue.recursiveDelete(record.ref);
       else queue.delete(record.ref);
@@ -437,6 +441,7 @@ async function deleteDispatchUserData(params) {
   const queue = createOperationQueue();
   const storagePaths = new Set();
   const deletedOrgIds = new Set();
+  const orphanedOrgIds = new Set();
   const deletedTeamIds = new Set();
   const deletedEventIds = new Set();
   const deletedInviteIds = new Set();
@@ -446,9 +451,9 @@ async function deleteDispatchUserData(params) {
   const affectedThreadIds = new Set();
   const deletedMessageIds = new Set();
   const deletedSourcePaths = new Set();
-  const sensitiveIds = new Set();
   const successorByOrganization = new Map();
   const survivingManagersByOrganization = new Map();
+  const survivingWorkersByOrganization = new Map();
   const managerOrganizationsForUser = new Set();
   const organizationNamesAfterDeletion = new Map();
   const eventOwnerAfter = new Map();
@@ -461,24 +466,30 @@ async function deleteDispatchUserData(params) {
     current.push(record);
     usersByOrganization.set(organizationId, current);
   });
+  const deletionFencedUserIds = new Set(records.accountDeletionTombstones.map((record) => record.id));
 
   records.organizations.forEach((record) => {
     const organizationUsers = usersByOrganization.get(record.id) || [];
-    const profileManagers = organizationUsers
-      .filter((member) => member.id !== uid && String(member.data.role || '').toLowerCase() === 'manager')
-      .map((member) => member.id);
+    const {
+      managerIds: profileManagers,
+      workerIds: profileWorkers,
+    } = activeOrganizationProfileIds(organizationUsers, uid, deletionFencedUserIds);
+    survivingManagersByOrganization.set(record.id, profileManagers);
+    survivingWorkersByOrganization.set(record.id, profileWorkers);
     const storedManagers = uniqueStrings(record.data.managerIds);
-    const survivingManagers = uniqueStrings([...storedManagers.filter((id) => id !== uid), ...profileManagers]);
     const userIsManager = storedManagers.includes(uid)
-      || (userData.organizationId === record.id && String(userData.role || '').toLowerCase() === 'manager');
+      || record.data.createdBy === uid
+      || record.data.billingManagerId === uid
+      || (userData.organizationId === record.id
+        && String(userData.role || '').trim().toLowerCase() === 'manager');
     if (userIsManager) managerOrganizationsForUser.add(record.id);
-    if (userIsManager && !survivingManagers.length) {
-      deletedOrgIds.add(record.id);
+    if (userIsManager && !profileManagers.length) {
+      if (profileWorkers.length) orphanedOrgIds.add(record.id);
+      else deletedOrgIds.add(record.id);
       return;
     }
-    if (survivingManagers.length) {
-      successorByOrganization.set(record.id, survivingManagers[0]);
-      survivingManagersByOrganization.set(record.id, survivingManagers);
+    if (profileManagers.length) {
+      successorByOrganization.set(record.id, profileManagers[0]);
     }
   });
 
@@ -505,7 +516,6 @@ async function deleteDispatchUserData(params) {
       queue.delete(record.ref);
       deletedInviteIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
-      sensitiveIds.add(record.id);
       return;
     }
     const updates = {};
@@ -522,6 +532,93 @@ async function deleteDispatchUserData(params) {
     queue.update(record.ref, updates);
   });
 
+  records.organizationBilling.forEach((record) => {
+    if (deletedOrgIds.has(record.id)) {
+      queue.delete(record.ref);
+      deletedSourcePaths.add(record.ref.path);
+      return;
+    }
+    const updates = {};
+    if (record.data.purchaserUserId === uid) {
+      updates.purchaserUserId = null;
+      const hasPaidBillingState = record.data.planId !== 'free'
+        || record.data.status !== 'free'
+        || Boolean(record.data.sourceStore)
+        || Boolean(record.data.productIdentifier)
+        || record.data.willRenew === true;
+      if (hasPaidBillingState) {
+        Object.assign(updates, {
+          planId: 'free',
+          billingPeriod: null,
+          status: 'revoked',
+          accessMode: 'read_only',
+          seatLimit: 5,
+          sourceStore: null,
+          productIdentifier: null,
+          willRenew: false,
+          currentPeriodEndsAt: null,
+          gracePeriodExpiresAt: null,
+          pendingPlanId: null,
+          pendingBillingPeriod: null,
+          pendingPlanEffectiveAt: null,
+          managementURL: null,
+          purchaseIntent: null,
+          payerAccountDeletedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
+    if (orphanedOrgIds.has(record.id)) {
+      Object.assign(updates, {
+        status: 'revoked',
+        accessMode: 'read_only',
+        willRenew: false,
+        recoveryState: 'orphaned_no_manager',
+        recoveryStartedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    if (record.data.purchaseIntent?.purchaserUserId === uid) updates.purchaseIntent = FieldValue.delete();
+    if (record.data.billingManagerTransferredBy === uid) updates.billingManagerTransferredBy = FieldValue.delete();
+    if (Object.keys(updates).length) {
+      updates.updatedAt = FieldValue.serverTimestamp();
+      queue.update(record.ref, updates);
+    }
+  });
+
+  records.billingAuditEvents.forEach((record) => {
+    if (deletedOrgIds.has(record.data.organizationId)) {
+      queue.delete(record.ref);
+      deletedSourcePaths.add(record.ref.path);
+      return;
+    }
+    const updates = {};
+    ['actorUserId', 'targetUserId', 'previousBillingManagerId', 'nextBillingManagerId'].forEach((field) => {
+      if (record.data[field] === uid) updates[field] = FieldValue.delete();
+    });
+    queue.update(record.ref, updates);
+  });
+
+  records.revenueCatCustomers.forEach((record) => {
+    if (record.data.purchaserUserId === uid || deletedOrgIds.has(record.data.organizationId)) {
+      queue.delete(record.ref);
+      deletedSourcePaths.add(record.ref.path);
+    }
+  });
+
+  records.revenueCatWebhookEvents.forEach((record) => {
+    if (deletedOrgIds.has(record.data.organizationId)) {
+      queue.delete(record.ref);
+      deletedSourcePaths.add(record.ref.path);
+      return;
+    }
+    const updates = {};
+    if (record.data.purchaserUserId === uid) updates.purchaserUserId = FieldValue.delete();
+    ['sourcePurchaserUserIds', 'destinationPurchaserUserIds'].forEach((field) => {
+      if (!Array.isArray(record.data[field])) return;
+      changedArrayUpdate(updates, field, record.data[field], record.data[field].filter((id) => id !== uid));
+    });
+    queue.update(record.ref, updates);
+  });
+
   records.managerInvites.forEach((record) => {
     const data = record.data;
     const incoming = data.managerUserId === uid
@@ -533,7 +630,6 @@ async function deleteDispatchUserData(params) {
       queue.delete(record.ref);
       deletedInviteIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
-      sensitiveIds.add(record.id);
       return;
     }
     const updates = redactStringFields(data, ['organizationName', 'statusReason'], identity);
@@ -553,7 +649,6 @@ async function deleteDispatchUserData(params) {
       || (data.managerId === uid && !replacement)) {
       queue.delete(record.ref);
       deletedSourcePaths.add(record.ref.path);
-      sensitiveIds.add(record.id);
       return;
     }
     if (data.managerId === uid && replacement) queue.update(record.ref, { managerId: replacement });
@@ -571,7 +666,6 @@ async function deleteDispatchUserData(params) {
       queue.delete(record.ref);
       deletedSecureInviteHashes.add(record.id);
       deletedSourcePaths.add(record.ref.path);
-      sensitiveIds.add(record.id);
       return;
     }
 
@@ -588,7 +682,6 @@ async function deleteDispatchUserData(params) {
     if (deletedSecureInviteHashes.has(record.data.inviteHash)) {
       queue.delete(record.ref);
       deletedSourcePaths.add(record.ref.path);
-      sensitiveIds.add(record.id);
     }
   });
 
@@ -596,16 +689,19 @@ async function deleteDispatchUserData(params) {
     const data = record.data;
     if (deletedOrgIds.has(record.id)) {
       queue.delete(record.ref);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
       return;
     }
-    const organizationUsers = usersByOrganization.get(record.id) || [];
-    const profileManagers = organizationUsers
-      .filter((member) => member.id !== uid && String(member.data.role || '').toLowerCase() === 'manager')
-      .map((member) => member.id);
-    const managerIds = uniqueStrings([...uniqueStrings(data.managerIds).filter((id) => id !== uid), ...profileManagers]);
-    const workerIds = uniqueStrings(data.workerIds).filter((id) => id !== uid);
+    const profileManagers = survivingManagersByOrganization.get(record.id) || [];
+    const profileWorkers = survivingWorkersByOrganization.get(record.id) || [];
+    const userManagedOrganization = managerOrganizationsForUser.has(record.id);
+    const organizationIsOrphaned = orphanedOrgIds.has(record.id);
+    const managerIds = userManagedOrganization
+      ? profileManagers
+      : uniqueStrings([...uniqueStrings(data.managerIds).filter((id) => id !== uid), ...profileManagers]);
+    const workerIds = userManagedOrganization
+      ? profileWorkers
+      : uniqueStrings([...uniqueStrings(data.workerIds).filter((id) => id !== uid), ...profileWorkers]);
     const pendingEmails = uniqueStrings(data.pendingManagerInviteEmails).filter((email) => !identityMatchesEmail(email, identity));
     const pendingCanonicalEmails = uniqueStrings(data.pendingManagerInviteCanonicalEmails).filter((email) => !identityMatchesEmail(email, identity));
     const updates = redactStringFields(data, ['name'], identity);
@@ -614,7 +710,23 @@ async function deleteDispatchUserData(params) {
     changedArrayUpdate(updates, 'workerIds', data.workerIds, workerIds);
     changedArrayUpdate(updates, 'pendingManagerInviteEmails', data.pendingManagerInviteEmails, pendingEmails);
     changedArrayUpdate(updates, 'pendingManagerInviteCanonicalEmails', data.pendingManagerInviteCanonicalEmails, pendingCanonicalEmails);
-    if (data.createdBy === uid) updates.createdBy = managerIds[0] || FieldValue.delete();
+    if (organizationIsOrphaned) {
+      updates.createdBy = FieldValue.delete();
+      updates.billingManagerId = FieldValue.delete();
+      updates.recoveryState = 'orphaned_no_manager';
+      updates.recoveryStartedAt = FieldValue.serverTimestamp();
+      updates.billingManagerTransferredAt = FieldValue.serverTimestamp();
+      updates.billingManagerTransferReason = 'account_deleted_orphaned';
+    } else if (data.createdBy === uid) {
+      updates.createdBy = managerIds[0] || FieldValue.delete();
+    }
+    if (!organizationIsOrphaned && (data.billingManagerId === uid
+      || (userManagedOrganization && data.billingManagerId && !managerIds.includes(data.billingManagerId)))) {
+      updates.billingManagerId = managerIds[0] || FieldValue.delete();
+      updates.billingManagerTransferredAt = FieldValue.serverTimestamp();
+      updates.billingManagerTransferReason = 'account_deleted';
+    }
+    if (data.billingManagerTransferredBy === uid) updates.billingManagerTransferredBy = FieldValue.delete();
     removeDeletedReference(updates, 'lastAcceptedInviteId', data.lastAcceptedInviteId, deletedInviteIds, FieldValue);
     if (Object.keys(updates).length) updates.updatedAt = FieldValue.serverTimestamp();
     queue.update(record.ref, updates);
@@ -641,25 +753,37 @@ async function deleteDispatchUserData(params) {
 
   records.teams.forEach((record) => {
     const data = record.data;
+    const organizationIsOrphaned = orphanedOrgIds.has(data.organizationId);
     const storedManagerIds = uniqueStrings([data.managerId, ...uniqueStrings(data.managerIds)]);
     const organizationManagers = data.organizationId && !deletedOrgIds.has(data.organizationId)
       ? (survivingManagersByOrganization.get(data.organizationId) || [])
       : [];
-    const managerIds = uniqueStrings([
-      ...storedManagerIds.filter((id) => id !== uid),
-      ...uniqueStrings(organizationManagers).filter((id) => id !== uid),
-    ]);
+    const managerIds = managerOrganizationsForUser.has(data.organizationId)
+      ? uniqueStrings(organizationManagers).filter((id) => id !== uid)
+      : uniqueStrings([
+        ...storedManagerIds.filter((id) => id !== uid),
+        ...uniqueStrings(organizationManagers).filter((id) => id !== uid),
+      ]);
     const replacement = replacementForOrganization(data.organizationId) || managerIds[0];
-    if (deletedOrgIds.has(data.organizationId) || (data.managerId === uid && !replacement)) {
+    if (deletedOrgIds.has(data.organizationId) || (!organizationIsOrphaned && data.managerId === uid && !replacement)) {
       queue.delete(record.ref);
       deletedTeamIds.add(record.id);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
       return;
     }
     const updates = redactStringFields(data, ['name', 'organizationName'], identity);
-    if (data.managerId === uid && replacement) updates.managerId = replacement;
-    changedArrayUpdate(updates, 'managerIds', data.managerIds, managerIds);
+    if (organizationIsOrphaned) {
+      updates.managerId = FieldValue.delete();
+      updates.ownershipState = 'orphaned';
+      updates.ownershipOrphanedAt = FieldValue.serverTimestamp();
+      changedArrayUpdate(updates, 'managerIds', data.managerIds, []);
+    } else {
+      if (replacement && (data.managerId === uid
+        || (managerOrganizationsForUser.has(data.organizationId) && !managerIds.includes(data.managerId)))) {
+        updates.managerId = replacement;
+      }
+      changedArrayUpdate(updates, 'managerIds', data.managerIds, managerIds);
+    }
     changedArrayUpdate(updates, 'workerIds', data.workerIds, uniqueStrings(data.workerIds).filter((id) => id !== uid));
     removeDeletedReference(updates, 'lastAcceptedInviteId', data.lastAcceptedInviteId, deletedInviteIds, FieldValue);
     if (Object.keys(updates).length) updates.updatedAt = FieldValue.serverTimestamp();
@@ -668,21 +792,31 @@ async function deleteDispatchUserData(params) {
 
   records.events.forEach((record) => {
     const data = record.data;
+    const organizationIsOrphaned = orphanedOrgIds.has(data.organizationId);
+    const organizationManagers = survivingManagersByOrganization.get(data.organizationId) || [];
     const replacement = data.organizationId
       ? replacementForOrganization(data.organizationId)
       : defaultManagerReplacement;
-    const deleteEvent = deletedOrgIds.has(data.organizationId) || (data.managerId === uid && !replacement);
+    const deleteEvent = deletedOrgIds.has(data.organizationId)
+      || (!organizationIsOrphaned && data.managerId === uid && !replacement);
     if (deleteEvent) {
-      collectAttachmentPaths(data.roles, storagePaths);
+      collectAttachmentPaths(data.roles, storagePaths, uid);
       queue.delete(record.ref);
       deletedEventIds.add(record.id);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
       return;
     }
     const sanitized = sanitizeEventRoles(data.roles, uid, storagePaths, identity);
     const updates = {};
-    if (data.managerId === uid && replacement) updates.managerId = replacement;
+    if (organizationIsOrphaned) {
+      updates.managerId = FieldValue.delete();
+      updates.ownershipState = 'orphaned';
+      updates.ownershipOrphanedAt = FieldValue.serverTimestamp();
+    } else if (replacement && (data.managerId === uid
+      || (managerOrganizationsForUser.has(data.organizationId)
+        && !organizationManagers.includes(data.managerId)))) {
+      updates.managerId = replacement;
+    }
     if (sanitized.changed || !sameArray(data.workerIds, sanitized.workerIds)) {
       updates.roles = sanitized.roles;
       updates.workerIds = sanitized.workerIds;
@@ -691,25 +825,35 @@ async function deleteDispatchUserData(params) {
     Object.assign(updates, redactStringFields(data, ['name', 'location', 'description'], identity));
     if (Object.keys(updates).length) updates.updatedAt = FieldValue.serverTimestamp();
     queue.update(record.ref, updates);
-    eventOwnerAfter.set(record.id, updates.managerId || data.managerId);
+    eventOwnerAfter.set(record.id, organizationIsOrphaned ? null : (updates.managerId || data.managerId));
   });
 
   records.eventTemplates.forEach((record) => {
     const data = record.data;
+    const organizationIsOrphaned = orphanedOrgIds.has(data.organizationId);
+    const organizationManagers = survivingManagersByOrganization.get(data.organizationId) || [];
     const replacement = data.organizationId
       ? replacementForOrganization(data.organizationId)
       : defaultManagerReplacement;
-    const deleteTemplate = data.managerId === uid && !replacement;
+    const deleteTemplate = deletedOrgIds.has(data.organizationId)
+      || (!organizationIsOrphaned && data.managerId === uid && !replacement);
     if (deleteTemplate) {
-      collectAttachmentPaths(data.roles, storagePaths);
+      collectAttachmentPaths(data.roles, storagePaths, uid);
       queue.delete(record.ref);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
       return;
     }
     const sanitized = sanitizeTemplateRoles(data.roles, uid, storagePaths, identity);
     const updates = {};
-    if (data.managerId === uid && replacement) updates.managerId = replacement;
+    if (organizationIsOrphaned) {
+      updates.managerId = FieldValue.delete();
+      updates.ownershipState = 'orphaned';
+      updates.ownershipOrphanedAt = FieldValue.serverTimestamp();
+    } else if (replacement && (data.managerId === uid
+      || (managerOrganizationsForUser.has(data.organizationId)
+        && !organizationManagers.includes(data.managerId)))) {
+      updates.managerId = replacement;
+    }
     if (sanitized.changed) updates.roles = sanitized.roles;
     Object.assign(updates, redactStringFields(
       data,
@@ -729,7 +873,6 @@ async function deleteDispatchUserData(params) {
       || (data.managerId === uid && !replacement)) {
       queue.delete(record.ref);
       deletedRoleNotificationIds.add(record.id);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
       return;
     }
@@ -778,9 +921,11 @@ async function deleteDispatchUserData(params) {
 
   records.users.forEach((record) => {
     if (record.id === uid || !Array.isArray(record.data.scheduledEventReminderKeys)) return;
+    const deletedReminderKeys = new Set(
+      [...deletedEventIds].map((eventId) => `${eventId}:two-hours`)
+    );
     const scheduledEventReminderKeys = uniqueStrings(record.data.scheduledEventReminderKeys)
-      .filter((key) => ![...deletedEventIds].some((eventId) => key.includes(eventId)))
-      .filter((key) => !textContainsIdentity(key, identity));
+      .filter((key) => !deletedReminderKeys.has(key));
     if (!sameArray(record.data.scheduledEventReminderKeys, scheduledEventReminderKeys)) {
       queue.update(record.ref, {
         scheduledEventReminderKeys,
@@ -805,7 +950,6 @@ async function deleteDispatchUserData(params) {
       || deletedRoleNotificationIds.has(data.sourceNotificationId)) {
       queue.delete(record.ref);
       deletedUserNotificationIds.add(record.id);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
       return;
     }
@@ -817,15 +961,18 @@ async function deleteDispatchUserData(params) {
   });
 
   records.mail.forEach((record) => {
+    const data = record.data;
+    const relatedInviteId = data.dispatchInvite?.inviteId;
+    const relatedEventId = data.dispatchEventReminder?.eventId
+      || data.dispatchEventRoleInvite?.eventId;
+    const relatedRoleNotificationId = data.dispatchEventRoleInvite?.sourceNotificationId;
+    const relatedUserNotificationId = data.dispatchUserNotification?.notificationId;
     if (valueReferencesIdentity(record.data, identity, true)
-      || valueContainsAny(record.data, new Set([
-        ...deletedInviteIds,
-        ...deletedEventIds,
-        ...deletedRoleNotificationIds,
-        ...deletedUserNotificationIds,
-      ]))) {
+      || deletedInviteIds.has(relatedInviteId)
+      || deletedEventIds.has(relatedEventId)
+      || deletedRoleNotificationIds.has(relatedRoleNotificationId)
+      || deletedUserNotificationIds.has(relatedUserNotificationId)) {
       queue.recursiveDelete(record.ref);
-      sensitiveIds.add(record.id);
       deletedSourcePaths.add(record.ref.path);
     }
   });
@@ -834,12 +981,9 @@ async function deleteDispatchUserData(params) {
     const data = thread.data;
     const messages = await listCollectionDocuments(thread.ref.collection('messages'));
     const activeViewers = await listCollectionDocuments(thread.ref.collection('activeViewers'));
-    let deleteWholeThread = threadIdReferencesUser(thread.id, uid)
-      || deletedOrgIds.has(data.organizationId)
+    let deleteWholeThread = deletedOrgIds.has(data.organizationId)
       || deletedTeamIds.has(data.teamId);
     const participants = uniqueStrings(data.participants).filter((id) => id !== uid);
-    if (!participants.length && uniqueStrings(data.participants).includes(uid)) deleteWholeThread = true;
-
     if (deleteWholeThread) {
       messages.forEach((message) => {
         (Array.isArray(message.data.attachments) ? message.data.attachments : []).forEach((attachment) => {
@@ -847,11 +991,9 @@ async function deleteDispatchUserData(params) {
           if (path) storagePaths.add(path);
         });
         deletedMessageIds.add(message.id);
-        sensitiveIds.add(message.id);
       });
       queue.recursiveDelete(thread.ref);
       deletedThreadIds.add(thread.id);
-      sensitiveIds.add(thread.id);
       deletedSourcePaths.add(thread.ref.path);
       continue;
     }
@@ -881,7 +1023,6 @@ async function deleteDispatchUserData(params) {
         });
         queue.delete(message.ref);
         deletedMessageIds.add(message.id);
-        sensitiveIds.add(message.id);
         deletedSourcePaths.add(message.ref.path);
         threadAffected = true;
         continue;
@@ -945,14 +1086,11 @@ async function deleteDispatchUserData(params) {
     const data = record.data;
     const deleteUnread = data.userId === uid
       || record.id.startsWith(`${uid}__`)
-      || threadIdReferencesUser(record.id, uid)
       || valueReferencesIdentity(data, identity)
       || deletedThreadIds.has(data.threadId)
-      || deletedTeamIds.has(data.teamId)
-      || [...deletedThreadIds].some((threadId) => record.id.includes(threadId));
+      || deletedTeamIds.has(data.teamId);
     if (deleteUnread) {
       queue.delete(record.ref);
-      sensitiveIds.add(record.id);
       return;
     }
     if (affectedThreadIds.has(data.threadId)) {
@@ -963,7 +1101,6 @@ async function deleteDispatchUserData(params) {
   records.dispatchBetaChecklistRuns.forEach((record) => {
     if (record.id === uid || valueReferencesIdentity(record.data, identity)) {
       queue.recursiveDelete(record.ref);
-      sensitiveIds.add(record.id);
     }
   });
 
@@ -971,30 +1108,25 @@ async function deleteDispatchUserData(params) {
   records.pushDeliveries.forEach((record) => {
     const data = record.data;
     if (valueReferencesIdentity(data, identity, true)
-      || deletedSourcePaths.has(data.sourcePath)
-      || valueContainsAny(data, sensitiveIds)) {
+      || deletedSourcePaths.has(data.sourcePath)) {
       queue.delete(record.ref);
       if (typeof data.deliveryId === 'string') {
         deletedDeliveryIds.add(data.deliveryId);
-        sensitiveIds.add(data.deliveryId);
       }
-      sensitiveIds.add(record.id);
     }
   });
   records.pushTickets.forEach((record) => {
     const data = record.data;
     if (valueReferencesIdentity(data, identity, true)
-      || deletedDeliveryIds.has(data.deliveryId)
-      || valueContainsAny(data, sensitiveIds)) {
+      || deletedDeliveryIds.has(data.deliveryId)) {
       queue.delete(record.ref);
-      sensitiveIds.add(record.id);
     }
   });
 
   const avatarPath = storagePathFromAttachment({ id: userData.avatarStoragePath, url: userData.avatarUrl });
-  if (avatarPath) storagePaths.add(avatarPath);
+  if (avatarPath && storagePathBelongsToUser(avatarPath, uid)) storagePaths.add(avatarPath);
   const storageFiles = await collectOwnedStorageFiles(bucket, uid, deletedThreadIds, storagePaths);
-  const storageObjectsDeleted = await deleteStorageFiles(storageFiles);
+  const initialStorageObjectsDeleted = await deleteStorageFiles(storageFiles);
 
   const recursiveDeletes = queue.recursiveValues();
   for (const ref of recursiveDeletes) await db.recursiveDelete(ref);
@@ -1017,9 +1149,15 @@ async function deleteDispatchUserData(params) {
       'pushTickets',
     ],
     deletedSourcePaths,
-    sensitiveIds,
   });
   await db.collection('users').doc(uid).delete();
+  // A chat participant can begin an upload before the deletion fence removes the
+  // thread. Re-list after every Firestore source document is gone so that any
+  // object finalized during that window is removed before the caller releases
+  // the global deletion lease.
+  const residualStorageFiles = await collectOwnedStorageFiles(bucket, uid, deletedThreadIds, new Set());
+  const residualStorageObjectsDeleted = await deleteStorageFiles(residualStorageFiles);
+  const storageObjectsDeleted = initialStorageObjectsDeleted + residualStorageObjectsDeleted;
 
   return {
     firestoreDocumentsDeleted: operations.filter((operation) => operation.type === 'delete').length
@@ -1031,6 +1169,7 @@ async function deleteDispatchUserData(params) {
     residualDocumentsDeleted,
     storageObjectsDeleted,
     organizationsDeleted: deletedOrgIds.size,
+    orphanedOrganizations: orphanedOrgIds.size,
     eventsDeleted: deletedEventIds.size,
     chatsDeleted: deletedThreadIds.size,
   };
@@ -1038,6 +1177,7 @@ async function deleteDispatchUserData(params) {
 
 module.exports = {
   ACCOUNT_DELETION_COLLECTIONS,
+  activeOrganizationProfileIds,
   buildDeletionIdentity,
   canonicalizeEmail,
   deleteDispatchUserData,
@@ -1047,6 +1187,5 @@ module.exports = {
   sanitizeTemplateRoles,
   storagePathBelongsToUser,
   storagePathFromAttachment,
-  threadIdReferencesUser,
   valueReferencesIdentity,
 };

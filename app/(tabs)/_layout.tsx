@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSession } from '@/context/session';
 import { watchUserTeamUnreadCounts, watchUserUnreadNotificationCount } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { initializeOrganizationBilling, watchOrganizationBilling } from '@/services/billing';
 
 export default function TabLayout() {
   const router = useRouter();
@@ -14,6 +15,7 @@ export default function TabLayout() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const [teamUnreadTotal, setTeamUnreadTotal] = useState(0);
   const [profileUnreadTotal, setProfileUnreadTotal] = useState(0);
+  const [organizationReadOnly, setOrganizationReadOnly] = useState(false);
   const workerInvitePromptShownRef = useRef<string | null>(null);
   const managerOrganisationPromptShownRef = useRef<string | null>(null);
 
@@ -49,6 +51,30 @@ export default function TabLayout() {
   }, [profile]);
 
   useEffect(() => {
+    if (!profile?.organizationId) {
+      setOrganizationReadOnly(false);
+      return;
+    }
+    let active = true;
+    void initializeOrganizationBilling()
+      .then((billing) => {
+        if (active) setOrganizationReadOnly(billing.accessMode === 'read_only');
+      })
+      .catch(() => {
+        if (active) setOrganizationReadOnly(true);
+      });
+    const unsubscribe = watchOrganizationBilling(
+      profile.organizationId,
+      (billing) => setOrganizationReadOnly(billing.accessMode === 'read_only'),
+      () => setOrganizationReadOnly(true)
+    );
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [profile?.organizationId]);
+
+  useEffect(() => {
     if (!profile) {
       setProfileUnreadTotal(0);
       return;
@@ -67,6 +93,28 @@ export default function TabLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+    {organizationReadOnly ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Organization is read-only. Open billing."
+        onPress={() => router.push('/billing')}
+        style={{
+          alignItems: 'center',
+          backgroundColor: isDarkMode ? '#411A24' : '#FEF2F2',
+          borderBottomColor: isDarkMode ? '#8B2C3D' : '#FCA5A5',
+          borderBottomWidth: 1,
+          flexDirection: 'row',
+          gap: 8,
+          justifyContent: 'center',
+          paddingHorizontal: 14,
+          paddingVertical: 9,
+        }}>
+        <Feather name="lock" size={15} color={isDarkMode ? '#FECACA' : '#991B1B'} />
+        <Text style={{ color: isDarkMode ? '#FECACA' : '#991B1B', fontSize: 12, fontWeight: '800' }}>
+          Organization is read-only · View billing
+        </Text>
+      </Pressable>
+    ) : null}
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: '#F98D2F',

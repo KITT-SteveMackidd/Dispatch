@@ -2,19 +2,44 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   ACCOUNT_DELETION_COLLECTIONS,
+  activeOrganizationProfileIds,
   buildDeletionIdentity,
   identityMatchesEmail,
   redactIdentityText,
   sanitizeEventRoles,
   sanitizeTemplateRoles,
   storagePathFromAttachment,
-  threadIdReferencesUser,
 } = require('../lib/account-deletion');
+
+test('account deletion successor candidates come only from surviving organization profiles', () => {
+  const members = [
+    { id: 'manager-delete', data: { role: 'manager' } },
+    { id: 'manager-z', data: { role: ' Manager ' } },
+    { id: 'worker-b', data: { role: 'worker' } },
+    { id: 'manager-a', data: { role: 'manager' } },
+    { id: 'manager-fenced', data: { role: 'manager' } },
+    { id: 'ignored-role', data: { role: 'owner' } },
+  ];
+
+  assert.deepEqual(activeOrganizationProfileIds(
+    members,
+    'manager-delete',
+    new Set(['manager-fenced'])
+  ), {
+    managerIds: ['manager-a', 'manager-z'],
+    workerIds: ['worker-b'],
+  });
+});
 
 test('account deletion audits every Dispatch collection that can retain user data', () => {
   assert.deepEqual(ACCOUNT_DELETION_COLLECTIONS, [
     'users',
+    'accountDeletionTombstones',
     'organizations',
+    'organizationBilling',
+    'billingAuditEvents',
+    'revenueCatCustomers',
+    'revenueCatWebhookEvents',
     'teams',
     'events',
     'eventTemplates',
@@ -38,6 +63,7 @@ test('buildDeletionIdentity preserves a plus-addressed account as a distinct ide
   const identity = buildDeletionIdentity({
     uid: 'user-123',
     email: 'Steve+Dispatch@Gmail.com',
+    emailVerified: true,
     displayName: 'Steve Mackidd',
     providerData: [],
   }, { pushTokens: ['ExponentPushToken[token]'] });
@@ -45,14 +71,15 @@ test('buildDeletionIdentity preserves a plus-addressed account as a distinct ide
   assert.equal(identityMatchesEmail('steve+dispatch@gmail.com', identity), true);
   assert.equal(identityMatchesEmail('steve@gmail.com', identity), false);
   assert.equal(identityMatchesEmail('steve+worker@gmail.com', identity), false);
-  assert.deepEqual(identity.names, ['Steve Mackidd']);
-  assert.deepEqual(identity.pushTokens, ['ExponentPushToken[token]']);
+  assert.deepEqual(identity.names, []);
+  assert.deepEqual(identity.pushTokens, []);
 });
 
 test('buildDeletionIdentity ignores a conflicting legacy canonical email', () => {
   const identity = buildDeletionIdentity({
     uid: 'user-123',
     email: 'steve+dispatch@gmail.com',
+    emailVerified: true,
     providerData: [],
   }, {
     email: 'steve+dispatch@gmail.com',
@@ -113,18 +140,17 @@ test('sanitizeTemplateRoles removes only uploads owned by the deleting manager',
   ]);
 });
 
-test('chat IDs and Firebase download URLs are recognized for cleanup', () => {
-  assert.equal(threadIdReferencesUser('organization:org-1:group:user-1__user-2', 'user-1'), true);
-  assert.equal(threadIdReferencesUser('team:team-1:all', 'user-1'), false);
+test('Firebase download URLs are recognized for cleanup', () => {
   assert.equal(storagePathFromAttachment({
     url: 'https://firebasestorage.googleapis.com/v0/b/example.appspot.com/o/chatAttachments%2Fthread%2Fuser-1%2Ffile.jpg?alt=media',
   }), 'chatAttachments/thread/user-1/file.jpg');
 });
 
-test('redactIdentityText removes names, email aliases, and user IDs from retained text', () => {
+test('redactIdentityText removes only authoritative emails and user IDs from retained text', () => {
   const identity = buildDeletionIdentity({
     uid: 'uid-secret',
     email: 'person+dispatch@example.com',
+    emailVerified: true,
     displayName: 'Person Name',
     providerData: [],
   }, {});
@@ -133,5 +159,28 @@ test('redactIdentityText removes names, email aliases, and user IDs from retaine
     identity
   );
 
-  assert.equal(redacted, 'Deleted user (Deleted user) has Deleted user.');
+  assert.equal(redacted, 'Person Name (Deleted user) has Deleted user.');
+});
+
+test('mutable profile identity fields never become global deletion keys', () => {
+  const identity = buildDeletionIdentity({
+    uid: 'uid-safe',
+    email: 'unverified@example.com',
+    emailVerified: false,
+    displayName: 'Edmonton',
+    providerData: [],
+  }, {
+    email: 'victim@example.com',
+    canonicalEmail: 'victim@example.com',
+    displayName: 'Event',
+    pushTokens: ['ExponentPushToken[victim]'],
+  });
+
+  assert.deepEqual(identity.emails, []);
+  assert.deepEqual(identity.names, []);
+  assert.deepEqual(identity.pushTokens, []);
+  assert.equal(redactIdentityText(
+    'Edmonton Event victim@example.com ExponentPushToken[victim]',
+    identity
+  ), 'Edmonton Event victim@example.com ExponentPushToken[victim]');
 });
