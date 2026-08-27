@@ -28,6 +28,7 @@ test('account deletion audits every Dispatch collection that can retain user dat
     'chatThreads',
     'chatUnread',
     'dispatchBetaChecklistRuns',
+    '_emailVerificationRequests',
     'mail',
     'pushDeliveries',
     'pushTickets',

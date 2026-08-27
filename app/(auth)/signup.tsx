@@ -103,8 +103,13 @@ export default function SignUpScreen() {
 
     setLoading(true);
     try {
-      await signUp({ displayName: displayName.trim(), email, password });
-      Alert.alert('Verify your email', 'We sent a verification link to your inbox. Verify your email to continue.');
+      const delivery = await signUp({ displayName: displayName.trim(), email, password });
+      Alert.alert(
+        delivery.queued ? 'Verify your email' : 'Account created',
+        delivery.queued
+          ? `We sent a verification link to ${email.trim()}. Check that inbox and its spam folder, then verify your email to continue.`
+          : 'Your account was created, but the verification email could not be sent. Use Resend verification email on the next screen.'
+      );
       router.replace(inviteToken
         ? { pathname: '/(auth)/verify-email', params: inviteAuthParams! }
         : '/(auth)/verify-email');

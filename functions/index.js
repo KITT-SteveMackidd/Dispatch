@@ -42,6 +42,10 @@ const {
   maskEmail,
   normalizeEmail,
 } = require('./lib/secure-invites');
+const {
+  buildVerificationEmail,
+  verificationCooldownSeconds,
+} = require('./lib/email-verification');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
@@ -543,6 +547,85 @@ exports.claimDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
     teamId: claimResult.teamId,
   });
   return { ...claimResult, claimed: true };
+});
+
+exports.sendDispatchEmailVerification = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Sign in before requesting a verification email.');
+  }
+
+  const authUser = await adminAuth.getUser(request.auth.uid);
+  if (authUser.emailVerified) {
+    return { queued: false, alreadyVerified: true };
+  }
+
+  const deliveryEmail = normalizeEmail(authUser.email);
+  if (!isValidEmail(deliveryEmail)) {
+    throw new HttpsError('failed-precondition', 'This account does not have a valid email address to verify.');
+  }
+
+  const requestRef = db.collection('_emailVerificationRequests').doc(request.auth.uid);
+  const existingRequest = await requestRef.get();
+  const initialWaitSeconds = verificationCooldownSeconds(
+    timestampMillis(existingRequest.data()?.lastRequestedAt)
+  );
+  if (initialWaitSeconds > 0) {
+    throw new HttpsError(
+      'resource-exhausted',
+      `Wait ${initialWaitSeconds} seconds before requesting another verification email.`
+    );
+  }
+
+  let verificationLink;
+  try {
+    verificationLink = await adminAuth.generateEmailVerificationLink(deliveryEmail);
+  } catch (error) {
+    logger.error('Unable to generate a Dispatch email verification link.', {
+      uid: request.auth.uid,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new HttpsError('internal', 'Unable to generate the verification link. Please try again.');
+  }
+
+  const mailRef = db.collection('mail').doc();
+  const now = FieldValue.serverTimestamp();
+  await db.runTransaction(async (transaction) => {
+    const latestRequest = await transaction.get(requestRef);
+    const waitSeconds = verificationCooldownSeconds(
+      timestampMillis(latestRequest.data()?.lastRequestedAt)
+    );
+    if (waitSeconds > 0) {
+      throw new HttpsError(
+        'resource-exhausted',
+        `Wait ${waitSeconds} seconds before requesting another verification email.`
+      );
+    }
+
+    transaction.set(requestRef, {
+      uid: request.auth.uid,
+      lastRequestedAt: now,
+      lastMailId: mailRef.id,
+      updatedAt: now,
+    }, { merge: true });
+    transaction.set(mailRef, {
+      ...buildVerificationEmail({
+        deliveryEmail,
+        displayName: authUser.displayName,
+        verificationLink,
+      }),
+      dispatchEmailVerification: {
+        uid: request.auth.uid,
+        mailId: mailRef.id,
+      },
+      createdAt: now,
+    });
+  });
+
+  logger.info('Queued Dispatch email verification.', {
+    uid: request.auth.uid,
+    mailId: mailRef.id,
+  });
+  return { queued: true, alreadyVerified: false };
 });
 
 exports.resetDispatchDatabase = onCall({

@@ -17,6 +17,7 @@ const ACCOUNT_DELETION_COLLECTIONS = [
   'chatThreads',
   'chatUnread',
   'dispatchBetaChecklistRuns',
+  '_emailVerificationRequests',
   'mail',
   'pushDeliveries',
   'pushTickets',
@@ -816,6 +817,14 @@ async function deleteDispatchUserData(params) {
     queue.update(record.ref, updates);
   });
 
+  records._emailVerificationRequests.forEach((record) => {
+    if (record.id === uid || record.data.uid === uid) {
+      queue.delete(record.ref);
+      sensitiveIds.add(record.id);
+      deletedSourcePaths.add(record.ref.path);
+    }
+  });
+
   records.mail.forEach((record) => {
     if (valueReferencesIdentity(record.data, identity, true)
       || valueContainsAny(record.data, new Set([
@@ -1012,6 +1021,7 @@ async function deleteDispatchUserData(params) {
       'roleAssignmentNotifications',
       'userNotifications',
       'chatUnread',
+      '_emailVerificationRequests',
       'mail',
       'pushDeliveries',
       'pushTickets',
