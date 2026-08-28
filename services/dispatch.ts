@@ -21,9 +21,9 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { auth, db, storage } from '@/lib/firebase';
+import { auth, db, functions, storage } from '@/lib/firebase';
 import { buildEventTaskFromTemplate, buildNewEventRoleForFirestore, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
 import { normalizeTeamMemberRole, validateTeamWorkerSelection } from '@/lib/team-membership';
 import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
@@ -143,7 +143,7 @@ type WorkerEventActionResult = {
 
 async function mutateWorkerEvent(params: Record<string, unknown>) {
   const callable = httpsCallable<Record<string, unknown>, WorkerEventActionResult>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'mutateWorkerEvent'
   );
   const result = await callable(params);

@@ -93,7 +93,7 @@ Organization member removal also revokes chat access atomically: the server remo
 
 ## Local verification boundary
 
-TypeScript tests and Firebase Functions unit tests cover catalog mapping, signature verification and replay tolerance, subscription lifecycle projection, Billing Manager authority, invitation seat reservations, chat revocation, and account-deletion safeguards. Firestore/Storage rules and the account-deletion retry index were reviewed and updated locally, but emulator compilation requires Java; this workstation currently has no Java runtime. Rules and indexes therefore remain uncompiled and undeployed until Java is installed or they are checked in CI.
+TypeScript tests and Firebase Functions unit tests cover catalog mapping, signature verification and replay tolerance, subscription lifecycle projection, Billing Manager authority, invitation seat reservations, chat revocation, account-deletion safeguards, and the demo-project emulator fence. The local harness uses Android Studio's bundled Java runtime to compile Firestore and Storage rules and to start the Auth, Firestore, Functions, and Storage emulators against `demo-dispatch-billing`. Nothing in this workflow deploys Firebase resources.
 
 ### 2026-08-25 verification record
 
@@ -105,5 +105,15 @@ TypeScript tests and Firebase Functions unit tests cover catalog mapping, signat
 - Expo Go Metro started locally and remains available at `exp://192.168.1.45:8083`; fresh Android and iOS bundles completed successfully.
 - The local environment contains the required Firebase public configuration but no `EXPO_PUBLIC_REVENUECAT_TEST_API_KEY`. The Billing screen therefore intentionally presents the safe Test Store-not-configured state.
 - Firestore emulator rule compilation was attempted but could not start because Java is not installed. No rule, Function, app, or RevenueCat configuration was deployed as a workaround.
+
+### 2026-08-27 local billing-harness verification
+
+- `npm run typecheck`: passed.
+- `npm test`: 32 test files and 144 app tests passed.
+- `functions/npm run check`: Functions syntax check and 120 unit tests passed.
+- `npx expo install --check`: all Expo dependencies are compatible.
+- `npm run billing:test:rules`: Firestore and Storage rules compiled successfully in the isolated demo project.
+- `npm run billing:test:harness`: Auth, Firestore, Functions, and Storage emulators started; all 28 Functions definitions loaded; the deterministic organization and three test users were seeded; `initializeOrganizationBillingOnCreate` completed; and the emulators shut down successfully.
+- The harness is ready for Expo Go, but no payment-connected acceptance was run because the RevenueCat Test Store public key, project ID, server API key, and dashboard catalog are not configured locally.
 
 No Preview build, Production build, EAS Update, Firebase deployment, RevenueCat dashboard mutation, Test Store transaction, Apple sandbox transaction, or Google Play test transaction occurred. Test Store purchase simulation still requires an actual `test_` public key and trusted callable/webhook verification still requires an authorized local emulator or later deployment. Real StoreKit and Google Play Billing validation remains DSP-076 and is intentionally blocked.

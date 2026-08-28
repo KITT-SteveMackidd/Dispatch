@@ -60,6 +60,7 @@ const {
   revenueCatProductChangeState,
   revenueCatMappingCanMutateBilling,
   resolveRevenueCatProduct,
+  validateRevenueCatPurchaseStoreEnvironment,
   validateRevenueCatWebhookEnvironment,
   verifyRevenueCatWebhookSignature,
   webhookIdentityCandidates,
@@ -208,6 +209,21 @@ function expectedRevenueCatEnvironment() {
     throw new Error('REVENUECAT_EXPECTED_ENVIRONMENT must be configured as sandbox or production.');
   }
   return value;
+}
+
+function revenueCatPurchaseStoreForCallable(value) {
+  try {
+    return validateRevenueCatPurchaseStoreEnvironment({
+      purchaseStore: value,
+      expectedEnvironment: expectedRevenueCatEnvironment(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'RevenueCat store environment is not configured.';
+    const code = message === 'Choose a valid RevenueCat purchase store.'
+      ? 'invalid-argument'
+      : 'failed-precondition';
+    throw new HttpsError(code, message);
+  }
 }
 
 function configuredRevenueCatProjectId() {
@@ -2340,23 +2356,12 @@ exports.prepareOrganizationSubscriptionChange = onCall({
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before changing a subscription.');
   const planId = typeof request.data?.planId === 'string' ? request.data.planId.trim() : '';
   const billingPeriod = request.data?.billingPeriod === 'annual' ? 'annual' : request.data?.billingPeriod === 'monthly' ? 'monthly' : '';
-  const purchaseStore = ['app_store', 'play_store', 'test_store'].includes(request.data?.purchaseStore)
-    ? request.data.purchaseStore
-    : '';
-  if (!['crew', 'production', 'organization'].includes(planId) || !billingPeriod || !purchaseStore) {
+  const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
+  if (!['crew', 'production', 'organization'].includes(planId) || !billingPeriod) {
     throw new HttpsError('invalid-argument', 'Choose a valid Dispatch subscription plan, billing period, and store.');
   }
   const packageIdentifier = packageIdentifierForPlan(planId, billingPeriod);
   if (!packageIdentifier) throw new HttpsError('failed-precondition', 'That RevenueCat package is not configured in Dispatch.');
-  let expectedEnvironment;
-  try {
-    expectedEnvironment = expectedRevenueCatEnvironment();
-  } catch (error) {
-    throw new HttpsError('failed-precondition', error instanceof Error ? error.message : 'RevenueCat environment is not configured.');
-  }
-  if (expectedEnvironment === 'production' && purchaseStore === 'test_store') {
-    throw new HttpsError('failed-precondition', 'RevenueCat Test Store cannot update production organization billing.');
-  }
 
   const callerRef = db.collection('users').doc(request.auth.uid);
   const callerSnapshot = await callerRef.get();
@@ -2583,6 +2588,7 @@ exports.prepareOrganizationSubscriptionChange = onCall({
 
 exports.prepareOrganizationSubscriptionRestore = onCall({ maxInstances: 10 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before restoring purchases.');
+  const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
   const callerRef = db.collection('users').doc(request.auth.uid);
   const callerSnapshot = await callerRef.get();
   const organizationId = callerSnapshot.data()?.organizationId;
@@ -2611,6 +2617,12 @@ exports.prepareOrganizationSubscriptionRestore = onCall({ maxInstances: 10 }, as
     const billing = billingSnapshot.exists
       ? { ...defaultOrganizationBilling(), ...billingSnapshot.data() }
       : defaultOrganizationBilling();
+    if (isLivePaidRevenueCatProjection(billing) && billing.sourceStore && billing.sourceStore !== purchaseStore) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Restore must be completed on the original Apple, Google Play, or RevenueCat Test Store account and device.'
+      );
+    }
     if (activeRevenueCatPayerMustResolveSubscription(billing, billing.purchaserUserId)
       && billing.purchaserUserId !== request.auth.uid) {
       throw new HttpsError(
@@ -2650,6 +2662,7 @@ exports.prepareOrganizationSubscriptionRestore = onCall({ maxInstances: 10 }, as
       purchaseIntent: {
         purchaserUserId: request.auth.uid,
         operation: 'restore',
+        purchaseStore,
         createdAtMs: Date.now(),
       },
       ...(billingSnapshot.exists ? {} : { createdAt: now }),
@@ -2664,6 +2677,7 @@ exports.refreshOrganizationSubscription = onCall({
   secrets: [revenueCatSecretApiKey],
 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before refreshing subscription status.');
+  const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
   const callerRef = db.collection('users').doc(request.auth.uid);
   const callerSnapshot = await callerRef.get();
   const organizationId = callerSnapshot.data()?.organizationId;
@@ -2685,6 +2699,12 @@ exports.refreshOrganizationSubscription = onCall({
     : defaultOrganizationBilling();
   const activePaidStatus = existingBilling.planId !== 'free'
     && ['trialing', 'active', 'grace'].includes(existingBilling.status);
+  if (activePaidStatus && existingBilling.sourceStore && existingBilling.sourceStore !== purchaseStore) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Subscription verification must use the original Apple, Google Play, or RevenueCat Test Store account and device.'
+    );
+  }
   const purchaserUserId = activePaidStatus
     ? (existingBilling.purchaserUserId || request.auth.uid)
     : (existingBilling.purchaseIntent?.purchaserUserId || request.auth.uid);

@@ -1,4 +1,5 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
 
 type DeleteDispatchAccountInput = {
   appleAuthorizationCode?: string;
@@ -31,7 +32,7 @@ export async function requestDispatchAccountDeletion(
   input: DeleteDispatchAccountInput = {}
 ): Promise<DeleteDispatchAccountResult> {
   const callable = httpsCallable<DeleteDispatchAccountInput, DeleteDispatchAccountResult>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'deleteDispatchAccount'
   );
   const result = await callable(input);

@@ -18,11 +18,31 @@ const {
   revenueCatProductChangeState,
   revenueCatMappingCanMutateBilling,
   resolveRevenueCatProduct,
+  validateRevenueCatPurchaseStoreEnvironment,
   validateRevenueCatSubscriberEnvironment,
   validateRevenueCatWebhookEnvironment,
   verifyRevenueCatWebhookSignature,
   webhookIdentityCandidates,
 } = require('../lib/revenuecat');
+
+test('keeps Test Store requests out of the production billing environment', () => {
+  assert.equal(validateRevenueCatPurchaseStoreEnvironment({
+    purchaseStore: 'test_store',
+    expectedEnvironment: 'sandbox',
+  }), 'test_store');
+  assert.equal(validateRevenueCatPurchaseStoreEnvironment({
+    purchaseStore: 'app_store',
+    expectedEnvironment: 'production',
+  }), 'app_store');
+  assert.throws(() => validateRevenueCatPurchaseStoreEnvironment({
+    purchaseStore: 'test_store',
+    expectedEnvironment: 'production',
+  }), /cannot update production organization billing/);
+  assert.throws(() => validateRevenueCatPurchaseStoreEnvironment({
+    purchaseStore: 'unknown_store',
+    expectedEnvironment: 'sandbox',
+  }), /valid RevenueCat purchase store/);
+});
 
 test('routes every RevenueCat customer through durable post-auth manual review', () => {
   assert.deepEqual(revenueCatCustomerDeletionDecision({

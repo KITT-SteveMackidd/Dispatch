@@ -1,4 +1,5 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from './firebase';
 
 export const DATABASE_RESET_ADMIN_EMAIL = 'stevemackidd@gmail.com';
 
@@ -16,7 +17,7 @@ type ResetDispatchDatabaseResult = {
 
 export async function resetDispatchDatabase(): Promise<ResetDispatchDatabaseResult> {
   const callable = httpsCallable<void, ResetDispatchDatabaseResult>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'resetDispatchDatabase'
   );
   const result = await callable();

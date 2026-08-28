@@ -10,6 +10,7 @@ import {
   type RevenueCatConfiguration,
   type RevenueCatRuntime,
 } from '@/lib/revenuecat-config';
+import { firebaseEmulatorConfiguration } from '@/lib/firebase';
 import {
   SUBSCRIPTION_PLANS,
   type SubscriptionBillingPeriod,
@@ -69,6 +70,7 @@ export function getRevenueCatConfiguration(): RevenueCatConfiguration {
       web: process.env.EXPO_PUBLIC_REVENUECAT_WEB_API_KEY,
     },
     isDevelopment: __DEV__,
+    testStoreAllowed: firebaseEmulatorConfiguration.enabled,
   });
 }
 

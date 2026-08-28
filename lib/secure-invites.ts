@@ -1,4 +1,5 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
 
 export type SecureInviteKind = 'worker' | 'manager';
 
@@ -37,17 +38,13 @@ export type PendingOrganizationInvite = {
   expiresAt: number;
 };
 
-function getDispatchFunctions() {
-  return getFunctions(undefined, 'us-central1');
-}
-
 export async function createSecureDispatchInvite(params: {
   inviteKind: SecureInviteKind;
   deliveryEmail: string;
   teamId?: string;
 }) {
   const callable = httpsCallable<typeof params, CreateSecureInviteResult>(
-    getDispatchFunctions(),
+    functions,
     'createDispatchInvite'
   );
   const result = await callable(params);
@@ -56,7 +53,7 @@ export async function createSecureDispatchInvite(params: {
 
 export async function getSecureDispatchInvite(tokenOrCode: string) {
   const callable = httpsCallable<{ tokenOrCode: string }, SecureInvitePreview>(
-    getDispatchFunctions(),
+    functions,
     'getDispatchInvite'
   );
   const result = await callable({ tokenOrCode });
@@ -65,7 +62,7 @@ export async function getSecureDispatchInvite(tokenOrCode: string) {
 
 export async function claimSecureDispatchInvite(tokenOrCode: string) {
   const callable = httpsCallable<{ tokenOrCode: string }, ClaimSecureInviteResult>(
-    getDispatchFunctions(),
+    functions,
     'claimDispatchInvite'
   );
   const result = await callable({ tokenOrCode });
@@ -74,7 +71,7 @@ export async function claimSecureDispatchInvite(tokenOrCode: string) {
 
 export async function cancelSecureDispatchInvite(inviteId: string) {
   const callable = httpsCallable<{ inviteId: string }, { cancelled: true; inviteId: string }>(
-    getDispatchFunctions(),
+    functions,
     'cancelDispatchInvite'
   );
   const result = await callable({ inviteId });
@@ -86,14 +83,14 @@ export async function adoptLegacyDispatchInvites() {
     adopted: boolean;
     organizationId?: string;
     role?: SecureInviteKind;
-  }>(getDispatchFunctions(), 'adoptLegacyDispatchInvites');
+  }>(functions, 'adoptLegacyDispatchInvites');
   const result = await callable({});
   return result.data;
 }
 
 export async function listOrganizationPendingInvites() {
   const callable = httpsCallable<Record<string, never>, { invites: PendingOrganizationInvite[] }>(
-    getDispatchFunctions(),
+    functions,
     'listOrganizationPendingInvites'
   );
   const result = await callable({});

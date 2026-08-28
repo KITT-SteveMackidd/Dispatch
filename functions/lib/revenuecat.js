@@ -4,6 +4,7 @@ const { accessModeForBillingAndSeatUsage } = require('./subscriptions');
 const REVENUECAT_ENTITLEMENT_ID = 'organization_access';
 const REVENUECAT_OFFERING_ID = 'dispatch_organization_plans_v1';
 const REVENUECAT_STORE_INTENT_TTL_MS = 60 * 60 * 1000;
+const REVENUECAT_PURCHASE_STORES = new Set(['app_store', 'play_store', 'test_store']);
 
 const PRODUCT_CATALOG = Object.freeze([
   {
@@ -91,6 +92,23 @@ function packageIdentifierForPlan(planId, billingPeriod) {
   return PRODUCT_CATALOG.find((entry) => (
     entry.planId === planId && entry.billingPeriod === billingPeriod
   ))?.packageIdentifier || null;
+}
+
+function validateRevenueCatPurchaseStoreEnvironment({ purchaseStore, expectedEnvironment }) {
+  const normalizedStore = typeof purchaseStore === 'string' ? purchaseStore.trim().toLowerCase() : '';
+  const normalizedEnvironment = typeof expectedEnvironment === 'string'
+    ? expectedEnvironment.trim().toLowerCase()
+    : '';
+  if (!REVENUECAT_PURCHASE_STORES.has(normalizedStore)) {
+    throw new Error('Choose a valid RevenueCat purchase store.');
+  }
+  if (!['sandbox', 'production'].includes(normalizedEnvironment)) {
+    throw new Error('RevenueCat expected environment must be sandbox or production.');
+  }
+  if (normalizedEnvironment === 'production' && normalizedStore === 'test_store') {
+    throw new Error('RevenueCat Test Store cannot update production organization billing.');
+  }
+  return normalizedStore;
 }
 
 function millis(value) {
@@ -524,6 +542,7 @@ module.exports = {
   revenueCatMappingCanMutateBilling,
   resolveRevenueCatProduct,
   validateRevenueCatSubscriberEnvironment,
+  validateRevenueCatPurchaseStoreEnvironment,
   validateRevenueCatWebhookEnvironment,
   verifyRevenueCatWebhookSignature,
   webhookIdentityCandidates,

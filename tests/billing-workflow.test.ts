@@ -25,7 +25,7 @@ describe('organization billing workflow wiring', () => {
     const billing = read('app/billing.tsx');
     const preflight = billing.indexOf('await prepareOrganizationSubscriptionChange({');
     const purchase = billing.indexOf('await purchaseDispatchRevenueCatPackage({');
-    const verification = billing.indexOf('await refreshOrganizationSubscription();', purchase);
+    const verification = billing.indexOf('await refreshOrganizationSubscription(purchaseStore);', purchase);
     expect(preflight).toBeGreaterThan(-1);
     expect(purchase).toBeGreaterThan(preflight);
     expect(verification).toBeGreaterThan(purchase);
@@ -35,7 +35,7 @@ describe('organization billing workflow wiring', () => {
     const billing = read('app/billing.tsx');
     const restoreFunction = billing.indexOf('const restorePurchases = async () =>');
     const restore = billing.indexOf('await restoreDispatchPurchases({', restoreFunction);
-    const verification = billing.indexOf('await refreshOrganizationSubscription();', restore);
+    const verification = billing.indexOf('await refreshOrganizationSubscription(purchaseStore);', restore);
     expect(restoreFunction).toBeGreaterThan(-1);
     expect(restore).toBeGreaterThan(restoreFunction);
     expect(verification).toBeGreaterThan(restore);
@@ -257,7 +257,8 @@ describe('organization billing workflow wiring', () => {
     const functions = read('functions/index.js');
     const rules = read('firestore.rules');
     expect(dispatch).toContain("'mutateWorkerEvent'");
-    expect(dispatch).toContain("getFunctions(undefined, 'us-central1')");
+    expect(dispatch).toContain("import { auth, db, functions, storage } from '@/lib/firebase';");
+    expect(dispatch).not.toContain("getFunctions(undefined, 'us-central1')");
     expect(functions).toContain('exports.mutateWorkerEvent = onCall');
     expect(functions).toContain('planWorkerEventAction({');
     expect(functions).toContain("billingSnapshot.data().accessMode !== 'full'");
@@ -268,5 +269,33 @@ describe('organization billing workflow wiring', () => {
     expect(rules).toContain('function isOrganizationWorker(userId, organizationId)');
     expect(rules).toContain("!('pushAuthorized' in request.resource.data)");
     expect(rules).toContain('request.resource.data.workerId,');
+  });
+
+  it('isolates RevenueCat Test Store writes behind a demo-project Firebase emulator guard', () => {
+    const firebase = read('lib/firebase.ts');
+    const emulatorConfig = read('lib/firebase-emulator-config.ts');
+    const billingService = read('services/billing.ts');
+    const revenueCatService = read('services/revenuecat.ts');
+    const revenueCatServer = read('functions/lib/revenuecat.js');
+    const functions = read('functions/index.js');
+    const firebaseJson = JSON.parse(read('firebase.json')) as {
+      emulators?: Record<string, { host?: string; port?: number } | boolean>;
+    };
+    expect(emulatorConfig).toContain("projectId?.startsWith('demo-')");
+    expect(emulatorConfig).toContain('restricted to local development builds');
+    expect(firebase).toContain('connectAuthEmulator');
+    expect(firebase).toContain('connectFirestoreEmulator');
+    expect(firebase).toContain('connectFunctionsEmulator');
+    expect(firebase).toContain('connectStorageEmulator');
+    expect(billingService).toContain("purchaseStore === 'test_store' && !firebaseEmulatorConfiguration.enabled");
+    expect(billingService).toContain('assertRevenueCatStoreIsolation(purchaseStore);');
+    expect(revenueCatService).toContain('testStoreAllowed: firebaseEmulatorConfiguration.enabled');
+    expect(revenueCatServer).toContain('validateRevenueCatPurchaseStoreEnvironment');
+    expect(functions).toContain('const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);');
+    expect((functions.match(/revenueCatPurchaseStoreForCallable\(request\.data\?\.purchaseStore\)/g) || []).length).toBe(3);
+    expect(firebaseJson.emulators?.auth).toMatchObject({ host: '0.0.0.0', port: 9099 });
+    expect(firebaseJson.emulators?.firestore).toMatchObject({ host: '0.0.0.0', port: 8080 });
+    expect(firebaseJson.emulators?.functions).toMatchObject({ host: '0.0.0.0', port: 5001 });
+    expect(firebaseJson.emulators?.storage).toMatchObject({ host: '0.0.0.0', port: 9199 });
   });
 });

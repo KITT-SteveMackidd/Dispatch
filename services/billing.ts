@@ -1,6 +1,6 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, firebaseEmulatorConfiguration, functions } from '@/lib/firebase';
 import { defaultOrganizationBilling, type OrganizationBilling } from '@/lib/subscriptions';
 
 export type TransferBillingManagerResult = {
@@ -37,15 +37,19 @@ export type RefreshedOrganizationBilling = {
   managementURL: string | null;
 };
 
-function getDispatchFunctions() {
-  return getFunctions(undefined, 'us-central1');
+export type SubscriptionPurchaseStore = 'app_store' | 'play_store' | 'test_store';
+
+function assertRevenueCatStoreIsolation(purchaseStore: SubscriptionPurchaseStore) {
+  if (purchaseStore === 'test_store' && !firebaseEmulatorConfiguration.enabled) {
+    throw new Error('RevenueCat Test Store billing is restricted to the isolated local Firebase emulator environment.');
+  }
 }
 
 export async function transferOrganizationBillingManager(targetManagerId: string) {
   const callable = httpsCallable<
     { targetManagerId: string },
     TransferBillingManagerResult
-  >(getDispatchFunctions(), 'transferOrganizationBillingManager');
+  >(functions, 'transferOrganizationBillingManager');
   const result = await callable({ targetManagerId });
   return result.data;
 }
@@ -53,37 +57,40 @@ export async function transferOrganizationBillingManager(targetManagerId: string
 export async function prepareOrganizationSubscriptionChange(params: {
   planId: SubscriptionChangePreflight['planId'];
   billingPeriod: SubscriptionChangePreflight['billingPeriod'];
-  purchaseStore: 'app_store' | 'play_store' | 'test_store';
+  purchaseStore: SubscriptionPurchaseStore;
 }) {
+  assertRevenueCatStoreIsolation(params.purchaseStore);
   const callable = httpsCallable<typeof params, SubscriptionChangePreflight>(
-    getDispatchFunctions(),
+    functions,
     'prepareOrganizationSubscriptionChange'
   );
   const result = await callable(params);
   return result.data;
 }
 
-export async function refreshOrganizationSubscription() {
-  const callable = httpsCallable<Record<string, never>, RefreshedOrganizationBilling>(
-    getDispatchFunctions(),
+export async function refreshOrganizationSubscription(purchaseStore: SubscriptionPurchaseStore) {
+  assertRevenueCatStoreIsolation(purchaseStore);
+  const callable = httpsCallable<{ purchaseStore: SubscriptionPurchaseStore }, RefreshedOrganizationBilling>(
+    functions,
     'refreshOrganizationSubscription'
   );
-  const result = await callable({});
+  const result = await callable({ purchaseStore });
   return result.data;
 }
 
-export async function prepareOrganizationSubscriptionRestore() {
-  const callable = httpsCallable<Record<string, never>, { organizationId: string; restorePrepared: true }>(
-    getDispatchFunctions(),
+export async function prepareOrganizationSubscriptionRestore(purchaseStore: SubscriptionPurchaseStore) {
+  assertRevenueCatStoreIsolation(purchaseStore);
+  const callable = httpsCallable<{ purchaseStore: SubscriptionPurchaseStore }, { organizationId: string; restorePrepared: true }>(
+    functions,
     'prepareOrganizationSubscriptionRestore'
   );
-  const result = await callable({});
+  const result = await callable({ purchaseStore });
   return result.data;
 }
 
 export async function initializeOrganizationBilling() {
   const callable = httpsCallable<Record<string, never>, RefreshedOrganizationBilling>(
-    getDispatchFunctions(),
+    functions,
     'initializeOrganizationBilling'
   );
   const result = await callable({});
@@ -94,7 +101,7 @@ export async function removeOrganizationMember(targetUserId: string) {
   const callable = httpsCallable<
     { targetUserId: string },
     { removed: true; organizationId: string; targetUserId: string; targetRole: 'manager' | 'worker' }
-  >(getDispatchFunctions(), 'removeOrganizationMember');
+  >(functions, 'removeOrganizationMember');
   const result = await callable({ targetUserId });
   return result.data;
 }

@@ -10,7 +10,13 @@
     "postinstall": "patch-package",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test",
+    "billing:test:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-billing-test-config.ps1",
+    "billing:test:rules": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-billing-test-rules.ps1",
+    "billing:test:harness": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-billing-test-harness.ps1",
+    "billing:test:emulators": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-billing-test-emulators.ps1",
+    "billing:test:seed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/seed-billing-test.ps1",
+    "billing:test:expo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-billing-test-expo.ps1"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { firebaseEmulatorConfiguration } from '@/lib/firebase';
 import {
   billingErrorMessage,
   removeOrganizationMember,
@@ -244,16 +245,17 @@ export default function BillingScreen() {
   };
 
   const runPlanChange = async (planId: Exclude<SubscriptionPlanId, 'free' | 'enterprise'>) => {
-    if (!authUser?.uid || !billingManagerId || !canUseStoreActions) return;
+    if (!authUser?.uid || !billingManagerId || !canUseStoreActions || !revenueCatConfiguration.configured) return;
+    const purchaseStore = getRevenueCatPurchaseStore();
+    if (!purchaseStore) {
+      setScreenError('Apple and Google subscription changes require the iOS or Android app.');
+      return;
+    }
     let preflightCompleted = false;
     try {
       setBusyAction(`purchasing:${planId}`);
       setScreenError(null);
       setWorkflowMessage('Checking organization eligibility…');
-      const purchaseStore = getRevenueCatPurchaseStore();
-      if (!purchaseStore) {
-        throw new Error('Apple and Google subscription changes require the iOS or Android app.');
-      }
       const preflight = await prepareOrganizationSubscriptionChange({
         planId,
         billingPeriod: selectedPeriod,
@@ -274,13 +276,13 @@ export default function BillingScreen() {
       setWorkflowMessage(preflight.changeTiming === 'immediate'
         ? 'Purchase confirmed. Verifying the organization subscription…'
         : 'Plan change submitted. Verifying its renewal schedule…');
-      await refreshOrganizationSubscription();
+      await refreshOrganizationSubscription(purchaseStore);
       setWorkflowMessage(preflight.changeTiming === 'immediate'
         ? 'Subscription verified. Organization access now reflects the store entitlement.'
         : 'Plan change submitted. Dispatch will limit seat growth only after RevenueCat confirms the renewal schedule.');
     } catch (error) {
       if (preflightCompleted) {
-        await refreshOrganizationSubscription().catch(() => undefined);
+        await refreshOrganizationSubscription(purchaseStore).catch(() => undefined);
       }
       setWorkflowMessage(null);
       setScreenError(revenueCatErrorMessage(error));
@@ -290,21 +292,26 @@ export default function BillingScreen() {
   };
 
   const restorePurchases = async () => {
-    if (!authUser?.uid || !billingManagerId || !canUseStoreActions || busyAction) return;
+    if (!authUser?.uid || !billingManagerId || !canUseStoreActions || !revenueCatConfiguration.configured || busyAction) return;
+    const purchaseStore = getRevenueCatPurchaseStore();
+    if (!purchaseStore) {
+      setScreenError('Apple and Google purchase restoration requires the iOS or Android app.');
+      return;
+    }
     let restorePrepared = false;
     try {
       setBusyAction('restoring');
       setScreenError(null);
       setWorkflowMessage('Checking this store account for Dispatch purchases…');
-      await prepareOrganizationSubscriptionRestore();
+      await prepareOrganizationSubscriptionRestore(purchaseStore);
       restorePrepared = true;
       await restoreDispatchPurchases({ firebaseUid: authUser.uid, billingManagerId });
       setWorkflowMessage('Purchase history found. Verifying the organization subscription…');
-      await refreshOrganizationSubscription();
+      await refreshOrganizationSubscription(purchaseStore);
       setWorkflowMessage('Restore complete. The organization now reflects the verified entitlement.');
     } catch (error) {
       if (restorePrepared) {
-        await refreshOrganizationSubscription().catch(() => undefined);
+        await refreshOrganizationSubscription(purchaseStore).catch(() => undefined);
       }
       setWorkflowMessage(null);
       setScreenError(revenueCatErrorMessage(error));
@@ -314,12 +321,17 @@ export default function BillingScreen() {
   };
 
   const verifySubscription = async () => {
-    if (!canUseStoreActions || busyAction) return;
+    if (!canUseStoreActions || !revenueCatConfiguration.configured || busyAction) return;
+    const purchaseStore = getRevenueCatPurchaseStore();
+    if (!purchaseStore) {
+      setScreenError('Apple and Google subscription verification requires the iOS or Android app.');
+      return;
+    }
     try {
       setBusyAction('verifying');
       setScreenError(null);
       setWorkflowMessage('Verifying the current RevenueCat subscriber with Dispatch…');
-      await refreshOrganizationSubscription();
+      await refreshOrganizationSubscription(purchaseStore);
       setWorkflowMessage('Verification complete.');
     } catch (error) {
       setWorkflowMessage(null);
@@ -550,8 +562,11 @@ export default function BillingScreen() {
         ) : revenueCatConfiguration.preview ? (
           <Callout
             icon="science"
-            text="Expo Go uses RevenueCat Test Store Preview API Mode. It can simulate this workflow, but it cannot validate Apple or Google billing."
+            text={firebaseEmulatorConfiguration.enabled
+              ? `Local billing test mode is active: RevenueCat Test Store plus isolated Firebase emulators at ${firebaseEmulatorConfiguration.host}. Apple and Google billing are not involved.`
+              : 'RevenueCat Test Store is available, but checkout is locked until the isolated demo-project Firebase emulators are enabled. Apple and Google billing are not involved.'}
             colors={colors}
+            warning={!firebaseEmulatorConfiguration.enabled}
           />
         ) : null}
 
@@ -816,9 +831,9 @@ export default function BillingScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              disabled={!canUseStoreActions || Boolean(busyAction)}
+              disabled={!canUseStoreActions || !revenueCatConfiguration.configured || Boolean(busyAction)}
               onPress={() => void verifySubscription()}
-              style={[styles.textButton, (!canUseStoreActions || Boolean(busyAction)) && styles.disabled]}>
+              style={[styles.textButton, (!canUseStoreActions || !revenueCatConfiguration.configured || Boolean(busyAction)) && styles.disabled]}>
               <Text style={[styles.textButtonText, { color: colors.accentText }]}>Verify current subscription</Text>
             </Pressable>
           </View>

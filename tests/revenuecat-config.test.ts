@@ -8,6 +8,7 @@ describe('RevenueCat runtime configuration', () => {
       runtime: 'expo_go',
       keys: {},
       isDevelopment: true,
+      testStoreAllowed: true,
     })).toMatchObject({ configured: false, preview: true, reason: 'missing_key' });
   });
 
@@ -16,11 +17,13 @@ describe('RevenueCat runtime configuration', () => {
       runtime: 'expo_go',
       keys: { test: 'test_dispatch_public_key' },
       isDevelopment: true,
+      testStoreAllowed: true,
     })).toMatchObject({ configured: true, preview: true, runtime: 'expo_go' });
     expect(selectRevenueCatConfiguration({
       runtime: 'expo_go',
       keys: { test: 'appl_wrong_store_key' },
       isDevelopment: true,
+      testStoreAllowed: true,
     })).toMatchObject({ configured: false, reason: 'invalid_key' });
   });
 
@@ -29,12 +32,27 @@ describe('RevenueCat runtime configuration', () => {
       runtime: 'ios',
       keys: { apple: 'appl_dispatch_public_key' },
       isDevelopment: true,
+      testStoreAllowed: false,
     })).toMatchObject({ configured: true, runtime: 'ios' });
     expect(selectRevenueCatConfiguration({
       runtime: 'android',
       keys: { google: 'sk_server_secret' },
       isDevelopment: true,
+      testStoreAllowed: false,
     })).toMatchObject({ configured: false, reason: 'invalid_key' });
+  });
+
+  it('refuses to configure Test Store until demo-project Firebase emulators are active', () => {
+    expect(selectRevenueCatConfiguration({
+      runtime: 'expo_go',
+      keys: { test: 'test_dispatch_public_key' },
+      isDevelopment: true,
+      testStoreAllowed: false,
+    })).toMatchObject({
+      configured: false,
+      preview: true,
+      reason: 'test_store_requires_emulators',
+    });
   });
 });
 
