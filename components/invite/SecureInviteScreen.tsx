@@ -153,7 +153,7 @@ export function SecureInviteScreen({
           ) : null}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-          <Pressable style={styles.textButton} onPress={() => router.push('/invite/index')}>
+          <Pressable style={styles.textButton} onPress={() => router.push('/invite')}>
             <Text style={styles.textButtonLabel}>Enter a different invitation code</Text>
           </Pressable>
           {!embedded ? (

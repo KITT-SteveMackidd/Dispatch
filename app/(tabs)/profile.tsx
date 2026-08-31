@@ -297,7 +297,7 @@ export default function ProfileScreen() {
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Account Settings</Text>
       </Pressable>
-      <Pressable style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/invite/index')}>
+      <Pressable style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/invite')}>
         <MaterialIcons name="vpn-key" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Use Invitation Code</Text>
       </Pressable>

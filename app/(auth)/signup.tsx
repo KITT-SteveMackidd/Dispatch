@@ -226,7 +226,7 @@ export default function SignUpScreen() {
             }}
           />
 
-          <Link href="/invite/index" style={authStyles.lightActionLink}>Use Invitation Code</Link>
+          <Link href="/invite" style={authStyles.lightActionLink}>Use Invitation Code</Link>
 
           <View style={authStyles.lightFooterRow}>
             <Text style={authStyles.lightFooterLabel}>Already have an account?</Text>
@@ -325,7 +325,7 @@ export default function SignUpScreen() {
             }}
           />
 
-          <Link href="/invite/index" style={authStyles.darkActionLink}>Use Invitation Code</Link>
+          <Link href="/invite" style={authStyles.darkActionLink}>Use Invitation Code</Link>
 
           <View style={authStyles.darkFooterRow}>
             <Text style={authStyles.darkFooterLabel}>Already have an account?</Text>

@@ -52,6 +52,22 @@ describe('secure invitation flow wiring', () => {
     expect(verifyEmail).toContain("inviteResume: '1'");
   });
 
+  it('routes manual invitation actions to the code entry screen', () => {
+    const signIn = read('app/(auth)/signin.tsx');
+    const signUp = read('app/(auth)/signup.tsx');
+    const profile = read('app/(tabs)/profile.tsx');
+    const secureInviteScreen = read('components/invite/SecureInviteScreen.tsx');
+
+    expect(signIn).toContain('href="/invite"');
+    expect(signUp).toContain('href="/invite"');
+    expect(profile).toContain("router.push('/invite')");
+    expect(secureInviteScreen).toContain("router.push('/invite')");
+
+    for (const source of [signIn, signUp, profile, secureInviteScreen]) {
+      expect(source).not.toContain('/invite/index');
+    }
+  });
+
   it('keeps ordinary account onboarding separate from invite-link onboarding', () => {
     const setup = read('app/(auth)/setup.tsx');
     expect(setup).toContain("title={`Welcome to Dispatch");
