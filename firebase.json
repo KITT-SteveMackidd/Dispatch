@@ -6,6 +6,15 @@
   "firestore": {
     "rules": "firestore.rules"
   },
+  "emulators": {
+    "firestore": {
+      "port": 8185
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  },
   "extensions": {
     "firestore-send-email": "firebase/firestore-send-email@0.2.9"
   }

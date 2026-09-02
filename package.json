@@ -10,6 +10,7 @@
     "postinstall": "patch-package",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project dispatch-rules-test \"node --test tests/firestore-rules.node.mjs\"",
     "check": "npm run typecheck && npm run test"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/react": "~19.1.10",
     "patch-package": "^8.0.1",
     "typescript": "~5.9.2",
