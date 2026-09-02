@@ -287,6 +287,10 @@ test('event templates are private to their manager owner', async () => {
 test('chat threads and messages are participant scoped', async () => {
   const managerDb = authed(users.managerA);
   const workerDb = authed(users.workerA);
+  await assertSucceeds(getDocs(query(
+    collection(managerDb, 'chatThreads'),
+    where('participants', 'array-contains', users.managerA.uid),
+  )));
   await assertSucceeds(getDoc(doc(managerDb, 'chatThreads', 'thread-a')));
   await assertSucceeds(getDoc(doc(workerDb, 'chatThreads', 'thread-a')));
   await assertFails(getDoc(doc(authed(users.workerAOther), 'chatThreads', 'thread-a')));
