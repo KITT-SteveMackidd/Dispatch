@@ -106,6 +106,25 @@ service cloud.firestore {
         && userId in eventDataAfter(eventId).workerIds;
     }
 
+    function isOrganizationWorkerForEventData(data, userId) {
+      return userId is string
+        && data.organizationId is string
+        && exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.organizationId == data.organizationId
+        && get(/databases/$(database)/documents/users/$(userId)).data.role in ['worker', 'Worker'];
+    }
+
+    function isEventOrganizationWorker(eventId, userId) {
+      return (
+          eventExists(eventId)
+          && isOrganizationWorkerForEventData(eventData(eventId), userId)
+        )
+        || (
+          eventExistsAfter(eventId)
+          && isOrganizationWorkerForEventData(eventDataAfter(eventId), userId)
+        );
+    }
+
     function isEventManagerTarget(eventId, userId) {
       return (
           eventExists(eventId)
@@ -307,6 +326,7 @@ service cloud.firestore {
         && (
           isEventWorker(details.eventId, details.workerId)
           || isEventWorkerAfter(details.eventId, details.workerId)
+          || isEventOrganizationWorker(details.eventId, details.workerId)
         )
         && targetUserEmailMatches(details.workerId, details.email)
         && request.resource.data.to[0] == details.email;
@@ -689,6 +709,7 @@ service cloud.firestore {
         && (
           isEventWorker(request.resource.data.eventId, request.resource.data.workerId)
           || isEventWorkerAfter(request.resource.data.eventId, request.resource.data.workerId)
+          || isEventOrganizationWorker(request.resource.data.eventId, request.resource.data.workerId)
         );
       allow update: if signedIn()
         && (
@@ -704,7 +725,10 @@ service cloud.firestore {
     }
 
     match /userNotifications/{notificationId} {
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || canManageEvent(resource.data.relatedEventId)
+      );
       allow create: if signedIn()
         && request.resource.data.userId is string
         && request.resource.data.kind in [

@@ -406,15 +406,34 @@ test('role invite status transitions follow the mobile worker and manager flows'
   }));
 });
 
-test('user notifications are visible and mutable only by their recipient', async () => {
+test('user notifications are readable by their recipient and event owner but mutable only by their recipient', async () => {
   await assertSucceeds(getDoc(doc(authed(users.workerA), 'userNotifications', 'user-note-a')));
-  await assertFails(getDoc(doc(authed(users.managerA), 'userNotifications', 'user-note-a')));
+  await assertSucceeds(getDoc(doc(authed(users.managerA), 'userNotifications', 'user-note-a')));
   await assertSucceeds(updateDoc(doc(authed(users.workerA), 'userNotifications', 'user-note-a'), {
     read: true,
   }));
   await assertFails(updateDoc(doc(authed(users.managerA), 'userNotifications', 'user-note-a'), {
     read: true,
   }));
+});
+
+test('event owners can query and clean up notifications only for events they manage', async () => {
+  const managerDb = authed(users.managerA);
+  await assertSucceeds(getDocs(query(
+    collection(managerDb, 'roleAssignmentNotifications'),
+    where('eventId', '==', 'event-a'),
+  )));
+  await assertSucceeds(getDocs(query(
+    collection(managerDb, 'userNotifications'),
+    where('relatedEventId', '==', 'event-a'),
+  )));
+  await assertFails(getDocs(query(
+    collection(managerDb, 'userNotifications'),
+    where('relatedEventId', '==', 'event-b'),
+  )));
+  await assertSucceeds(deleteDoc(doc(managerDb, 'roleAssignmentNotifications', 'role-note-a')));
+  await assertSucceeds(deleteDoc(doc(managerDb, 'userNotifications', 'user-note-a')));
+  await assertSucceeds(deleteDoc(doc(managerDb, 'events', 'event-a')));
 });
 
 test('notification creation cannot target unrelated users', async () => {
@@ -482,11 +501,11 @@ test('mail writes are restricted to the authoritative event participant email', 
   }));
 });
 
-test('the mobile event assignment flow can add the worker and queue its notification and email', async () => {
+test('the mobile event assignment flow can queue a pending organization worker without assigning them first', async () => {
   const managerDb = authed(users.managerA);
   await assertSucceeds(runTransaction(managerDb, async (tx) => {
     tx.update(doc(managerDb, 'events', 'event-a'), {
-      workerIds: [users.workerA.uid, users.workerAOther.uid],
+      workerIds: [users.workerA.uid],
       roles: eventFixture().roles,
       revision: 1,
       updatedAt: serverTimestamp(),
@@ -511,6 +530,15 @@ test('the mobile event assignment flow can add the worker and queue its notifica
       roleId: 'role-a',
       email: users.workerAOther.email,
     },
+  }));
+  await assertFails(addDoc(collection(managerDb, 'roleAssignmentNotifications'), {
+    workerId: users.workerB.uid,
+    managerId: users.managerA.uid,
+    eventId: 'event-a',
+    roleId: 'role-a',
+    action: 'assign',
+    status: 'pending',
+    createdAt: serverTimestamp(),
   }));
 });
 
