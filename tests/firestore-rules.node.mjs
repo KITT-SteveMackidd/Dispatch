@@ -624,11 +624,11 @@ test('the mobile existing-worker invite flow can create and re-read its notifica
   await assertFails(getDoc(doc(authed(users.managerB), 'userNotifications', notificationRef.id)));
 });
 
-test('the mobile event assignment flow can queue a pending organization worker without assigning them first', async () => {
+test('the mobile event assignment flow grants a pending organization worker access before assignment', async () => {
   const managerDb = authed(users.managerA);
   await assertSucceeds(runTransaction(managerDb, async (tx) => {
     tx.update(doc(managerDb, 'events', 'event-a'), {
-      workerIds: [users.workerA.uid],
+      workerIds: [users.workerA.uid, users.workerAOther.uid],
       roles: eventFixture().roles,
       revision: 1,
       updatedAt: serverTimestamp(),
@@ -643,6 +643,31 @@ test('the mobile event assignment flow can queue a pending organization worker w
       createdAt: serverTimestamp(),
     });
   }));
+
+  const invitedWorkerDb = authed(users.workerAOther);
+  await assertSucceeds(getDoc(doc(invitedWorkerDb, 'events', 'event-a')));
+  const acceptedRole = {
+    ...eventFixture().roles[0],
+    assignedWorkerIds: [users.workerAOther.uid],
+    openSlots: 0,
+  };
+  await assertSucceeds(runTransaction(invitedWorkerDb, async (tx) => {
+    tx.update(doc(invitedWorkerDb, 'events', 'event-a'), {
+      roles: [acceptedRole],
+      // Reordering the same participant IDs must not turn a valid response
+      // into a Firestore permission error.
+      workerIds: [users.workerAOther.uid, users.workerA.uid],
+      revision: 2,
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(doc(invitedWorkerDb, 'roleAssignmentNotifications', 'role-note-mobile'), {
+      status: 'accepted',
+      statusReason: 'Worker accepted this role assignment update.',
+      respondedAt: serverTimestamp(),
+      response: 'accept',
+    });
+  }));
+
   await assertSucceeds(addDoc(collection(managerDb, 'mail'), {
     to: [users.workerAOther.email],
     message: { subject: 'Event invite', text: 'Join the event.' },

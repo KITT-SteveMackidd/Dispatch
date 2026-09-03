@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clearWorkerEventRoleRemoval,
   mergePersistedAndOptimisticEvents,
+  prepareWorkerEventRoleInvitation,
   removeEventRoleAndRebuildWorkers,
   removeWorkerFromEventRoleAndRebuildWorkers,
 } from '../lib/event-role-deletion';
@@ -79,6 +80,24 @@ describe('event role deletion', () => {
     expect(clearWorkerEventRoleRemoval(roles, 'role-1', 'worker-1')).toEqual({
       roles: [{ ...roles[0], removedWorkerIds: ['worker-2'] }],
       workerIds: [],
+    });
+  });
+
+  it('indexes a pending invitee without assigning them to the role', () => {
+    const roles: EventRole[] = [
+      {
+        id: 'role-1',
+        name: 'Box Office',
+        assignedWorkerIds: [],
+        removedWorkerIds: ['worker-1', 'worker-2'],
+        openSlots: 1,
+        tasks: [],
+      },
+    ];
+
+    expect(prepareWorkerEventRoleInvitation(roles, 'role-1', 'worker-1')).toEqual({
+      roles: [{ ...roles[0], removedWorkerIds: ['worker-2'] }],
+      workerIds: ['worker-1'],
     });
   });
 

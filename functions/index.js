@@ -30,6 +30,8 @@ const {
   roleStateFingerprint,
 } = require('./lib/role-state');
 const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications');
+const { eventAccessForRoleInvitation } = require('./lib/event-role-access');
+const { buildEventRoleResponse } = require('./lib/event-role-response');
 const {
   INVITE_TTL_MS,
   buildInviteUrls,
@@ -130,6 +132,121 @@ function communicationThreadIds(organizationId, workerId) {
     managers: `organization:${organizationId}:managers:${workerId}`,
   };
 }
+
+async function ensureRoleInviteEventAccess(notification, userId) {
+  const eventRef = db.collection('events').doc(notification.eventId);
+  return db.runTransaction(async (transaction) => {
+    const eventSnapshot = await transaction.get(eventRef);
+    if (!eventSnapshot.exists) throw new HttpsError('not-found', 'The invited Event no longer exists.');
+
+    let access;
+    try {
+      access = eventAccessForRoleInvitation(notification, eventSnapshot.data(), userId);
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
+    if (access.changed) {
+      transaction.update(eventRef, {
+        workerIds: access.workerIds,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    return { eventId: notification.eventId, repaired: access.changed };
+  });
+}
+
+exports.prepareEventRoleInviteResponse = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before responding to a role invitation.');
+  const notificationId = typeof request.data?.notificationId === 'string'
+    ? request.data.notificationId.trim()
+    : '';
+  if (!notificationId || notificationId.length > 160) {
+    throw new HttpsError('invalid-argument', 'A valid role invitation is required.');
+  }
+
+  const notificationSnapshot = await db.collection('roleAssignmentNotifications').doc(notificationId).get();
+  if (!notificationSnapshot.exists) throw new HttpsError('not-found', 'The role invitation no longer exists.');
+  const notification = { id: notificationSnapshot.id, ...notificationSnapshot.data() };
+  if (notification.workerId !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'This role invitation belongs to another user.');
+  }
+  if (notification.action !== 'assign') {
+    return { eventId: notification.eventId, repaired: false };
+  }
+  if (notification.status === 'accepted') {
+    return { eventId: notification.eventId, repaired: false };
+  }
+
+  return ensureRoleInviteEventAccess(notification, request.auth.uid);
+});
+
+exports.respondToEventRoleInvite = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before responding to a role invitation.');
+  const notificationId = typeof request.data?.notificationId === 'string'
+    ? request.data.notificationId.trim()
+    : '';
+  const response = request.data?.response;
+  if (!notificationId || notificationId.length > 160 || !['accept', 'decline'].includes(response)) {
+    throw new HttpsError('invalid-argument', 'A valid role invitation and response are required.');
+  }
+
+  const result = await db.runTransaction(async (transaction) => {
+    const notificationRef = db.collection('roleAssignmentNotifications').doc(notificationId);
+    const notificationSnapshot = await transaction.get(notificationRef);
+    if (!notificationSnapshot.exists) throw new HttpsError('not-found', 'The role invitation no longer exists.');
+    const notification = { id: notificationSnapshot.id, ...notificationSnapshot.data() };
+    if (notification.workerId !== request.auth.uid) {
+      throw new HttpsError('permission-denied', 'This role invitation belongs to another user.');
+    }
+
+    const eventRef = db.collection('events').doc(notification.eventId);
+    const workerRef = db.collection('users').doc(request.auth.uid);
+    const [eventSnapshot, workerSnapshot] = await Promise.all([
+      transaction.get(eventRef),
+      transaction.get(workerRef),
+    ]);
+    if (!eventSnapshot.exists) throw new HttpsError('not-found', 'The invited Event no longer exists.');
+    const workerName = workerSnapshot.exists ? workerSnapshot.data().displayName : 'Worker';
+
+    let mutation;
+    try {
+      mutation = buildEventRoleResponse({
+        notification,
+        event: eventSnapshot.data(),
+        workerId: request.auth.uid,
+        workerName,
+        response,
+      });
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
+    if (mutation.alreadyHandled) return mutation;
+
+    if (mutation.eventPatch) {
+      transaction.update(eventRef, {
+        ...mutation.eventPatch,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    transaction.update(notificationRef, {
+      ...mutation.notificationPatch,
+      respondedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    transaction.set(db.collection('userNotifications').doc(), {
+      ...mutation.managerNotification,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return mutation;
+  });
+
+  return {
+    eventId: result.eventId,
+    roleId: result.roleId,
+    shouldQueueReminder: result.shouldQueueReminder,
+    alreadyHandled: result.alreadyHandled,
+  };
+});
 
 async function syncClaimedInvitationChats(organizationId) {
   const organizationRef = db.collection('organizations').doc(organizationId);
@@ -941,6 +1058,16 @@ exports.pushRoleAssignmentNotification = onDocumentCreated('roleAssignmentNotifi
       notificationId: event.params.notificationId,
     });
     return;
+  }
+  if (notification.action === 'assign') {
+    await ensureRoleInviteEventAccess(notification, recipientId).catch((error) => {
+      logger.error('Unable to grant the invited Worker Event access.', {
+        notificationId: event.params.notificationId,
+        eventId: notification.eventId,
+        workerId: recipientId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
   const content = rolePushContent(notification);
   await sendPushToUser({

@@ -32,7 +32,8 @@ import { buildEventDetailsUpdate, type EventDetailsDraft } from '@/lib/event-sch
 import { clearWorkerTaskCompletions } from '@/services/event-logic';
 import { buildLateTaskNotificationTargets } from '@/lib/task-notification-targets';
 import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
-import { clearWorkerEventRoleRemoval, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
+import { prepareWorkerEventRoleInvitation, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
+import { prepareEventRoleInviteResponse, respondToEventRoleInvite } from '@/lib/event-role-invite-access';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
@@ -2738,11 +2739,11 @@ export async function updateEventRoleAssignment(params: {
       return;
     }
 
-    const clearedRemoval = clearWorkerEventRoleRemoval(roles, roleId, workerId);
-    nextRoles = clearedRemoval.roles;
+    const pendingInvitation = prepareWorkerEventRoleInvitation(roles, roleId, workerId);
+    nextRoles = pendingInvitation.roles;
     tx.update(ref, {
       roles: nextRoles,
-      workerIds: clearedRemoval.workerIds,
+      workerIds: pendingInvitation.workerIds,
       revision: (event.revision ?? 0) + 1,
       updatedAt: serverTimestamp(),
     });
@@ -3012,12 +3013,7 @@ export async function cancelWorkerEventRole(params: {
           : [...eligibleWaitlistWorkerIds, workerId],
       };
     });
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(ref, {
       roles: nextRoles,
@@ -3058,6 +3054,8 @@ export async function joinRoleWaitlist(params: {
   notificationId: string;
   workerId: string;
 }) {
+  await prepareEventRoleInviteResponse(params.notificationId);
+
   await runTransaction(db, async (tx) => {
     const notificationRef = doc(db, 'roleAssignmentNotifications', params.notificationId);
     const notificationSnap = await tx.get(notificationRef);
@@ -3093,12 +3091,7 @@ export async function joinRoleWaitlist(params: {
         }
         : item
     ));
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
 
@@ -3141,12 +3134,7 @@ export async function joinEventRoleWaitlist(params: {
         }
         : item
     ));
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
   });
@@ -3195,12 +3183,7 @@ export async function acceptEventRoleWaitlistInvite(params: {
           }
           : item
       ));
-      const workerIds = [...new Set(nextRoles.flatMap((item) => [
-        ...(item.assignedWorkerIds || []),
-        ...(item.waitlistWorkerIds || []),
-        ...(item.eligibleWaitlistWorkerIds || []),
-        ...(item.waitlistInviteWorkerIds || []),
-      ]))];
+      const workerIds = [...new Set(event.workerIds || [])];
 
       tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
       return;
@@ -3224,12 +3207,7 @@ export async function acceptEventRoleWaitlistInvite(params: {
 
       return removeWorkerFromOtherRoleWaitlists(item, params.roleId, params.workerId);
     });
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
 
@@ -3261,154 +3239,15 @@ export async function respondToRoleAssignmentNotification(params: {
   workerId: string;
   response: 'accept' | 'decline';
 }) {
-  await runTransaction(db, async (tx) => {
-    const notificationRef = doc(db, 'roleAssignmentNotifications', params.notificationId);
-    const notificationSnap = await tx.get(notificationRef);
-    if (!notificationSnap.exists()) throw new Error('Notification not found');
-
-    const notification = notificationSnap.data() as Omit<RoleAssignmentNotification, 'id'>;
-    if (notification.workerId !== params.workerId) throw new Error('You can only respond to your own notifications');
-    if (notification.status !== 'pending') return;
-
-    const eventRef = doc(db, 'events', notification.eventId);
-    const eventSnap = await tx.get(eventRef);
-    if (!eventSnap.exists()) throw new Error('Event not found');
-
-    const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
-    const workerSnap = await tx.get(doc(db, 'users', params.workerId));
-    const workerName = workerSnap.exists()
-      ? ((workerSnap.data() as Partial<UserProfile>).displayName || 'Worker')
-      : 'Worker';
-    let nextRoles = (event.roles || []) as EventRole[];
-    const notificationRole = nextRoles.find((role) => role.id === notification.roleId);
-    const roleName = notificationRole?.name || notification.roleName || 'role';
-
-    if (notification.action === 'assign' && params.response === 'accept') {
-      const targetRole = notificationRole;
-      if (!targetRole) throw new Error('Role not found');
-      const alreadyAssigned = (targetRole.assignedWorkerIds || []).includes(params.workerId);
-      const alreadyAssignedToEvent = nextRoles.some((role) => (role.assignedWorkerIds || []).includes(params.workerId));
-      if (alreadyAssignedToEvent && !alreadyAssigned) {
-        throw new Error('You already accepted a role for this event.');
-      }
-      if (!alreadyAssigned && getAvailableRoleSlots(targetRole) <= 0) {
-        throw new Error('This role is full. Join the waitlist instead.');
-      }
-
-      nextRoles = nextRoles.map((role) => {
-        if (role.id !== notification.roleId) {
-          return removeWorkerFromOtherRoleWaitlists(role, notification.roleId, params.workerId);
-        }
-
-        const assignedWorkerIds = role.assignedWorkerIds || [];
-        if (assignedWorkerIds.includes(params.workerId)) return role;
-
-        return {
-          ...role,
-          assignedWorkerIds: [...assignedWorkerIds, params.workerId],
-          waitlistWorkerIds: (role.waitlistWorkerIds || []).filter((id) => id !== params.workerId),
-          eligibleWaitlistWorkerIds: (role.eligibleWaitlistWorkerIds || []).filter((id) => id !== params.workerId),
-          waitlistInviteWorkerIds: (role.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
-          openSlots: Math.max(0, getAvailableRoleSlots(role) - 1),
-        };
-      });
-
-      const workerIds = [...new Set(nextRoles.flatMap((role) => [
-        ...(role.assignedWorkerIds || []),
-        ...(role.waitlistWorkerIds || []),
-        ...(role.eligibleWaitlistWorkerIds || []),
-        ...(role.waitlistInviteWorkerIds || []),
-      ]))];
-      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
-    }
-
-    if (notification.action === 'assign' && params.response === 'decline') {
-      nextRoles = nextRoles.map((role) => {
-        if (role.id !== notification.roleId) return role;
-
-        const eligibleWaitlistWorkerIds = role.eligibleWaitlistWorkerIds || [];
-
-        return {
-          ...role,
-          assignedWorkerIds: (role.assignedWorkerIds || []).filter((id) => id !== params.workerId),
-          waitlistWorkerIds: (role.waitlistWorkerIds || []).filter((id) => id !== params.workerId),
-          waitlistInviteWorkerIds: (role.waitlistInviteWorkerIds || []).filter((id) => id !== params.workerId),
-          eligibleWaitlistWorkerIds: eligibleWaitlistWorkerIds.includes(params.workerId)
-            ? eligibleWaitlistWorkerIds
-            : [...eligibleWaitlistWorkerIds, params.workerId],
-        };
-      });
-
-      const workerIds = [...new Set(nextRoles.flatMap((role) => [
-        ...(role.assignedWorkerIds || []),
-        ...(role.waitlistWorkerIds || []),
-        ...(role.eligibleWaitlistWorkerIds || []),
-        ...(role.waitlistInviteWorkerIds || []),
-      ]))];
-      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
-    }
-
-    if (notification.action === 'remove' && params.response === 'decline') {
-      nextRoles = nextRoles.map((role) => {
-        if (role.id !== notification.roleId) return role;
-
-        const assignedWorkerIds = role.assignedWorkerIds || [];
-        if (assignedWorkerIds.includes(params.workerId)) return role;
-
-        return {
-          ...role,
-          assignedWorkerIds: [...assignedWorkerIds, params.workerId],
-          openSlots: Math.max(0, (role.openSlots || 0) - 1),
-        };
-      });
-
-      const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
-      tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
-    }
-
-    tx.update(notificationRef, {
-      status: params.response === 'accept' ? 'accepted' : 'declined',
-      statusReason:
-        params.response === 'accept'
-          ? 'Worker accepted this role assignment update.'
-          : 'Worker declined this role assignment update.',
-      respondedAt: serverTimestamp(),
-      response: params.response,
-    });
-
-    const managerNotificationRef = doc(collection(db, 'userNotifications'));
-    tx.set(managerNotificationRef, {
-      userId: notification.managerId,
-      kind: 'role_invite_response',
-      title: params.response === 'accept' ? 'Role invite accepted' : 'Role invite declined',
-      body: `${workerName} ${params.response === 'accept' ? 'accepted' : 'declined'} ${roleName} for ${event.name}.`,
-      relatedEventId: notification.eventId,
-      relatedRoleId: notification.roleId,
-      sourceNotificationId: params.notificationId,
-      read: false,
-      createdAt: serverTimestamp(),
-    });
-  });
-
-  if (params.response === 'accept') {
-    try {
-      const acceptedNotificationRef = doc(db, 'roleAssignmentNotifications', params.notificationId);
-      const acceptedNotificationSnap = await getDoc(acceptedNotificationRef);
-      if (!acceptedNotificationSnap.exists()) return;
-
-      const acceptedNotification = acceptedNotificationSnap.data() as Partial<RoleAssignmentNotification>;
-      if (acceptedNotification.action !== 'assign' || !acceptedNotification.eventId || !acceptedNotification.roleId) return;
-
-      await queueEventRoleReminderEmail({
-        eventId: acceptedNotification.eventId,
-        roleId: acceptedNotification.roleId,
-        workerId: params.workerId,
-      }).catch((error) => {
-        console.warn('Dispatch event reminder email queue failed', error);
-      });
-    } catch (error) {
+  const result = await respondToEventRoleInvite(params.notificationId, params.response);
+  if (result.shouldQueueReminder) {
+    await queueEventRoleReminderEmail({
+      eventId: result.eventId,
+      roleId: result.roleId,
+      workerId: params.workerId,
+    }).catch((error) => {
       console.warn('Dispatch event reminder email queue failed', error);
-    }
+    });
   }
 }
 

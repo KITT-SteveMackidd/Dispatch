@@ -209,6 +209,14 @@ service cloud.firestore {
         );
     }
 
+    function sameListMembers(before, after) {
+      return before is list
+        && after is list
+        && before.size() == after.size()
+        && before.hasAll(after)
+        && after.hasAll(before);
+    }
+
     function validEventNotificationCreate() {
       let eventId = request.resource.data.relatedEventId;
       let targetUserId = request.resource.data.userId;
@@ -925,11 +933,11 @@ service cloud.firestore {
             && request.auth.uid in resource.data.workerIds
             && request.resource.data.managerId == resource.data.managerId
             && sameOptionalField(resource.data, request.resource.data, 'organizationId')
-            && request.resource.data.workerIds == resource.data.workerIds
+            && sameListMembers(resource.data.workerIds, request.resource.data.workerIds)
             && request.resource.data.roles is list
             && request.resource.data.roles.size() == resource.data.roles.size()
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'roles', 'revision', 'updatedAt'
+              'roles', 'workerIds', 'revision', 'updatedAt'
             ])
           )
         );

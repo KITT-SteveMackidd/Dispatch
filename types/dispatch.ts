@@ -64,6 +64,7 @@ export type DispatchEvent = {
   startsAt: string;
   endsAt?: string;
   teamIds: string[];
+  workerIds?: string[];
   roles: EventRole[];
   pendingInviteNotificationId?: string;
   pendingInviteRoleId?: string;
