@@ -16,6 +16,8 @@ import {
   getDoc,
   getDocs,
   increment,
+  limit,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -133,6 +135,7 @@ async function seed() {
         name: 'Organization A',
         managerIds: [users.managerA.uid, users.managerACo.uid],
         workerIds: [users.workerA.uid, users.workerAOther.uid],
+        pendingManagerInviteEmails: [users.newManager.email],
         createdBy: users.managerA.uid,
       }),
       setDoc(doc(db, 'organizations', 'org-b'), {
@@ -189,12 +192,35 @@ async function seed() {
         status: 'pending_acceptance',
         expiresAt: new Date('2026-12-31T00:00:00.000Z'),
       }),
+      setDoc(doc(db, 'workerInvites', 'invite-existing-worker'), {
+        managerId: users.managerA.uid,
+        teamId: 'team-a',
+        teamName: 'Team A',
+        organizationId: 'org-a',
+        organizationName: 'Organization A',
+        email: users.workerA.email,
+        normalizedEmail: users.workerA.email,
+        canonicalEmail: users.workerA.email,
+        workerId: users.workerA.uid,
+        status: 'pending_acceptance',
+        expiresAt: new Date('2026-12-31T00:00:00.000Z'),
+      }),
       setDoc(doc(db, 'roleAssignmentNotifications', 'role-note-a'), {
         workerId: users.workerA.uid,
         managerId: users.managerA.uid,
         eventId: 'event-a',
         roleId: 'role-a',
         action: 'assign',
+        status: 'pending',
+      }),
+      setDoc(doc(db, 'managerInvites', 'manager-invite-pending'), {
+        inviterId: users.managerA.uid,
+        organizationId: 'org-a',
+        organizationName: 'Organization A',
+        email: users.newManager.email,
+        normalizedEmail: users.newManager.email,
+        canonicalEmail: users.newManager.email,
+        managerUserId: null,
         status: 'pending',
       }),
       setDoc(doc(db, 'userNotifications', 'user-note-a'), {
@@ -311,7 +337,7 @@ test('chat threads and messages are participant scoped', async () => {
   }));
 });
 
-test('only organization managers can create chats and add participants', async () => {
+test('organization members can create scoped chats while only managers can add participants', async () => {
   await assertSucceeds(setDoc(doc(authed(users.managerA), 'chatThreads', 'new-thread'), {
     id: 'new-thread',
     organizationId: 'org-a',
@@ -320,7 +346,7 @@ test('only organization managers can create chats and add participants', async (
     participants: [users.managerA.uid, users.workerA.uid],
     createdBy: users.managerA.uid,
   }));
-  await assertFails(setDoc(doc(authed(users.workerA), 'chatThreads', 'worker-thread'), {
+  await assertSucceeds(setDoc(doc(authed(users.workerA), 'chatThreads', 'worker-thread'), {
     id: 'worker-thread',
     organizationId: 'org-a',
     kind: 'custom',
@@ -333,6 +359,51 @@ test('only organization managers can create chats and add participants', async (
   }));
   await assertSucceeds(updateDoc(doc(authed(users.managerA), 'chatThreads', 'thread-a'), {
     participants: [users.managerA.uid, users.workerA.uid, users.workerAOther.uid],
+  }));
+});
+
+test('organization members can safely prepare a chat before the first message', async () => {
+  const workerDb = authed(users.workerA);
+  const threadRef = doc(workerDb, 'chatThreads', 'team:team-a:dm:manager-a__worker-a');
+  await assertSucceeds(setDoc(threadRef, {
+    id: threadRef.id,
+    organizationId: 'org-a',
+    teamId: 'team-a',
+    title: 'Manager A',
+    kind: 'direct',
+    participants: [users.workerA.uid, users.managerA.uid],
+    createdBy: users.workerA.uid,
+    updatedAt: serverTimestamp(),
+  }));
+  await assertSucceeds(addDoc(collection(workerDb, 'chatThreads', threadRef.id, 'messages'), {
+    threadId: threadRef.id,
+    teamId: 'team-a',
+    senderId: users.workerA.uid,
+    recipientIds: [users.managerA.uid],
+    text: 'First message',
+    attachments: [],
+    createdAt: serverTimestamp(),
+  }));
+
+  await assertFails(setDoc(doc(workerDb, 'chatThreads', 'cross-organization-chat'), {
+    id: 'cross-organization-chat',
+    organizationId: 'org-a',
+    teamId: 'team-a',
+    title: 'Not allowed',
+    kind: 'direct',
+    participants: [users.workerA.uid, users.workerB.uid],
+    createdBy: users.workerA.uid,
+    updatedAt: serverTimestamp(),
+  }));
+  await assertFails(setDoc(doc(authed(users.workerB), 'chatThreads', 'wrong-organization-chat'), {
+    id: 'wrong-organization-chat',
+    organizationId: 'org-a',
+    teamId: 'team-a',
+    title: 'Not allowed',
+    kind: 'direct',
+    participants: [users.workerB.uid, users.managerA.uid],
+    createdBy: users.workerB.uid,
+    updatedAt: serverTimestamp(),
   }));
 });
 
@@ -499,6 +570,58 @@ test('mail writes are restricted to the authoritative event participant email', 
     to: [users.workerB.email],
     message: { subject: 'Cross organization', text: 'Not allowed.' },
   }));
+});
+
+test('a manager can queue only the matching worker invitation email', async () => {
+  const managerDb = authed(users.managerA);
+  await assertSucceeds(addDoc(collection(managerDb, 'mail'), {
+    to: [users.workerA.email],
+    message: { subject: 'Team invite', text: 'Join Team A.' },
+    dispatchInvite: {
+      inviteId: 'invite-existing-worker',
+      managerId: users.managerA.uid,
+      teamId: 'team-a',
+      teamName: 'Team A',
+      appLink: 'https://example.test/join',
+      email: users.workerA.email,
+    },
+  }));
+  await assertFails(addDoc(collection(managerDb, 'mail'), {
+    to: [users.workerB.email],
+    message: { subject: 'Redirected invite', text: 'Not allowed.' },
+    dispatchInvite: {
+      inviteId: 'invite-existing-worker',
+      managerId: users.managerA.uid,
+      teamId: 'team-a',
+      teamName: 'Team A',
+      appLink: 'https://example.test/join',
+      email: users.workerB.email,
+    },
+  }));
+});
+
+test('the mobile existing-worker invite flow can create and re-read its notification', async () => {
+  const managerDb = authed(users.managerA);
+  const notificationRef = doc(managerDb, 'userNotifications', 'worker_team_invite__invite-existing-worker__worker-a');
+  await assertSucceeds(runTransaction(managerDb, async (tx) => {
+    const existing = await tx.get(notificationRef);
+    assert.equal(existing.exists(), false);
+    tx.set(notificationRef, {
+      userId: users.workerA.uid,
+      kind: 'worker_team_invite',
+      title: 'You have a team invite waiting',
+      body: 'Manager A invited you to join Team A.',
+      relatedRoleId: 'invite-existing-worker',
+      read: false,
+      createdAt: serverTimestamp(),
+    });
+  }));
+  await assertSucceeds(runTransaction(managerDb, async (tx) => {
+    const existing = await tx.get(notificationRef);
+    assert.equal(existing.exists(), true);
+  }));
+  await assertSucceeds(getDoc(doc(authed(users.workerA), 'userNotifications', notificationRef.id)));
+  await assertFails(getDoc(doc(authed(users.managerB), 'userNotifications', notificationRef.id)));
 });
 
 test('the mobile event assignment flow can queue a pending organization worker without assigning them first', async () => {
@@ -750,6 +873,43 @@ test('manager onboarding can atomically create an organization and link the mana
   }));
 });
 
+test('a pending manager can query and accept their organization invitation', async () => {
+  const managerDb = authed(users.newManager);
+  const invitations = await assertSucceeds(getDocs(query(
+    collection(managerDb, 'managerInvites'),
+    where('normalizedEmail', '==', users.newManager.email),
+    where('status', '==', 'pending'),
+  )));
+  assert.equal(invitations.size, 1);
+
+  await assertSucceeds(runTransaction(managerDb, async (tx) => {
+    tx.update(doc(managerDb, 'users', users.newManager.uid), {
+      organizationId: 'org-a',
+      organizationName: 'Organization A',
+      email: users.newManager.email,
+      canonicalEmail: users.newManager.email,
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(doc(managerDb, 'organizations', 'org-a'), {
+      managerIds: arrayUnion(users.newManager.uid),
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(doc(managerDb, 'managerInvites', 'manager-invite-pending'), {
+      managerUserId: users.newManager.uid,
+      status: 'accepted',
+      statusReason: 'Manager account linked to organisation invite.',
+      acceptedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }));
+
+  await assertFails(getDocs(query(
+    collection(authed(users.managerB), 'managerInvites'),
+    where('normalizedEmail', '==', users.newManager.email),
+    where('status', '==', 'pending'),
+  )));
+});
+
 test('real-time listener query shapes are authorized only within the caller scope', async () => {
   const managerDb = authed(users.managerA);
   const workerDb = authed(users.workerA);
@@ -759,6 +919,56 @@ test('real-time listener query shapes are authorized only within the caller scop
   await assertSucceeds(getDocs(query(collection(workerDb, 'userNotifications'), where('userId', '==', users.workerA.uid))));
   await assertSucceeds(getDocs(query(collection(workerDb, 'chatUnread'), where('userId', '==', users.workerA.uid))));
   await assertFails(getDocs(query(collection(workerDb, 'userNotifications'), where('userId', '==', users.workerB.uid))));
+});
+
+test('all mobile dashboard listener query shapes are authorized', async () => {
+  const managerDb = authed(users.managerA);
+  const workerDb = authed(users.workerA);
+  const pendingWorkerDb = authed(users.workerPending);
+  const succeeds = async (label, operation) => {
+    try {
+      await assertSucceeds(operation);
+    } catch (error) {
+      error.message = `${label}: ${error.message}`;
+      throw error;
+    }
+  };
+
+  await succeeds('manager organization events', getDocs(query(collection(managerDb, 'events'), where('organizationId', '==', 'org-a'))));
+  await succeeds('manager-owned events', getDocs(query(collection(managerDb, 'events'), where('managerId', '==', users.managerA.uid))));
+  await succeeds('worker-assigned events', getDocs(query(collection(workerDb, 'events'), where('workerIds', 'array-contains', users.workerA.uid))));
+
+  await succeeds('manager organization teams', getDocs(query(collection(managerDb, 'teams'), where('organizationId', '==', 'org-a'))));
+  await succeeds('manager-owned teams', getDocs(query(collection(managerDb, 'teams'), where('managerId', '==', users.managerA.uid))));
+  await succeeds('worker-assigned teams', getDocs(query(collection(workerDb, 'teams'), where('workerIds', 'array-contains', users.workerA.uid))));
+
+  await succeeds('manager event templates', getDocs(query(collection(managerDb, 'eventTemplates'), where('managerId', '==', users.managerA.uid), limit(1))));
+  await succeeds('manager role notifications', getDocs(query(collection(managerDb, 'roleAssignmentNotifications'), where('managerId', '==', users.managerA.uid))));
+  await succeeds('worker role notifications', getDocs(query(collection(workerDb, 'roleAssignmentNotifications'), where('workerId', '==', users.workerA.uid))));
+  await succeeds('manager worker invitations', getDocs(query(collection(managerDb, 'workerInvites'), where('managerId', '==', users.managerA.uid))));
+  await succeeds('worker pending invitations', getDocs(query(
+    collection(pendingWorkerDb, 'workerInvites'),
+    where('email', '==', users.workerPending.email),
+    where('status', '==', 'pending_acceptance'),
+  )));
+
+  await succeeds('chat thread heads', getDocs(query(
+    collection(managerDb, 'chatThreads'),
+    where('participants', 'array-contains', users.managerA.uid),
+    orderBy('updatedAt', 'desc'),
+    limit(30),
+  )));
+  await succeeds('manager chat unread', getDocs(query(collection(managerDb, 'chatUnread'), where('userId', '==', users.managerA.uid))));
+  await succeeds('worker unread notifications', getDocs(query(
+    collection(workerDb, 'userNotifications'),
+    where('userId', '==', users.workerA.uid),
+    where('read', '==', false),
+  )));
+  await succeeds('worker ordered notifications', getDocs(query(
+    collection(workerDb, 'userNotifications'),
+    where('userId', '==', users.workerA.uid),
+    orderBy('createdAt', 'desc'),
+  )));
 });
 
 test('a self-service profile cannot claim membership in another organization', async () => {

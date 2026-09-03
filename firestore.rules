@@ -59,6 +59,22 @@ service cloud.firestore {
         );
     }
 
+    function validOrganizationChatCreate() {
+      let organizationId = request.resource.data.organizationId;
+      let organization = get(/databases/$(database)/documents/organizations/$(organizationId)).data;
+      return isOrganizationMember(organizationId)
+        && request.resource.data.participants is list
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.kind in ['organization', 'team', 'manager', 'direct', 'custom']
+        && organization.managerIds is list
+        && organization.workerIds is list
+        && request.resource.data.participants.toSet()
+          .difference(organization.managerIds.toSet())
+          .difference(organization.workerIds.toSet())
+          .size() == 0;
+    }
+
     function eventExists(eventId) {
       return eventId is string
         && exists(/databases/$(database)/documents/events/$(eventId));
@@ -80,8 +96,8 @@ service cloud.firestore {
     function canManageEventData(data) {
       return signedIn()
         && (
-          data.managerId == request.auth.uid
-          || isOrganizationManager(data.organizationId)
+          data.get('managerId', null) == request.auth.uid
+          || isOrganizationManager(data.get('organizationId', null))
         );
     }
 
@@ -153,11 +169,8 @@ service cloud.firestore {
     }
 
     function canReadEventData(data) {
-      return canManageEventData(data)
-        || (
-          data.workerIds is list
-          && request.auth.uid in data.workerIds
-        );
+      return request.auth.uid in data.workerIds
+        || canManageEventData(data);
     }
 
     function threadExists(threadId) {
@@ -316,6 +329,24 @@ service cloud.firestore {
         && request.resource.data.userId == getAfter(/databases/$(database)/documents/workerInvites/$(inviteId)).data.managerId;
     }
 
+    function validPendingWorkerInviteNotificationCreate() {
+      let inviteId = request.resource.data.relatedRoleId;
+      return request.resource.data.kind == 'worker_team_invite'
+        && inviteId is string
+        && existsAfter(/databases/$(database)/documents/workerInvites/$(inviteId))
+        && getAfter(/databases/$(database)/documents/workerInvites/$(inviteId)).data.managerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/workerInvites/$(inviteId)).data.workerId == request.resource.data.userId
+        && getAfter(/databases/$(database)/documents/workerInvites/$(inviteId)).data.status == 'pending_acceptance';
+    }
+
+    function canReadWorkerInviteNotification() {
+      let inviteId = resource.data.relatedRoleId;
+      return resource.data.kind == 'worker_team_invite'
+        && inviteId is string
+        && exists(/databases/$(database)/documents/workerInvites/$(inviteId))
+        && get(/databases/$(database)/documents/workerInvites/$(inviteId)).data.managerId == request.auth.uid;
+    }
+
     function validRoleInviteMailCreate() {
       let details = request.resource.data.dispatchEventRoleInvite;
       return details is map
@@ -329,6 +360,21 @@ service cloud.firestore {
           || isEventOrganizationWorker(details.eventId, details.workerId)
         )
         && targetUserEmailMatches(details.workerId, details.email)
+        && request.resource.data.to[0] == details.email;
+    }
+
+    function validWorkerInviteMailCreate() {
+      let details = request.resource.data.dispatchInvite;
+      return details is map
+        && details.inviteId is string
+        && request.resource.data.to is list
+        && request.resource.data.to.size() == 1
+        && isManager()
+        && details.managerId == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/workerInvites/$(details.inviteId))
+        && getAfter(/databases/$(database)/documents/workerInvites/$(details.inviteId)).data.managerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/workerInvites/$(details.inviteId)).data.email == details.email
+        && getAfter(/databases/$(database)/documents/workerInvites/$(details.inviteId)).data.teamId == details.teamId
         && request.resource.data.to[0] == details.email;
     }
 
@@ -386,17 +432,23 @@ service cloud.firestore {
       return signedIn() && resource.data.managerId == request.auth.uid;
     }
 
+    function inviteEmailMatchesAuthenticatedUser() {
+      return signedIn()
+        && request.auth.token.email != null
+        && (
+          resource.data.email == request.auth.token.email
+          || resource.data.normalizedEmail == request.auth.token.email
+          || resource.data.canonicalEmail == request.auth.token.email
+        );
+    }
+
     function workerOwnsInvite() {
       return signedIn()
         && (
           (resource.data.workerId != null && resource.data.workerId == request.auth.uid)
           || (
-            resource.data.claimRequired != true
-            && request.auth.token.email != null
-            && (
-              resource.data.email == request.auth.token.email
-              || resource.data.normalizedEmail == request.auth.token.email
-            )
+            resource.data.get('claimRequired', false) != true
+            && inviteEmailMatchesAuthenticatedUser()
           )
         );
     }
@@ -467,7 +519,8 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if signedIn()
         && (
-          resource.data.managerId == request.auth.uid
+          request.auth.uid in resource.data.workerIds
+          || resource.data.managerId == request.auth.uid
           || (resource.data.managerIds is list && request.auth.uid in resource.data.managerIds)
           || isOrganizationManager(resource.data.organizationId)
           || isOrganizationMember(resource.data.organizationId)
@@ -585,7 +638,9 @@ service cloud.firestore {
     }
 
     match /workerInvites/{inviteId} {
-      allow read: if isInviteManager() || workerOwnsInvite();
+      allow read: if inviteEmailMatchesAuthenticatedUser()
+        || isInviteManager()
+        || (signedIn() && resource.data.workerId == request.auth.uid);
 
       allow create: if isManager()
         && request.resource.data.managerId == request.auth.uid
@@ -620,14 +675,8 @@ service cloud.firestore {
     match /managerInvites/{inviteId} {
       allow read: if signedIn()
         && (
-          resource.data.inviterId == request.auth.uid
-          || (
-            resource.data.claimRequired != true
-            && (
-              resource.data.email == request.auth.token.email
-              || resource.data.normalizedEmail == request.auth.token.email
-            )
-          )
+          inviteEmailMatchesAuthenticatedUser()
+          || resource.data.inviterId == request.auth.uid
         );
 
       allow create: if isManager()
@@ -641,11 +690,8 @@ service cloud.firestore {
         && request.resource.data.organizationId == resource.data.organizationId
       ) || (
         isManager()
-        && resource.data.claimRequired != true
-        && (
-          resource.data.email == request.auth.token.email
-          || resource.data.normalizedEmail == request.auth.token.email
-        )
+        && resource.data.get('claimRequired', false) != true
+        && inviteEmailMatchesAuthenticatedUser()
         && request.resource.data.organizationId == resource.data.organizationId
         && request.resource.data.status == 'accepted'
         && request.resource.data.managerUserId == request.auth.uid
@@ -726,7 +772,9 @@ service cloud.firestore {
 
     match /userNotifications/{notificationId} {
       allow read: if signedIn() && (
-        resource.data.userId == request.auth.uid
+        (isManager() && !exists(/databases/$(database)/documents/userNotifications/$(notificationId)))
+        || resource.data.userId == request.auth.uid
+        || canReadWorkerInviteNotification()
         || canManageEvent(resource.data.relatedEventId)
       );
       allow create: if signedIn()
@@ -740,6 +788,7 @@ service cloud.firestore {
         && (
           validEventNotificationCreate()
           || validWorkerInviteResponseNotificationCreate()
+          || validPendingWorkerInviteNotificationCreate()
         );
       allow update: if signedIn()
         && resource.data.userId == request.auth.uid
@@ -756,16 +805,19 @@ service cloud.firestore {
     match /chatThreads/{threadId} {
       allow read: if signedIn()
         && request.auth.uid in resource.data.participants;
-      allow create: if isOrganizationManager(request.resource.data.organizationId)
-        && request.resource.data.participants is list
-        && request.auth.uid in request.resource.data.participants
-        && (
-          (
-            'createdBy' in request.resource.data
-            && request.resource.data.createdBy == request.auth.uid
+      allow create: if (
+          isOrganizationManager(request.resource.data.organizationId)
+          && request.resource.data.participants is list
+          && request.auth.uid in request.resource.data.participants
+          && (
+            (
+              'createdBy' in request.resource.data
+              && request.resource.data.createdBy == request.auth.uid
+            )
+            || request.resource.data.kind in ['organization', 'team', 'manager', 'direct']
           )
-          || request.resource.data.kind in ['organization', 'team', 'manager', 'direct']
-        );
+        )
+        || validOrganizationChatCreate();
       allow update: if signedIn()
         && resource.data.participants is list
         && request.auth.uid in resource.data.participants
@@ -893,8 +945,18 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.message is map
         && (
-          validRoleInviteMailCreate()
-          || validEventReminderMailCreate()
+          (
+            'dispatchEventRoleInvite' in request.resource.data
+            && validRoleInviteMailCreate()
+          )
+          || (
+            'dispatchInvite' in request.resource.data
+            && validWorkerInviteMailCreate()
+          )
+          || (
+            'dispatchEventReminder' in request.resource.data
+            && validEventReminderMailCreate()
+          )
         );
       allow update: if signedIn()
         && request.resource.data.message is map

@@ -272,6 +272,34 @@ export function watchIncomingChatThreadHeads(
   return () => unsubscribe();
 }
 
+export async function ensureChatThread(params: {
+  threadId: string;
+  organizationId: string;
+  teamId?: string | null;
+  title?: string | null;
+  kind: NonNullable<ChatThreadHead['kind']>;
+  creatorId: string;
+  participantIds: string[];
+}) {
+  const participants = [...new Set([params.creatorId, ...params.participantIds].filter(Boolean))];
+  if (participants.length < 2) throw new Error('A chat needs at least two participants.');
+
+  const threadRef = doc(db, 'chatThreads', params.threadId);
+  const existing = await getDoc(threadRef).catch(() => null);
+  if (existing?.exists()) return;
+
+  await setDoc(threadRef, {
+    id: params.threadId,
+    organizationId: params.organizationId,
+    teamId: params.teamId || null,
+    title: params.title?.trim() || 'Chat',
+    kind: params.kind,
+    participants,
+    createdBy: params.creatorId,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function uploadChatAttachment(params: {
   senderId: string;
   threadId: string;

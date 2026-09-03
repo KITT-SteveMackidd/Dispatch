@@ -20,7 +20,7 @@ describe('secure invitation flow wiring', () => {
     const rules = read('firestore.rules');
     expect(dispatchSource).toContain('if (!invite.managerId || invite.claimRequired) continue;');
     expect(dispatchSource).toContain('if (invite.claimRequired) continue;');
-    expect(rules).toContain('resource.data.claimRequired != true');
+    expect(rules).toContain("resource.data.get('claimRequired', false) != true");
     expect(rules).toContain('match /secureInvites/{inviteHash}');
     expect(rules).toContain('allow read, write: if false;');
     expect(functionsSource).toContain('deliveryEmail,');
