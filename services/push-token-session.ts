@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
+import { setActiveNotificationUser } from '../lib/foreground-chat-notifications';
 import { removeUserPushToken, saveUserPushToken } from './dispatch';
 
 let registeredDeviceToken: { userId: string; token: string } | null = null;
@@ -146,6 +147,7 @@ export function forgetRegisteredDevicePushToken() {
 }
 
 export async function clearDispatchNotificationState() {
+  setActiveNotificationUser(null);
   await Promise.allSettled([
     Notifications.cancelAllScheduledNotificationsAsync(),
     Notifications.dismissAllNotificationsAsync(),

@@ -389,6 +389,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!currentUser) return;
 
     await unregisterCurrentDevicePushToken(currentUser.uid);
+    await clearDispatchNotificationState();
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setAuthUser(null);
@@ -636,6 +637,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const revokeSession = async () => {
     assertFirebaseConfigured();
     if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
+    await clearDispatchNotificationState();
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);
@@ -666,6 +668,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     assertFirebaseConfigured();
     if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
+    await clearDispatchNotificationState();
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);

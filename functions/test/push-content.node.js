@@ -6,6 +6,7 @@ const {
   documentKey,
   eventReminderTargets,
   normalizeExpoPushTokens,
+  pushMessageForUser,
   rolePushContent,
   rolePushRecipientId,
 } = require('../lib/push-content');
@@ -23,6 +24,26 @@ test('normalizes and deduplicates Expo push tokens', () => {
     'ExponentPushToken[xyz]',
     'not-a-token',
   ]), ['ExpoPushToken[abc]', 'ExponentPushToken[xyz]']);
+});
+
+test('scopes every push payload to its intended Firebase user', () => {
+  assert.deepEqual(pushMessageForUser('worker-1', {
+    to: 'ExpoPushToken[device]',
+    title: 'New message',
+    body: 'Call time changed.',
+    data: { kind: 'chat', recipientUserId: 'spoofed-user' },
+  }), {
+    to: 'ExpoPushToken[device]',
+    title: 'New message',
+    body: 'Call time changed.',
+    sound: 'default',
+    priority: 'high',
+    channelId: 'dispatch-default',
+    data: {
+      kind: 'chat',
+      recipientUserId: 'worker-1',
+    },
+  });
 });
 
 test('builds chat notification content and routing data', () => {

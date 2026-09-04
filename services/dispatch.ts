@@ -1,6 +1,5 @@
 import {
   addDoc,
-  arrayRemove,
   arrayUnion,
   collection,
   deleteDoc,
@@ -35,6 +34,7 @@ import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
 import { prepareWorkerEventRoleInvitation, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
 import { prepareEventRoleInviteResponse, respondToEventRoleInvite } from '@/lib/event-role-invite-access';
 import { addCustomChatParticipantsThroughServer, sendChatMessageThroughServer } from '@/lib/chat-message-access';
+import { registerDevicePushTokenThroughServer, unregisterDevicePushTokenThroughServer } from '@/lib/push-token-access';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
@@ -1320,27 +1320,21 @@ export async function saveUserPushToken(params: {
   platform: 'ios' | 'android' | 'web' | 'unknown';
   permissionStatus: 'granted' | 'denied' | 'undetermined';
 }) {
-  await setDoc(
-    doc(db, 'users', params.userId),
-    {
-      pushTokens: arrayUnion(params.token),
-      pushPermissionStatus: params.permissionStatus,
-      pushTokenUpdatedAt: serverTimestamp(),
-      pushPlatform: params.platform,
-    },
-    { merge: true }
-  );
+  if (auth.currentUser?.uid !== params.userId) {
+    throw new Error('Push notifications can only be registered for the signed-in account.');
+  }
+  await registerDevicePushTokenThroughServer({
+    token: params.token,
+    platform: params.platform,
+    permissionStatus: params.permissionStatus,
+  });
 }
 
 export async function removeUserPushToken(params: { userId: string; token: string }) {
-  await setDoc(
-    doc(db, 'users', params.userId),
-    {
-      pushTokens: arrayRemove(params.token),
-      pushTokenUpdatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  if (!auth.currentUser) {
+    throw new Error('Push notifications can only be unregistered while signed in.');
+  }
+  await unregisterDevicePushTokenThroughServer({ token: params.token });
 }
 
 export function watchUserNotifications(userId: string, cb: (items: UserNotification[]) => void) {

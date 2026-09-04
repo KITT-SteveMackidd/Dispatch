@@ -8,6 +8,21 @@ function normalizeExpoPushTokens(values) {
   return uniqueStrings(values).filter((token) => /^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$/.test(token));
 }
 
+function pushMessageForUser(userId, { to, title, body, data = {} }) {
+  return {
+    to,
+    title,
+    body,
+    sound: 'default',
+    priority: 'high',
+    channelId: 'dispatch-default',
+    data: {
+      ...data,
+      recipientUserId: userId,
+    },
+  };
+}
+
 function chatPushContent(message, thread = {}) {
   const senderName = typeof message.senderName === 'string' ? message.senderName.trim() : '';
   const text = typeof message.text === 'string' ? message.text.trim() : '';
@@ -85,6 +100,7 @@ module.exports = {
   documentKey,
   eventReminderTargets,
   normalizeExpoPushTokens,
+  pushMessageForUser,
   rolePushContent,
   rolePushRecipientId,
   uniqueStrings,

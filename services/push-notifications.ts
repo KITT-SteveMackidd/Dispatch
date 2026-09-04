@@ -5,7 +5,11 @@ import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
-import { shouldPresentForegroundNotification } from '@/lib/foreground-chat-notifications';
+import {
+  isNotificationForUser,
+  setActiveNotificationUser,
+  shouldPresentForegroundNotification,
+} from '@/lib/foreground-chat-notifications';
 import {
   beginPushTokenSession,
   endPushTokenSession,
@@ -50,7 +54,7 @@ function useNotificationRouting(currentUserId?: string) {
     if (!currentUserId) return;
 
     const go = (data?: NotificationRouteData) => {
-      if (!data) return;
+      if (!data || !isNotificationForUser(data, currentUserId)) return;
 
       if (data.kind === 'chat') {
         const route = resolveChatRouteFromNotification(data, currentUserId);
@@ -91,8 +95,13 @@ export function usePushNotificationBridge() {
   useNotificationRouting(profile?.uid);
 
   useEffect(() => {
-    if (!profile?.uid) return;
     ensureNotificationHandler();
+    setActiveNotificationUser(profile?.uid || null);
+    return () => setActiveNotificationUser(null);
+  }, [profile?.uid]);
+
+  useEffect(() => {
+    if (!profile?.uid) return;
     const userId = profile.uid;
     const pushTokenSessionGeneration = beginPushTokenSession(userId);
 

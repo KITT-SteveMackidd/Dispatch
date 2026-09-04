@@ -6,6 +6,9 @@ vi.mock('../services/dispatch', () => ({
 }));
 vi.mock('expo-notifications', () => ({
   getExpoPushTokenAsync: vi.fn(),
+  cancelAllScheduledNotificationsAsync: vi.fn().mockResolvedValue(undefined),
+  dismissAllNotificationsAsync: vi.fn().mockResolvedValue(undefined),
+  setBadgeCountAsync: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('expo-constants', () => ({
   default: {
@@ -18,6 +21,7 @@ import * as Notifications from 'expo-notifications';
 import { removeUserPushToken, saveUserPushToken } from '../services/dispatch';
 import {
   beginPushTokenSession,
+  clearDispatchNotificationState,
   endPushTokenSession,
   forgetRegisteredDevicePushToken,
   registerCurrentDevicePushToken,
@@ -33,7 +37,17 @@ describe('push token session ownership', () => {
     vi.mocked(saveUserPushToken).mockResolvedValue(undefined);
     vi.mocked(Notifications.getExpoPushTokenAsync).mockReset();
     vi.mocked(Notifications.getExpoPushTokenAsync).mockRejectedValue(new Error('No device token available'));
+    vi.mocked(Notifications.cancelAllScheduledNotificationsAsync).mockClear();
+    vi.mocked(Notifications.dismissAllNotificationsAsync).mockClear();
+    vi.mocked(Notifications.setBadgeCountAsync).mockClear();
     forgetRegisteredDevicePushToken();
+  });
+
+  it('clears scheduled notifications, delivered notifications, and badges at logout', async () => {
+    await clearDispatchNotificationState();
+    expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalledOnce();
+    expect(Notifications.dismissAllNotificationsAsync).toHaveBeenCalledOnce();
+    expect(Notifications.setBadgeCountAsync).toHaveBeenCalledWith(0);
   });
 
   it('removes the current device token before its owner signs out', async () => {

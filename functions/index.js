@@ -20,6 +20,7 @@ const {
   documentKey,
   eventReminderTargets,
   normalizeExpoPushTokens,
+  pushMessageForUser,
   rolePushContent,
   rolePushRecipientId,
   uniqueStrings,
@@ -29,6 +30,10 @@ const {
   roleNotificationStateChanged,
   roleStateFingerprint,
 } = require('./lib/role-state');
+const {
+  normalizePushTokenRegistration,
+  stalePushTokenOwnerIds,
+} = require('./lib/push-token-ownership');
 const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications');
 const { eventAccessForRoleInvitation } = require('./lib/event-role-access');
 const { buildEventRoleResponse } = require('./lib/event-role-response');
@@ -73,6 +78,7 @@ onInit(() => {
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const PROCESSING_LEASE_MS = 5 * 60 * 1000;
+const MAX_PUSH_TOKEN_OWNERS = 450;
 
 function chunks(values, size) {
   const result = [];
@@ -976,6 +982,109 @@ exports.deleteDispatchAccount = onCall({
   return { deleted: true, appleAuthorizationRevoked, ...cleanup };
 });
 
+function pushTokenOwnerQuery(token) {
+  return db.collection('users')
+    .where('pushTokens', 'array-contains', token)
+    .limit(MAX_PUSH_TOKEN_OWNERS);
+}
+
+function assertCompletePushTokenOwnerSnapshot(snapshot) {
+  if (snapshot.size >= MAX_PUSH_TOKEN_OWNERS) {
+    throw new HttpsError('resource-exhausted', 'Too many accounts are associated with this device token.');
+  }
+}
+
+async function removePushTokenFromAllUsers(token) {
+  const ownersSnapshot = await pushTokenOwnerQuery(token).get();
+  assertCompletePushTokenOwnerSnapshot(ownersSnapshot);
+  if (ownersSnapshot.empty) return 0;
+
+  const batch = db.batch();
+  ownersSnapshot.docs.forEach((ownerSnapshot) => {
+    batch.set(ownerSnapshot.ref, {
+      pushTokens: FieldValue.arrayRemove(token),
+      pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+  await batch.commit();
+  return ownersSnapshot.size;
+}
+
+exports.registerDevicePushToken = onCall({ maxInstances: 20 }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Sign in before registering this device for notifications.');
+  }
+
+  let registration;
+  try {
+    registration = normalizePushTokenRegistration(request.data);
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error instanceof Error ? error.message : String(error));
+  }
+
+  const callerRef = db.collection('users').doc(request.auth.uid);
+  return db.runTransaction(async (transaction) => {
+    const callerSnapshot = await transaction.get(callerRef);
+    if (!callerSnapshot.exists) {
+      throw new HttpsError('failed-precondition', 'Create your Dispatch profile before enabling notifications.');
+    }
+
+    const ownersSnapshot = await transaction.get(pushTokenOwnerQuery(registration.token));
+    assertCompletePushTokenOwnerSnapshot(ownersSnapshot);
+    const previousOwnerIds = stalePushTokenOwnerIds(
+      ownersSnapshot.docs.map((ownerSnapshot) => ownerSnapshot.id),
+      request.auth.uid
+    );
+
+    ownersSnapshot.docs
+      .filter((ownerSnapshot) => previousOwnerIds.includes(ownerSnapshot.id))
+      .forEach((ownerSnapshot) => {
+        transaction.set(ownerSnapshot.ref, {
+          pushTokens: FieldValue.arrayRemove(registration.token),
+          pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+
+    transaction.set(callerRef, {
+      pushTokens: FieldValue.arrayUnion(registration.token),
+      pushPermissionStatus: registration.permissionStatus,
+      pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+      pushPlatform: registration.platform,
+    }, { merge: true });
+
+    return { previousOwnersRemoved: previousOwnerIds.length };
+  });
+});
+
+exports.unregisterDevicePushToken = onCall({ maxInstances: 20 }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Sign in before unregistering this device from notifications.');
+  }
+
+  let token;
+  try {
+    token = normalizePushTokenRegistration(request.data).token;
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error instanceof Error ? error.message : String(error));
+  }
+
+  return db.runTransaction(async (transaction) => {
+    const ownersSnapshot = await transaction.get(pushTokenOwnerQuery(token));
+    assertCompletePushTokenOwnerSnapshot(ownersSnapshot);
+    if (!ownersSnapshot.docs.some((ownerSnapshot) => ownerSnapshot.id === request.auth.uid)) {
+      return { ownersRemoved: 0 };
+    }
+
+    ownersSnapshot.docs.forEach((ownerSnapshot) => {
+      transaction.set(ownerSnapshot.ref, {
+        pushTokens: FieldValue.arrayRemove(token),
+        pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+    return { ownersRemoved: ownersSnapshot.size };
+  });
+});
+
 async function expoRequest(url, body) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1023,11 +1132,8 @@ async function claimDelivery(deliveryId, metadata) {
   });
 }
 
-async function removeInvalidToken(userId, token) {
-  await db.collection('users').doc(userId).set({
-    pushTokens: FieldValue.arrayRemove(token),
-    pushTokenUpdatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
+async function removeInvalidToken(_userId, token) {
+  await removePushTokenFromAllUsers(token);
 }
 
 async function savePushTicket(ticketId, userId, token, deliveryId) {
@@ -1064,13 +1170,10 @@ async function sendPushToUser({ deliveryId, userId, title, body, data, sourceRef
   try {
     let successfulTickets = 0;
     for (const tokenChunk of chunks(tokens, 100)) {
-      const messages = tokenChunk.map((token) => ({
+      const messages = tokenChunk.map((token) => pushMessageForUser(userId, {
         to: token,
         title,
         body,
-        sound: 'default',
-        priority: 'high',
-        channelId: 'dispatch-default',
         data,
       }));
       const response = await expoRequest(EXPO_PUSH_URL, messages);
