@@ -32,6 +32,7 @@ const {
 const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications');
 const { eventAccessForRoleInvitation } = require('./lib/event-role-access');
 const { buildEventRoleResponse } = require('./lib/event-role-response');
+const { MAX_CHAT_PARTICIPANTS, buildChatMessageMutation } = require('./lib/chat-message');
 const {
   INVITE_TTL_MS,
   buildInviteUrls,
@@ -89,6 +90,14 @@ function timestampMillis(value) {
   if (typeof value.toMillis === 'function') return value.toMillis();
   if (value instanceof Date) return value.getTime();
   return 0;
+}
+
+function callableDocumentId(value, label) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized || normalized.length > 512 || normalized.includes('/')) {
+    throw new HttpsError('invalid-argument', `A valid ${label} is required.`);
+  }
+  return normalized;
 }
 
 function invitationPreview(invite, currentUserId = null) {
@@ -246,6 +255,102 @@ exports.respondToEventRoleInvite = onCall(async (request) => {
     shouldQueueReminder: result.shouldQueueReminder,
     alreadyHandled: result.alreadyHandled,
   };
+});
+
+exports.sendChatMessage = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before sending a message.');
+  const threadId = callableDocumentId(request.data?.threadId, 'chat');
+  const threadRef = db.collection('chatThreads').doc(threadId);
+  const senderRef = db.collection('users').doc(request.auth.uid);
+  const messageRef = threadRef.collection('messages').doc();
+
+  return db.runTransaction(async (transaction) => {
+    const [threadSnapshot, senderSnapshot] = await Promise.all([
+      transaction.get(threadRef),
+      transaction.get(senderRef),
+    ]);
+    if (!threadSnapshot.exists) throw new HttpsError('not-found', 'This chat no longer exists.');
+
+    const thread = { id: threadSnapshot.id, ...threadSnapshot.data() };
+    const senderName = senderSnapshot.exists
+      ? senderSnapshot.data().displayName
+      : request.auth.token.name;
+    let mutation;
+    try {
+      mutation = buildChatMessageMutation({
+        thread,
+        senderId: request.auth.uid,
+        senderName,
+        text: request.data?.text,
+        attachments: request.data?.attachments,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to send this message.';
+      const code = message.includes('not a member') ? 'permission-denied' : 'invalid-argument';
+      throw new HttpsError(code, message);
+    }
+
+    transaction.create(messageRef, {
+      ...mutation.message,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    transaction.update(threadRef, {
+      ...mutation.threadPatch,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    mutation.recipientIds.forEach((userId) => {
+      transaction.set(db.collection('chatUnread').doc(`${userId}__${threadId}`), {
+        userId,
+        threadId,
+        teamId: mutation.message.teamId,
+        unreadCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+
+    return { messageId: messageRef.id, recipientCount: mutation.recipientIds.length };
+  });
+});
+
+exports.addCustomChatParticipants = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before changing chat members.');
+  const threadId = callableDocumentId(request.data?.threadId, 'chat');
+  const participantIds = uniqueStrings(request.data?.participantIds);
+  if (!participantIds.length || participantIds.length > MAX_CHAT_PARTICIPANTS) {
+    throw new HttpsError('invalid-argument', 'Select valid organization members.');
+  }
+
+  const threadRef = db.collection('chatThreads').doc(threadId);
+  const senderRef = db.collection('users').doc(request.auth.uid);
+  const participantRefs = participantIds.map((userId) => db.collection('users').doc(callableDocumentId(userId, 'user')));
+  return db.runTransaction(async (transaction) => {
+    const [threadSnapshot, senderSnapshot, ...participantSnapshots] = await Promise.all([
+      transaction.get(threadRef),
+      transaction.get(senderRef),
+      ...participantRefs.map((participantRef) => transaction.get(participantRef)),
+    ]);
+    if (!threadSnapshot.exists) throw new HttpsError('not-found', 'This chat no longer exists.');
+    const thread = { id: threadSnapshot.id, ...threadSnapshot.data() };
+    const currentParticipants = uniqueStrings(thread.participants);
+    if (thread.kind !== 'custom') throw new HttpsError('failed-precondition', 'Default chat membership cannot be changed here.');
+    if (!currentParticipants.includes(request.auth.uid)) throw new HttpsError('permission-denied', 'You are not a member of this chat.');
+    if (!senderSnapshot.exists || senderSnapshot.data().organizationId !== thread.organizationId) {
+      throw new HttpsError('permission-denied', 'You are no longer a member of this organization.');
+    }
+    if (participantSnapshots.some((snapshot) => !snapshot.exists || snapshot.data().organizationId !== thread.organizationId)) {
+      throw new HttpsError('permission-denied', 'Only members of this organization can be added.');
+    }
+
+    const nextParticipants = uniqueStrings([...currentParticipants, ...participantIds]);
+    if (nextParticipants.length > MAX_CHAT_PARTICIPANTS) {
+      throw new HttpsError('resource-exhausted', 'This chat has too many participants.');
+    }
+    transaction.update(threadRef, {
+      participants: nextParticipants,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { participantIds: nextParticipants };
+  });
 });
 
 async function syncClaimedInvitationChats(organizationId) {

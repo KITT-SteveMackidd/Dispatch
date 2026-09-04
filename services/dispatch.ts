@@ -34,6 +34,7 @@ import { buildLateTaskNotificationTargets } from '@/lib/task-notification-target
 import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
 import { prepareWorkerEventRoleInvitation, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
 import { prepareEventRoleInviteResponse, respondToEventRoleInvite } from '@/lib/event-role-invite-access';
+import { addCustomChatParticipantsThroughServer, sendChatMessageThroughServer } from '@/lib/chat-message-access';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { DispatchEvent, EventRole, EventTaskAttachment, EventTemplate, EventTemplateRole, InviteTokenStatus, ManagerInvite, Organisation, Team, UserProfile, WorkerInvite, WorkerInviteStatus } from '@/types/dispatch';
@@ -361,58 +362,13 @@ export async function uploadTemplateTaskAttachment(params: {
 
 export async function sendChatMessage(params: {
   threadId: string;
-  teamId?: string;
-  senderId: string;
-  senderName?: string;
-  recipientIds: string[];
   text: string;
   attachments?: ChatAttachment[];
 }) {
   const text = params.text.trim();
   const attachments = params.attachments || [];
   if (!text && !attachments.length) return;
-  const recipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
-
-  await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
-    threadId: params.threadId,
-    teamId: params.teamId || null,
-    senderId: params.senderId,
-    senderName: params.senderName?.trim() || null,
-    recipientIds,
-    text,
-    attachments,
-    createdAt: serverTimestamp(),
-  });
-
-  await setDoc(
-    doc(db, 'chatThreads', params.threadId),
-    {
-      id: params.threadId,
-      teamId: params.teamId || null,
-      participants: [...new Set([params.senderId, ...params.recipientIds].filter(Boolean))],
-      pushSeenBy: [params.senderId],
-      lastMessageText: text || (attachments.length ? `Sent ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` : ''),
-      lastMessageSenderId: params.senderId,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-
-  await Promise.all(
-    recipientIds.map((userId) =>
-      setDoc(
-        doc(db, 'chatUnread', `${userId}__${params.threadId}`),
-        {
-          userId,
-          threadId: params.threadId,
-          teamId: params.teamId || null,
-          unreadCount: increment(1),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      )
-    )
-  );
+  await sendChatMessageThroughServer({ threadId: params.threadId, text, attachments });
 }
 
 export async function markChatThreadRead(params: { userId: string; threadId: string; teamId?: string }) {
@@ -784,12 +740,7 @@ export async function createChatGroup(params: {
 export async function addChatParticipants(params: { threadId: string; participantIds: string[] }) {
   const participantIds = [...new Set(params.participantIds.filter(Boolean))];
   if (!participantIds.length) return;
-
-  await setDoc(
-    doc(db, 'chatThreads', params.threadId),
-    { participants: arrayUnion(...participantIds) },
-    { merge: true }
-  );
+  await addCustomChatParticipantsThroughServer({ threadId: params.threadId, participantIds });
 }
 
 export async function renameCustomChat(params: { threadId: string; userId: string; title: string }) {

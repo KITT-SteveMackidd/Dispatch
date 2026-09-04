@@ -494,10 +494,6 @@ export default function WorkerChatScreen() {
     const text = draft.trim();
     if ((!text && !pendingAttachments.length) || !profile || !threadId || !threadReady || sending) return;
 
-    const recipientIds = isTeamBroadcast
-      ? memberIds.filter((id) => id !== profile.uid)
-      : [workerId].filter((id) => id && id !== profile.uid);
-
     setSending(true);
     try {
       const uploadedAttachments: ChatAttachment[] = [];
@@ -515,10 +511,6 @@ export default function WorkerChatScreen() {
 
       await sendChatMessage({
         threadId,
-        teamId,
-        senderId: profile.uid,
-        senderName: profile.displayName,
-        recipientIds,
         text,
         attachments: uploadedAttachments,
       });

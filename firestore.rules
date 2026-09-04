@@ -835,7 +835,7 @@ service cloud.firestore {
           'title', 'updatedAt'
         ])
         && (
-          request.resource.data.participants == resource.data.participants
+          request.resource.data.participants.toSet() == resource.data.participants.toSet()
           || isOrganizationManager(resource.data.organizationId)
           || (
             !(request.auth.uid in request.resource.data.participants)

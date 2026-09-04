@@ -449,6 +449,22 @@ test('the mobile chat send flow can write its message, thread summary, and unrea
   }, { merge: true }));
 });
 
+test('a Worker can update chat metadata when participant order changes but membership does not', async () => {
+  const workerDb = authed(users.workerA);
+  await assertSucceeds(setDoc(doc(workerDb, 'chatThreads', 'thread-a'), {
+    id: 'thread-a',
+    teamId: 'team-a',
+    participants: [users.workerA.uid, users.managerA.uid],
+    pushSeenBy: [users.workerA.uid],
+    lastMessageText: 'Worker message',
+    lastMessageSenderId: users.workerA.uid,
+    updatedAt: serverTimestamp(),
+  }, { merge: true }));
+  await assertFails(updateDoc(doc(workerDb, 'chatThreads', 'thread-a'), {
+    participants: [users.workerA.uid, users.workerAOther.uid],
+  }));
+});
+
 test('role assignment notifications are limited to the manager and target worker', async () => {
   await assertSucceeds(getDoc(doc(authed(users.workerA), 'roleAssignmentNotifications', 'role-note-a')));
   await assertSucceeds(getDoc(doc(authed(users.managerA), 'roleAssignmentNotifications', 'role-note-a')));
