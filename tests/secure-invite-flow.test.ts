@@ -86,4 +86,16 @@ describe('secure invitation flow wiring', () => {
     expect(setup).toContain("router.replace('/(tabs)/profile');");
     expect(setup).toContain('continue without one while you wait for an invitation');
   });
+
+  it('guides unaffiliated Workers back to their invitation email', () => {
+    const tabLayout = read('app/(tabs)/_layout.tsx');
+    const setup = read('app/(auth)/setup.tsx');
+    const teams = read('app/(tabs)/teams.tsx');
+
+    expect(tabLayout).toContain("'No invitation yet'");
+    expect(tabLayout).toContain('open the invitation link in that email');
+    expect(setup).toContain('open its invitation link to join the organization');
+    expect(teams).toContain('No team invite yet. Please check email for an invitation link.');
+    expect(teams).toContain("profile?.role === 'worker'");
+  });
 });

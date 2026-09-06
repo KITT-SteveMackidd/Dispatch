@@ -51,6 +51,7 @@ const {
   normalizeEmail,
 } = require('./lib/secure-invites');
 const {
+  buildDispatchVerificationLink,
   buildVerificationEmail,
   verificationCooldownSeconds,
 } = require('./lib/email-verification');
@@ -806,7 +807,8 @@ exports.sendDispatchEmailVerification = onCall({ maxInstances: 10 }, async (requ
 
   let verificationLink;
   try {
-    verificationLink = await adminAuth.generateEmailVerificationLink(deliveryEmail);
+    const firebaseVerificationLink = await adminAuth.generateEmailVerificationLink(deliveryEmail);
+    verificationLink = buildDispatchVerificationLink(firebaseVerificationLink);
   } catch (error) {
     logger.error('Unable to generate a Dispatch email verification link.', {
       uid: request.auth.uid,

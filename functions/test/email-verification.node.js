@@ -1,10 +1,35 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  DISPATCH_VERIFICATION_URL,
   EMAIL_VERIFICATION_COOLDOWN_MS,
+  buildDispatchVerificationLink,
   buildVerificationEmail,
   verificationCooldownSeconds,
 } = require('../lib/email-verification');
+
+test('routes Firebase verification action codes through the Dispatch result page', () => {
+  const link = buildDispatchVerificationLink(
+    'https://dispatch-eb63a.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=abc%2B123&lang=en'
+  );
+  const url = new URL(link);
+
+  assert.equal(`${url.origin}${url.pathname}`, DISPATCH_VERIFICATION_URL);
+  assert.equal(url.searchParams.get('mode'), 'verifyEmail');
+  assert.equal(url.searchParams.get('oobCode'), 'abc+123');
+  assert.equal(url.searchParams.get('lang'), 'en');
+});
+
+test('rejects malformed Firebase verification links', () => {
+  assert.throws(
+    () => buildDispatchVerificationLink('https://example.com/?mode=resetPassword&oobCode=abc'),
+    /missing a verifyEmail action code/
+  );
+  assert.throws(
+    () => buildDispatchVerificationLink('https://example.com/?mode=verifyEmail'),
+    /missing a verifyEmail action code/
+  );
+});
 
 test('builds a Dispatch verification email with the generated Firebase action link', () => {
   const email = buildVerificationEmail({

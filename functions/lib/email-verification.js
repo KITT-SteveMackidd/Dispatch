@@ -1,4 +1,5 @@
 const EMAIL_VERIFICATION_COOLDOWN_MS = 60 * 1000;
+const DISPATCH_VERIFICATION_URL = 'https://dispatchcrewmanager.com/verify-email';
 
 function escapeHtml(value) {
   return String(value || '')
@@ -26,6 +27,26 @@ function buildVerificationEmail({ deliveryEmail, displayName, verificationLink }
   };
 }
 
+function buildDispatchVerificationLink(
+  firebaseVerificationLink,
+  publicVerificationUrl = DISPATCH_VERIFICATION_URL
+) {
+  const source = new URL(firebaseVerificationLink);
+  const oobCode = source.searchParams.get('oobCode');
+  if (source.searchParams.get('mode') !== 'verifyEmail' || !oobCode) {
+    throw new Error('Firebase verification link is missing a verifyEmail action code.');
+  }
+
+  const destination = new URL(publicVerificationUrl);
+  destination.searchParams.set('mode', 'verifyEmail');
+  destination.searchParams.set('oobCode', oobCode);
+
+  const languageCode = source.searchParams.get('lang');
+  if (languageCode) destination.searchParams.set('lang', languageCode);
+
+  return destination.toString();
+}
+
 function verificationCooldownSeconds(lastRequestedAtMs, nowMs = Date.now()) {
   if (!Number.isFinite(lastRequestedAtMs) || lastRequestedAtMs <= 0) return 0;
   const remainingMs = EMAIL_VERIFICATION_COOLDOWN_MS - (nowMs - lastRequestedAtMs);
@@ -33,7 +54,9 @@ function verificationCooldownSeconds(lastRequestedAtMs, nowMs = Date.now()) {
 }
 
 module.exports = {
+  DISPATCH_VERIFICATION_URL,
   EMAIL_VERIFICATION_COOLDOWN_MS,
+  buildDispatchVerificationLink,
   buildVerificationEmail,
   verificationCooldownSeconds,
 };
