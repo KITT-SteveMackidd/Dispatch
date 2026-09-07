@@ -8,7 +8,6 @@ import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   reauthenticateWithCredential,
-  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithCredential,
   signInWithEmailAndPassword,
@@ -57,7 +56,7 @@ type SocialAuthMode = 'signin' | 'signup';
 
 export type VerificationEmailDelivery = {
   queued: boolean;
-  transport: 'dispatch-mail' | 'firebase-auth' | 'none';
+  transport: 'dispatch-mail' | 'none';
   errorMessage?: string;
 };
 
@@ -92,33 +91,24 @@ function isVerificationCooldownError(error: unknown) {
   return code.includes('resource-exhausted');
 }
 
-async function deliverVerificationEmail(user: User): Promise<VerificationEmailDelivery> {
-  let dispatchMailError = '';
+async function deliverVerificationEmail(): Promise<VerificationEmailDelivery> {
   try {
     const result = await requestDispatchEmailVerification();
     if (result.queued || result.alreadyVerified) {
       return { queued: true, transport: 'dispatch-mail' };
     }
-  } catch (error) {
-    if (isVerificationCooldownError(error)) {
-      return {
-        queued: false,
-        transport: 'none',
-        errorMessage: describeVerificationDeliveryError(error),
-      };
-    }
-    dispatchMailError = describeVerificationDeliveryError(error);
-  }
-
-  try {
-    await sendEmailVerification(user);
-    return { queued: true, transport: 'firebase-auth' };
-  } catch (error) {
-    const firebaseAuthError = describeVerificationDeliveryError(error);
     return {
       queued: false,
       transport: 'none',
-      errorMessage: `Dispatch email delivery failed (${dispatchMailError || 'mail service unavailable'}). Firebase delivery also failed (${firebaseAuthError}).`,
+      errorMessage: 'The verification service did not queue an email. Please try again.',
+    };
+  } catch (error) {
+    return {
+      queued: false,
+      transport: 'none',
+      errorMessage: isVerificationCooldownError(error)
+        ? describeVerificationDeliveryError(error)
+        : `Dispatch could not send the verification email. ${describeVerificationDeliveryError(error)}`,
     };
   }
 }
@@ -515,7 +505,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, params.password);
     await updateProfile(cred.user, { displayName: trimmedName });
-    return deliverVerificationEmail(cred.user);
+    return deliverVerificationEmail();
   };
 
   const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => {
@@ -608,7 +598,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     assertFirebaseConfigured();
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    const delivery = await deliverVerificationEmail(user);
+    const delivery = await deliverVerificationEmail();
     if (!delivery.queued) {
       throw new Error(delivery.errorMessage || 'Unable to send the verification email. Please try again.');
     }

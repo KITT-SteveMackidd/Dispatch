@@ -52,6 +52,21 @@ describe('secure invitation flow wiring', () => {
     expect(verifyEmail).toContain("inviteResume: '1'");
   });
 
+  it('always sends account verification through the Dispatch-hosted result page', () => {
+    const session = read('context/session.tsx');
+    const verificationClient = read('lib/email-verification.ts');
+    const verificationFunction = read('functions/index.js');
+    const verificationEmail = read('functions/lib/email-verification.js');
+
+    expect(session).toContain('requestDispatchEmailVerification()');
+    expect(session).not.toContain('sendEmailVerification');
+    expect(session).not.toContain("'firebase-auth'");
+    expect(verificationClient).toContain("'sendDispatchEmailVerification'");
+    expect(verificationFunction).toContain('generateEmailVerificationLink');
+    expect(verificationEmail).toContain('https://dispatchcrewmanager.com/verify-email');
+    expect(verificationEmail).toContain('buildDispatchVerificationLink');
+  });
+
   it('routes manual invitation actions to the code entry screen', () => {
     const signIn = read('app/(auth)/signin.tsx');
     const signUp = read('app/(auth)/signup.tsx');
