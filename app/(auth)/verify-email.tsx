@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -36,8 +37,15 @@ export default function VerifyEmailScreen() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const [resendLoading, setResendLoading] = useState(false);
   const [refreshLoading, setRefreshLoading] = useState(false);
+  const refreshAuthUserRef = useRef(refreshAuthUser);
+  const refreshInFlight = useRef(false);
+  const initialRefreshAttempted = useRef(false);
 
-  const returnToInvitation = () => {
+  useEffect(() => {
+    refreshAuthUserRef.current = refreshAuthUser;
+  }, [refreshAuthUser]);
+
+  const returnToInvitation = useCallback(() => {
     if (!inviteToken) return false;
 
     if (isInviteOnboarding) {
@@ -52,12 +60,45 @@ export default function VerifyEmailScreen() {
       });
     }
     return true;
-  };
+  }, [inviteToken, isInviteOnboarding, router]);
+
+  const checkVerification = useCallback(async (showUnverifiedAlert: boolean) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setRefreshLoading(true);
+    try {
+      const isVerified = await refreshAuthUserRef.current();
+      if (isVerified) {
+        if (!returnToInvitation()) router.replace('/');
+      } else if (showUnverifiedAlert) {
+        Alert.alert('Not verified yet', 'We still show this account as unverified. Open the link from your email, then try again.');
+      }
+    } catch (error) {
+      if (showUnverifiedAlert) {
+        Alert.alert('Unable to refresh', error instanceof Error ? error.message : 'Please try again.');
+      }
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshLoading(false);
+    }
+  }, [returnToInvitation, router]);
+
+  useEffect(() => {
+    if (!initialRefreshAttempted.current) {
+      initialRefreshAttempted.current = true;
+      void checkVerification(false);
+    }
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void checkVerification(false);
+    });
+    return () => subscription.remove();
+  }, [checkVerification]);
 
   const onResend = async () => {
     setResendLoading(true);
     try {
-      await sendVerificationEmail();
+      await sendVerificationEmail(inviteToken);
       Alert.alert('Verification email sent', 'Check your inbox (and spam folder) for a new verification link.');
     } catch (error) {
       Alert.alert('Unable to send email', error instanceof Error ? error.message : 'Please try again.');
@@ -66,20 +107,8 @@ export default function VerifyEmailScreen() {
     }
   };
 
-  const onRefresh = async () => {
-    setRefreshLoading(true);
-    try {
-      const isVerified = await refreshAuthUser();
-      if (isVerified) {
-        if (!returnToInvitation()) router.replace('/');
-      } else {
-        Alert.alert('Not verified yet', 'We still show this account as unverified. Open the link from your email, then try again.');
-      }
-    } catch (error) {
-      Alert.alert('Unable to refresh', error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setRefreshLoading(false);
-    }
+  const onRefresh = () => {
+    void checkVerification(true);
   };
 
   const onUseAnotherAccount = async () => {

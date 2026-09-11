@@ -54,17 +54,31 @@ describe('secure invitation flow wiring', () => {
 
   it('always sends account verification through the Dispatch-hosted result page', () => {
     const session = read('context/session.tsx');
+    const signUp = read('app/(auth)/signup.tsx');
+    const verifyEmail = read('app/(auth)/verify-email.tsx');
     const verificationClient = read('lib/email-verification.ts');
     const verificationFunction = read('functions/index.js');
     const verificationEmail = read('functions/lib/email-verification.js');
 
-    expect(session).toContain('requestDispatchEmailVerification()');
+    expect(session).toContain('requestDispatchEmailVerification(inviteToken)');
     expect(session).not.toContain('sendEmailVerification');
     expect(session).not.toContain("'firebase-auth'");
     expect(verificationClient).toContain("'sendDispatchEmailVerification'");
     expect(verificationFunction).toContain('generateEmailVerificationLink');
     expect(verificationEmail).toContain('https://dispatchcrewmanager.com/verify-email');
     expect(verificationEmail).toContain('buildDispatchVerificationLink');
+    expect(verificationEmail).toContain("destination.searchParams.set('inviteToken'");
+    expect(signUp).toContain('inviteToken,');
+    expect(verifyEmail).toContain('sendVerificationEmail(inviteToken)');
+    expect(verifyEmail).toContain("AppState.addEventListener('change'");
+    expect(verifyEmail).toContain("state === 'active'");
+  });
+
+  it('refreshes Firebase verification before showing an invitation as blocked', () => {
+    const secureInviteScreen = read('components/invite/SecureInviteScreen.tsx');
+    expect(secureInviteScreen).toContain('refreshAuthUserRef.current()');
+    expect(secureInviteScreen).toContain("AppState.addEventListener('change'");
+    expect(secureInviteScreen).toContain('requiresEmailVerification');
   });
 
   it('routes manual invitation actions to the code entry screen', () => {

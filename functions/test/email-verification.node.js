@@ -5,12 +5,15 @@ const {
   EMAIL_VERIFICATION_COOLDOWN_MS,
   buildDispatchVerificationLink,
   buildVerificationEmail,
+  normalizeVerificationInviteToken,
   verificationCooldownSeconds,
 } = require('../lib/email-verification');
 
 test('routes Firebase verification action codes through the Dispatch result page', () => {
   const link = buildDispatchVerificationLink(
-    'https://dispatch-eb63a.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=abc%2B123&lang=en'
+    'https://dispatch-eb63a.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=abc%2B123&lang=en',
+    undefined,
+    'secure_invite-123'
   );
   const url = new URL(link);
 
@@ -18,6 +21,14 @@ test('routes Firebase verification action codes through the Dispatch result page
   assert.equal(url.searchParams.get('mode'), 'verifyEmail');
   assert.equal(url.searchParams.get('oobCode'), 'abc+123');
   assert.equal(url.searchParams.get('lang'), 'en');
+  assert.equal(url.searchParams.get('inviteToken'), 'secure_invite-123');
+});
+
+test('only carries valid invitation values into verification links', () => {
+  assert.equal(normalizeVerificationInviteToken(' invite-code-123 '), 'invite-code-123');
+  assert.equal(normalizeVerificationInviteToken('short'), null);
+  assert.equal(normalizeVerificationInviteToken('invite/with/path'), null);
+  assert.equal(normalizeVerificationInviteToken(null), null);
 });
 
 test('rejects malformed Firebase verification links', () => {

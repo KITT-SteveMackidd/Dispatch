@@ -29,7 +29,8 @@ function buildVerificationEmail({ deliveryEmail, displayName, verificationLink }
 
 function buildDispatchVerificationLink(
   firebaseVerificationLink,
-  publicVerificationUrl = DISPATCH_VERIFICATION_URL
+  publicVerificationUrl = DISPATCH_VERIFICATION_URL,
+  inviteToken
 ) {
   const source = new URL(firebaseVerificationLink);
   const oobCode = source.searchParams.get('oobCode');
@@ -44,7 +45,16 @@ function buildDispatchVerificationLink(
   const languageCode = source.searchParams.get('lang');
   if (languageCode) destination.searchParams.set('lang', languageCode);
 
+  const normalizedInviteToken = normalizeVerificationInviteToken(inviteToken);
+  if (normalizedInviteToken) destination.searchParams.set('inviteToken', normalizedInviteToken);
+
   return destination.toString();
+}
+
+function normalizeVerificationInviteToken(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (normalized.length < 8 || normalized.length > 256 || normalized.includes('/')) return null;
+  return normalized;
 }
 
 function verificationCooldownSeconds(lastRequestedAtMs, nowMs = Date.now()) {
@@ -58,5 +68,6 @@ module.exports = {
   EMAIL_VERIFICATION_COOLDOWN_MS,
   buildDispatchVerificationLink,
   buildVerificationEmail,
+  normalizeVerificationInviteToken,
   verificationCooldownSeconds,
 };

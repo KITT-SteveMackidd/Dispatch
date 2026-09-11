@@ -103,7 +103,12 @@ export default function SignUpScreen() {
 
     setLoading(true);
     try {
-      const delivery = await signUp({ displayName: displayName.trim(), email, password });
+      const delivery = await signUp({
+        displayName: displayName.trim(),
+        email,
+        password,
+        inviteToken,
+      });
       Alert.alert(
         delivery.queued ? 'Verify your email' : 'Account created',
         delivery.queued

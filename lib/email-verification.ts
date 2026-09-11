@@ -5,11 +5,14 @@ export type DispatchEmailVerificationResult = {
   alreadyVerified: boolean;
 };
 
-export async function requestDispatchEmailVerification(): Promise<DispatchEmailVerificationResult> {
-  const callable = httpsCallable<void, DispatchEmailVerificationResult>(
+export async function requestDispatchEmailVerification(
+  inviteToken?: string
+): Promise<DispatchEmailVerificationResult> {
+  const callable = httpsCallable<{ inviteToken?: string }, DispatchEmailVerificationResult>(
     getFunctions(undefined, 'us-central1'),
     'sendDispatchEmailVerification'
   );
-  const result = await callable();
+  const normalizedInviteToken = inviteToken?.trim();
+  const result = await callable(normalizedInviteToken ? { inviteToken: normalizedInviteToken } : {});
   return result.data;
 }

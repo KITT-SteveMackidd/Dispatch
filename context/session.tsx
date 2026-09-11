@@ -40,12 +40,12 @@ type SessionContextType = {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: (params: { idToken: string; accessToken?: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
   signInWithApple: (params: { idToken: string; rawNonce: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
-  signUp: (params: { email: string; password: string; displayName: string }) => Promise<VerificationEmailDelivery>;
+  signUp: (params: { email: string; password: string; displayName: string; inviteToken?: string }) => Promise<VerificationEmailDelivery>;
   saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => Promise<void>;
   completeOnboarding: () => Promise<UserProfile | null>;
   refreshProfile: () => Promise<UserProfile | null>;
   sendPasswordReset: (email: string) => Promise<void>;
-  sendVerificationEmail: () => Promise<void>;
+  sendVerificationEmail: (inviteToken?: string) => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
   revokeSession: () => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -91,9 +91,9 @@ function isVerificationCooldownError(error: unknown) {
   return code.includes('resource-exhausted');
 }
 
-async function deliverVerificationEmail(): Promise<VerificationEmailDelivery> {
+async function deliverVerificationEmail(inviteToken?: string): Promise<VerificationEmailDelivery> {
   try {
-    const result = await requestDispatchEmailVerification();
+    const result = await requestDispatchEmailVerification(inviteToken);
     if (result.queued || result.alreadyVerified) {
       return { queued: true, transport: 'dispatch-mail' };
     }
@@ -497,7 +497,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (params: { email: string; password: string; displayName: string }) => {
+  const signUp = async (params: { email: string; password: string; displayName: string; inviteToken?: string }) => {
     assertFirebaseConfigured();
     await signOutExistingUserBeforeCredential();
     const normalizedEmail = params.email.trim();
@@ -505,7 +505,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, params.password);
     await updateProfile(cred.user, { displayName: trimmedName });
-    return deliverVerificationEmail();
+    return deliverVerificationEmail(params.inviteToken);
   };
 
   const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => {
@@ -594,11 +594,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await sendPasswordResetEmail(auth, normalizedEmail);
   };
 
-  const sendVerificationEmail = async () => {
+  const sendVerificationEmail = async (inviteToken?: string) => {
     assertFirebaseConfigured();
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    const delivery = await deliverVerificationEmail();
+    const delivery = await deliverVerificationEmail(inviteToken);
     if (!delivery.queued) {
       throw new Error(delivery.errorMessage || 'Unable to send the verification email. Please try again.');
     }
