@@ -12,7 +12,7 @@ import {
   acceptEventRoleWaitlistInvite,
   addEventRole,
   buildOrganizationManagersThreadId,
-  createDispatchEvent,
+  createDispatchEventSeries,
   createEventTemplate,
   deleteDispatchEvent,
   deleteEventRole,
@@ -63,6 +63,9 @@ import {
 import { preserveTemplateTaskOrder } from '@/lib/template-task-order';
 import { buildCreateEventRoleDrafts, type CreateEventRoleDraft } from '@/lib/create-event-role-drafts';
 import { resolveNativePickerChangeAction } from '@/lib/native-picker';
+import { formatEventTimeRange } from '@/lib/event-schedule';
+import { EventRepeatFields } from '@/components/EventRepeatFields';
+import { repeatFromTemplate, type RepeatRule, type TemplateRepeatRule } from '@/lib/event-recurrence';
 import {
   buildEventInviteTeamOptions,
   buildEditInviteChanges,
@@ -121,6 +124,7 @@ type TemplateTaskPreview = {
   description?: string;
   attachments?: Array<{ id: string; name: string; url: string; kind: 'photo' | 'document' }>;
   expectedOffsetMinutes?: number;
+  notifyManagerWhenOverdue?: boolean;
 };
 
 type TemplateRolePreview = {
@@ -168,6 +172,7 @@ type TemplateTaskEditorState = {
   name: string;
   description: string;
   includeCountdownTimer: boolean;
+  notifyManagerWhenOverdue: boolean;
   expectedOffsetText: string;
   attachments: Array<{ id: string; name: string; url: string; kind: 'photo' | 'document' }>;
 };
@@ -180,6 +185,7 @@ const INITIAL_TEMPLATE_TASK_EDITOR: TemplateTaskEditorState = {
   name: '',
   description: '',
   includeCountdownTimer: false,
+  notifyManagerWhenOverdue: true,
   expectedOffsetText: '00:00:00',
   attachments: [],
 };
@@ -342,6 +348,7 @@ export default function EventsScreen() {
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState('');
   const [templateDefaultTimeDraft, setTemplateDefaultTimeDraft] = useState('');
+  const [templateRecurrenceDraft, setTemplateRecurrenceDraft] = useState<RepeatRule | null>(null);
   const [showTemplateDefaultTimePicker, setShowTemplateDefaultTimePicker] = useState(false);
   const [templateDefaultLocationDraft, setTemplateDefaultLocationDraft] = useState('');
   const [templateDefaultLocationPlaceIdDraft, setTemplateDefaultLocationPlaceIdDraft] = useState('');
@@ -381,12 +388,17 @@ export default function EventsScreen() {
   const [expandedPendingNotificationIds, setExpandedPendingNotificationIds] = useState<Record<string, boolean>>({});
   const [eventDateDraft, setEventDateDraft] = useState('');
   const [eventTimeDraft, setEventTimeDraft] = useState('');
+  const [eventEndTimeDraft, setEventEndTimeDraft] = useState('');
+  const [eventRecurrenceDraft, setEventRecurrenceDraft] = useState<RepeatRule | null>(null);
+  const [createEventBusy, setCreateEventBusy] = useState(false);
+  const createEventBusyRef = useRef(false);
   const [eventDatePickerDraft, setEventDatePickerDraft] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), today.getDate());
   });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
   const [showEventsWeekPicker, setShowEventsWeekPicker] = useState(false);
   const [eventLocationDraft, setEventLocationDraft] = useState('');
   const [eventLocationPlaceIdDraft, setEventLocationPlaceIdDraft] = useState('');
@@ -547,6 +559,17 @@ export default function EventsScreen() {
     return baseDate;
   };
 
+  const parseEventEndTime = () => {
+    const baseDate = parseEventDate();
+    const [hourText = '0', minuteText = '0'] = (eventEndTimeDraft || eventTimeDraft).split(':');
+    const hours = Number(hourText);
+    const minutes = Number(minuteText);
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+      baseDate.setHours(Math.max(0, Math.min(23, hours)), Math.max(0, Math.min(59, minutes)), 0, 0);
+    }
+    return baseDate;
+  };
+
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     const action = resolveNativePickerChangeAction(Platform.OS, event.type, Boolean(selectedDate));
     if (action === 'dismiss') {
@@ -580,6 +603,20 @@ export default function EventsScreen() {
     const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
     setEventTimeDraft(`${hours}:${minutes}`);
     if (action === 'commit') setShowTimePicker(false);
+  };
+
+  const handleEndTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
+    const action = resolveNativePickerChangeAction(Platform.OS, event.type, Boolean(selectedTime));
+    if (action === 'dismiss') {
+      setShowEndTimePicker(false);
+      return;
+    }
+    if (action === 'ignore' || !selectedTime) return;
+
+    const hours = String(selectedTime.getHours()).padStart(2, '0');
+    const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
+    setEventEndTimeDraft(`${hours}:${minutes}`);
+    if (action === 'commit') setShowEndTimePicker(false);
   };
 
   const parseTemplateDefaultTime = () => {
@@ -928,8 +965,11 @@ export default function EventsScreen() {
     setEventDateDraft('');
     setEventDatePickerDraft(normalizeEventDate(new Date()));
     setEventTimeDraft(initialTemplate?.defaultTime || '');
+    setEventRecurrenceDraft(repeatFromTemplate(initialTemplate?.defaultRecurrence));
+    setEventEndTimeDraft('');
     setShowDatePicker(false);
     setShowTimePicker(false);
+    setShowEndTimePicker(false);
     setEventLocationDraft(initialTemplate?.defaultLocation || '');
     setEventLocationPlaceIdDraft(initialTemplate?.defaultLocationPlaceId || '');
     setEventDescriptionDraft(initialTemplate?.defaultDescription || '');
@@ -943,6 +983,7 @@ export default function EventsScreen() {
     setRolePickerRoleId(null);
     setShowDatePicker(false);
     setShowTimePicker(false);
+    setShowEndTimePicker(false);
   };
 
   const openTemplatePickerFromCreateEvent = () => {
@@ -960,6 +1001,7 @@ export default function EventsScreen() {
       setEditingTemplateId(template.id);
       setTemplateNameDraft(template.name);
       setTemplateDefaultTimeDraft(template.defaultTime || '');
+      setTemplateRecurrenceDraft(template.defaultRecurrence ?? null);
       setTemplateDefaultLocationDraft(template.defaultLocation || '');
       setTemplateDefaultLocationPlaceIdDraft(template.defaultLocationPlaceId || '');
       setTemplateDefaultDescriptionDraft(template.defaultDescription || '');
@@ -971,6 +1013,7 @@ export default function EventsScreen() {
     } else {
       setEditingTemplateId(null);
       setTemplateNameDraft('');
+      setTemplateRecurrenceDraft(null);
       setTemplateDefaultTimeDraft('');
       setTemplateDefaultLocationDraft('');
       setTemplateDefaultLocationPlaceIdDraft('');
@@ -1049,7 +1092,10 @@ export default function EventsScreen() {
               ...(description ? { description } : {}),
               attachments: (task.attachments || []).filter((attachment) => attachment.url.trim().length > 0),
               ...(Number.isFinite(task.expectedOffsetMinutes)
-                ? { expectedOffsetMinutes: Math.max(0, Math.round(task.expectedOffsetMinutes as number)) }
+                ? {
+                    expectedOffsetMinutes: Math.max(0, Math.round(task.expectedOffsetMinutes as number)),
+                    notifyManagerWhenOverdue: task.notifyManagerWhenOverdue !== false,
+                  }
                 : {}),
             };
           })
@@ -1072,6 +1118,7 @@ export default function EventsScreen() {
             name,
             roles: sanitizedRoles,
             defaultTime: templateDefaultTimeDraft.trim() || undefined,
+            defaultRecurrence: templateRecurrenceDraft as TemplateRepeatRule | null,
             defaultLocation: templateDefaultLocationDraft.trim() || undefined,
             defaultLocationPlaceId: templateDefaultLocationPlaceIdDraft.trim() || undefined,
             defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
@@ -1086,6 +1133,7 @@ export default function EventsScreen() {
         name,
         roles: sanitizedRoles,
         defaultTime: templateDefaultTimeDraft.trim() || undefined,
+        defaultRecurrence: templateRecurrenceDraft as TemplateRepeatRule | null,
         defaultLocation: templateDefaultLocationDraft.trim() || undefined,
         defaultLocationPlaceId: templateDefaultLocationPlaceIdDraft.trim() || undefined,
         defaultDescription: templateDefaultDescriptionDraft.trim() || undefined,
@@ -1132,6 +1180,7 @@ export default function EventsScreen() {
       name: '',
       description: '',
       includeCountdownTimer: false,
+      notifyManagerWhenOverdue: true,
       expectedOffsetText: '00:00:00',
       attachments: [],
     });
@@ -1151,6 +1200,7 @@ export default function EventsScreen() {
       name: task.name || '',
       description: task.description || '',
       includeCountdownTimer: Number.isFinite(task.expectedOffsetMinutes),
+      notifyManagerWhenOverdue: task.notifyManagerWhenOverdue !== false,
       expectedOffsetText: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0),
       attachments: [...(task.attachments || [])],
     });
@@ -1190,13 +1240,14 @@ export default function EventsScreen() {
               ? role.tasks.map((task) => (
                   task.id === taskId
                     ? (() => {
-                        const { expectedOffsetMinutes: _offset, ...taskWithoutCountdown } = task;
+                        const { expectedOffsetMinutes: _offset, notifyManagerWhenOverdue: _notify, ...taskWithoutCountdown } = task;
                         return {
                         ...taskWithoutCountdown,
                         name: taskName,
                         description: templateTaskEditor.description.trim(),
                         attachments: templateTaskEditor.attachments,
                         ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+                        ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { notifyManagerWhenOverdue: templateTaskEditor.notifyManagerWhenOverdue } : {}),
                       };
                     })()
                     : task
@@ -1209,6 +1260,7 @@ export default function EventsScreen() {
                     description: templateTaskEditor.description.trim(),
                     attachments: templateTaskEditor.attachments,
                     ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+                    ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { notifyManagerWhenOverdue: templateTaskEditor.notifyManagerWhenOverdue } : {}),
                   },
                 ]),
           }
@@ -1259,10 +1311,11 @@ export default function EventsScreen() {
             return {
               ...task,
               expectedOffsetMinutes: Number.isFinite(task.expectedOffsetMinutes) ? task.expectedOffsetMinutes : 0,
+              notifyManagerWhenOverdue: task.notifyManagerWhenOverdue !== false,
             };
           }
 
-          const { expectedOffsetMinutes: _offset, ...taskWithoutCountdown } = task;
+          const { expectedOffsetMinutes: _offset, notifyManagerWhenOverdue: _notify, ...taskWithoutCountdown } = task;
           return taskWithoutCountdown;
         }),
       };
@@ -2070,6 +2123,7 @@ export default function EventsScreen() {
       name: '',
       description: '',
       includeCountdownTimer: false,
+      notifyManagerWhenOverdue: true,
       expectedOffsetText: '00:00:00',
       attachments: [],
     });
@@ -2085,6 +2139,7 @@ export default function EventsScreen() {
       name: task.name || '',
       description: task.description || '',
       includeCountdownTimer: Number.isFinite(task.expectedOffsetMinutes),
+      notifyManagerWhenOverdue: task.notifyManagerWhenOverdue !== false,
       expectedOffsetText: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0),
       attachments: [...(task.attachments || [])],
     });
@@ -2199,7 +2254,7 @@ export default function EventsScreen() {
         ? prev.tasks.map((task) => (
             task.id === taskId
               ? (() => {
-                  const { expectedOffsetMinutes: _offset, dueAt: _dueAt, ...taskWithoutCountdown } = task;
+                  const { expectedOffsetMinutes: _offset, notifyManagerWhenOverdue: _notify, dueAt: _dueAt, ...taskWithoutCountdown } = task;
                   const description = eventRoleTaskEditor.description.trim();
                   return {
                     ...taskWithoutCountdown,
@@ -2207,6 +2262,7 @@ export default function EventsScreen() {
                     ...(description ? { description } : {}),
                     attachments: eventRoleTaskEditor.attachments,
                     ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+                    ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { notifyManagerWhenOverdue: eventRoleTaskEditor.notifyManagerWhenOverdue } : {}),
                   };
               })()
               : task
@@ -2219,6 +2275,7 @@ export default function EventsScreen() {
               ...(eventRoleTaskEditor.description.trim() ? { description: eventRoleTaskEditor.description.trim() } : {}),
               attachments: eventRoleTaskEditor.attachments,
               ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { expectedOffsetMinutes: parsedOffsetMinutes } : {}),
+              ...(parsedOffsetMinutes !== undefined && parsedOffsetMinutes !== null ? { notifyManagerWhenOverdue: eventRoleTaskEditor.notifyManagerWhenOverdue } : {}),
               completedBy: [],
             },
           ],
@@ -2862,8 +2919,11 @@ export default function EventsScreen() {
       return;
     }
     setEventTimeDraft(selectedTemplate.defaultTime || '');
+    setEventRecurrenceDraft(repeatFromTemplate(selectedTemplate.defaultRecurrence));
+    setEventEndTimeDraft('');
     setShowDatePicker(false);
     setShowTimePicker(false);
+    setShowEndTimePicker(false);
     setEventLocationDraft(selectedTemplate.defaultLocation || '');
     setEventLocationPlaceIdDraft(selectedTemplate.defaultLocationPlaceId || '');
     setEventDescriptionDraft(selectedTemplate.defaultDescription || '');
@@ -2935,7 +2995,9 @@ export default function EventsScreen() {
   };
 
   const handleCreateEvent = async () => {
-    if (!profile?.uid || !selectedTemplate) return;
+    if (!profile?.uid || !selectedTemplate || createEventBusyRef.current) return;
+    createEventBusyRef.current = true;
+    setCreateEventBusy(true);
 
     const sanitizedRoles = createEventRolesDraft
       .map((role, index) => ({
@@ -2945,21 +3007,26 @@ export default function EventsScreen() {
       .filter((role) => role.name.length > 0);
 
     try {
-      const createdEvent = await createDispatchEvent({
+      const createdEvents = await createDispatchEventSeries({
         managerId: profile.uid,
         name: selectedTemplate.name,
         date: eventDateDraft,
         time: eventTimeDraft,
+        endTime: eventEndTimeDraft,
+        recurrence: eventRecurrenceDraft,
         location: eventLocationDraft,
         locationPlaceId: eventLocationPlaceIdDraft,
         description: eventDescriptionDraft,
         roles: sanitizedRoles,
       });
-      setOptimisticCreatedEvents((prev) => [createdEvent, ...prev.filter((item) => item.id !== createdEvent.id)]);
-      Alert.alert('Event created', 'Your event has been created and added to upcoming assignments.');
+      setOptimisticCreatedEvents((prev) => [...createdEvents, ...prev.filter((item) => !createdEvents.some(created => created.id === item.id))]);
+      Alert.alert(createdEvents.length > 1 ? 'Events created' : 'Event created', `${createdEvents.length} event${createdEvents.length === 1 ? '' : 's'} added to upcoming assignments.`);
       closeCreateEventDrawer();
     } catch (error) {
       Alert.alert('Unable to create event', error instanceof Error ? error.message : 'Please check required fields and try again.');
+    } finally {
+      createEventBusyRef.current = false;
+      setCreateEventBusy(false);
     }
   };
 
@@ -3042,7 +3109,7 @@ export default function EventsScreen() {
   };
 
   const hasEventSchedule = eventDateDraft.trim().length > 0 && eventTimeDraft.trim().length > 0;
-  const canCreateEventNow = !!selectedTemplate && hasEventSchedule && eventLocationDraft.trim().length > 0 && eventLocationPlaceIdDraft.trim().length > 0 && eventDescriptionDraft.trim().length > 0;
+  const canCreateEventNow = !createEventBusy && !!selectedTemplate && hasEventSchedule && eventLocationDraft.trim().length > 0 && eventLocationPlaceIdDraft.trim().length > 0 && eventDescriptionDraft.trim().length > 0;
   const eventsRangeLabel = formatEventsRangeLabel(selectedWeekStart);
 
   return (
@@ -3243,7 +3310,7 @@ export default function EventsScreen() {
           const managerLabel = managerNames[event.managerId] || 'Manager';
           const startsAtDate = new Date(event.startsAt);
           const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
-          const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const eventTime = formatEventTimeRange(event.startsAt, event.endsAt);
           const workerRoleSubtitle = getWorkerRoleSubtitle(event);
           const eventStatus = isCompletedEvent(event) ? 'Completed' : 'Upcoming';
 
@@ -3670,8 +3737,25 @@ export default function EventsScreen() {
                             ) : null}
                           </View>
                         );
-                      })}
+                        })}
                         </View>
+                        <Pressable
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: eventRoleTaskEditor.notifyManagerWhenOverdue }}
+                          style={styles.countdownToggleRow}
+                          onPress={() => setEventRoleTaskEditor((current) => ({
+                            ...current,
+                            notifyManagerWhenOverdue: !current.notifyManagerWhenOverdue,
+                          }))}>
+                          <MaterialIcons
+                            name={eventRoleTaskEditor.notifyManagerWhenOverdue ? 'check-box' : 'check-box-outline-blank'}
+                            size={24}
+                            color={eventRoleTaskEditor.notifyManagerWhenOverdue ? '#0EC3C9' : isDarkMode ? '#CBD5E1' : '#475569'}
+                          />
+                          <Text style={[styles.countdownToggleLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>
+                            Notify Managers if overdue
+                          </Text>
+                        </Pressable>
                       </>
                     ) : null}
                   </View>
@@ -4048,6 +4132,58 @@ export default function EventsScreen() {
             </View>
 
             <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
+              <Text style={[styles.templateLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>End Time (Optional)</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Pick optional event end time"
+                style={[styles.templateSelectTrigger, isDarkMode ? styles.createEventFieldInputDark : styles.createEventFieldInputLight]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setShowEndTimePicker(true);
+                }}>
+                <View style={styles.createEventIconInputRow}>
+                  <MaterialIcons name="schedule" size={22} color="#F98D2F" />
+                  <Text style={[styles.templateName, isDarkMode ? (eventEndTimeDraft ? styles.createEventInputValueDark : styles.createEventInputPlaceholderDark) : (eventEndTimeDraft ? styles.createEventInputValueLight : styles.createEventInputPlaceholderLight)]}>
+                    {eventEndTimeDraft || 'No end time'}
+                  </Text>
+                </View>
+              </Pressable>
+              {eventEndTimeDraft ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear event end time"
+                  style={styles.optionalTimeClearButton}
+                  onPress={() => {
+                    setEventEndTimeDraft('');
+                    setShowEndTimePicker(false);
+                  }}>
+                  <Text style={[styles.optionalTimeClearText, isDarkMode ? styles.createEventRoleMetaDark : styles.createEventRoleMetaLight]}>Clear end time</Text>
+                </Pressable>
+              ) : null}
+              {showEndTimePicker ? (
+                <View style={[styles.inlinePickerWrap, isDarkMode ? styles.inlinePickerWrapDark : styles.inlinePickerWrapLight]}>
+                  <DateTimePicker
+                    value={parseEventEndTime()}
+                    mode="time"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleEndTimeChange}
+                    {...pickerSharedProps}
+                  />
+                  <View style={styles.pickerActionRow}>
+                    <Pressable style={[styles.pickerActionButton, isDarkMode ? styles.pickerActionButtonDark : styles.pickerActionButtonLight]} onPress={() => setShowEndTimePicker(false)}>
+                      <Text style={[styles.pickerActionText, isDarkMode ? styles.pickerActionTextDark : styles.pickerActionTextLight]}>Cancel</Text>
+                    </Pressable>
+                    <Pressable style={[styles.pickerActionButton, styles.pickerActionButtonToday]} onPress={() => setShowEndTimePicker(false)}>
+                      <Text style={styles.pickerActionTextToday}>Select</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+
+            <EventRepeatFields value={eventRecurrenceDraft} onChange={setEventRecurrenceDraft} mode="event" date={eventDateDraft} time={eventTimeDraft} endTime={eventEndTimeDraft} isDarkMode={isDarkMode} />
+
+            <View style={isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight}>
               <LocationAutocompleteField
                 label="Location"
                 value={eventLocationDraft}
@@ -4078,7 +4214,7 @@ export default function EventsScreen() {
               style={[isDarkMode ? styles.createEventPrimaryButtonDark : styles.createEventPrimaryButtonLight, !canCreateEventNow && styles.drawerCloseDisabled]}
               disabled={!canCreateEventNow}
               onPress={handleCreateEvent}>
-              <Text style={styles.drawerCloseText}>Create Event</Text>
+              <Text style={styles.drawerCloseText}>{createEventBusy ? 'Creating...' : eventRecurrenceDraft ? 'Create Events' : 'Create Event'}</Text>
             </Pressable>
             <Pressable style={[isDarkMode ? styles.createEventCancelButtonDark : styles.createEventCancelButtonLight]} onPress={closeCreateEventDrawer}>
               <Text style={[isDarkMode ? styles.createEventCancelButtonTextDark : styles.createEventCancelButtonTextLight]}>Cancel</Text>
@@ -4272,6 +4408,23 @@ export default function EventsScreen() {
                       );
                     })}
                       </View>
+                      <Pressable
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: templateTaskEditor.notifyManagerWhenOverdue }}
+                        style={styles.countdownToggleRow}
+                        onPress={() => setTemplateTaskEditor((current) => ({
+                          ...current,
+                          notifyManagerWhenOverdue: !current.notifyManagerWhenOverdue,
+                        }))}>
+                        <MaterialIcons
+                          name={templateTaskEditor.notifyManagerWhenOverdue ? 'check-box' : 'check-box-outline-blank'}
+                          size={24}
+                          color={templateTaskEditor.notifyManagerWhenOverdue ? '#0EC3C9' : isDarkMode ? '#CBD5E1' : '#475569'}
+                        />
+                        <Text style={[styles.countdownToggleLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>
+                          Notify Managers if overdue
+                        </Text>
+                      </Pressable>
                     </>
                   ) : null}
                 </View>
@@ -4368,6 +4521,8 @@ export default function EventsScreen() {
                 </View>
               ) : null}
             </View>
+
+            <EventRepeatFields value={templateRecurrenceDraft} onChange={setTemplateRecurrenceDraft} mode="template" isDarkMode={isDarkMode} />
 
             <View style={[styles.formField, isDarkMode ? styles.createEventSectionDark : styles.createEventSectionLight]}>
               <LocationAutocompleteField
@@ -4552,28 +4707,46 @@ export default function EventsScreen() {
                           </Text>
                         </Pressable>
                         {Number.isFinite(task.expectedOffsetMinutes) ? (
-                          <KeyboardAwareDrawerTextInput
-                            value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes || 0)}
-                            onChangeText={(value) => {
-                              const key = `${role.id}:${task.id}`;
-                              setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: value }));
-                              const parsedMinutes = parseOffsetHhMmSsToMinutes(value);
-                              if (parsedMinutes !== null) {
-                                updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: parsedMinutes });
-                              }
-                            }}
-                            onBlur={() => {
-                              const key = `${role.id}:${task.id}`;
-                              setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0) }));
-                            }}
-                            keyboardType="numbers-and-punctuation"
-                            returnKeyType="done"
-                            onSubmitEditing={Keyboard.dismiss}
-                            blurOnSubmit
-                            placeholder="HH:MM:SS"
-                            placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
-                            style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
-                          />
+                          <>
+                            <KeyboardAwareDrawerTextInput
+                              value={templateTaskOffsetDrafts[`${role.id}:${task.id}`] ?? formatOffsetHhMmSs(task.expectedOffsetMinutes || 0)}
+                              onChangeText={(value) => {
+                                const key = `${role.id}:${task.id}`;
+                                setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: value }));
+                                const parsedMinutes = parseOffsetHhMmSsToMinutes(value);
+                                if (parsedMinutes !== null) {
+                                  updateTemplateTaskDraft(role.id, task.id, { expectedOffsetMinutes: parsedMinutes });
+                                }
+                              }}
+                              onBlur={() => {
+                                const key = `${role.id}:${task.id}`;
+                                setTemplateTaskOffsetDrafts((prev) => ({ ...prev, [key]: formatOffsetHhMmSs(task.expectedOffsetMinutes || 0) }));
+                              }}
+                              keyboardType="numbers-and-punctuation"
+                              returnKeyType="done"
+                              onSubmitEditing={Keyboard.dismiss}
+                              blurOnSubmit
+                              placeholder="HH:MM:SS"
+                              placeholderTextColor={isDarkMode ? 'rgba(247,247,247,0.33)' : 'rgba(33,33,33,0.5)'}
+                              style={[styles.templateInput, isDarkMode ? styles.createEventTextInputDark : styles.createEventTextInputLight]}
+                            />
+                            <Pressable
+                              accessibilityRole="checkbox"
+                              accessibilityState={{ checked: task.notifyManagerWhenOverdue !== false }}
+                              style={styles.countdownToggleRow}
+                              onPress={() => updateTemplateTaskDraft(role.id, task.id, {
+                                notifyManagerWhenOverdue: task.notifyManagerWhenOverdue === false,
+                              })}>
+                              <MaterialIcons
+                                name={task.notifyManagerWhenOverdue !== false ? 'check-box' : 'check-box-outline-blank'}
+                                size={24}
+                                color={task.notifyManagerWhenOverdue !== false ? '#0EC3C9' : isDarkMode ? '#CBD5E1' : '#475569'}
+                              />
+                              <Text style={[styles.countdownToggleLabel, isDarkMode ? styles.createEventFieldLabelDark : styles.createEventFieldLabelLight]}>
+                                Notify Managers if overdue
+                              </Text>
+                            </Pressable>
+                          </>
                         ) : null}
                         <Pressable
                           accessibilityLabel={`Delete task ${task.name || taskIndex + 1} from ${role.name || `role ${index + 1}`}`}
@@ -4756,6 +4929,8 @@ const styles = StyleSheet.create({
   pickerActionTextLight: { color: '#121212' },
   pickerActionTextDark: { color: '#F7F7F7' },
   pickerActionTextToday: { color: '#061229', fontSize: 12, fontWeight: '700' },
+  optionalTimeClearButton: { alignSelf: 'flex-start', minHeight: MINIMUM_TOUCH_TARGET, justifyContent: 'center', paddingHorizontal: 4 },
+  optionalTimeClearText: { fontSize: 13, fontWeight: '700' },
   card: { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1 },
   cardLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7', borderRadius: 16, padding: 16, marginBottom: 12 },
   swipeEditAction: {

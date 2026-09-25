@@ -34,10 +34,23 @@ describe('buildEventDetailsUpdate', () => {
     });
 
     expect(result.name).toBe('New event');
-    expect(Date.parse(result.endsAt) - Date.parse(result.startsAt)).toBe(2 * 60 * 60 * 1000);
+    expect(Date.parse(result.endsAt!) - Date.parse(result.startsAt)).toBe(2 * 60 * 60 * 1000);
     expect(Date.parse(result.roles[0].tasks[0].dueAt!) - Date.parse(result.startsAt)).toBe(30 * 60 * 1000);
     expect(result.roles[0].tasks[1]).not.toHaveProperty('dueAt');
     expect(event.roles[0].tasks[0].dueAt).toBe('2026-07-31T10:30:00.000Z');
+  });
+
+  it('does not invent an end time when the original event has none', () => {
+    const result = buildEventDetailsUpdate({ ...event, endsAt: undefined }, {
+      name: 'New event',
+      date: '2026-08-01',
+      time: '09:00',
+      location: 'New venue',
+      locationPlaceId: 'place-new',
+      description: '',
+    });
+
+    expect(result).not.toHaveProperty('endsAt');
   });
 
   it('rejects invalid required fields and schedules', () => {

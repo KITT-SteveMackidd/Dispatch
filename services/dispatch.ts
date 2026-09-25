@@ -28,6 +28,8 @@ import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
 import { canManagerManageEvent, hasConcurrentEventChange, mergeManagerEventScopes } from '@/lib/event-manager-access';
 import { preserveTemplateTaskOrder } from '@/lib/template-task-order';
 import { buildEventDetailsUpdate, type EventDetailsDraft } from '@/lib/event-schedule-edit';
+import { buildEventSchedule } from '@/lib/event-schedule';
+import { expandEventOccurrences, parseRepeatRule, type RepeatRule, type TemplateRepeatRule } from '@/lib/event-recurrence';
 import { clearWorkerTaskCompletions } from '@/services/event-logic';
 import { buildLateTaskNotificationTargets } from '@/lib/task-notification-targets';
 import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
@@ -123,6 +125,7 @@ export type CreateEventRoleInput = {
 };
 
 export type UpsertEventTemplateInput = {
+  defaultRecurrence?: TemplateRepeatRule | null;
   name: string;
   roles: EventTemplateRole[];
   defaultLocation?: string;
@@ -912,6 +915,7 @@ export async function createEventTemplate(managerId: string, input: UpsertEventT
     defaultLocation: input.defaultLocation || null,
     defaultLocationPlaceId: input.defaultLocationPlaceId || null,
     defaultTime: input.defaultTime || null,
+    defaultRecurrence: parseRepeatRule(input.defaultRecurrence, 'template'),
     defaultDescription: input.defaultDescription || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -934,6 +938,7 @@ export async function updateEventTemplate(params: { managerId: string; templateI
     defaultLocation: params.input.defaultLocation || null,
     defaultLocationPlaceId: params.input.defaultLocationPlaceId || null,
     defaultTime: params.input.defaultTime || null,
+    defaultRecurrence: parseRepeatRule(params.input.defaultRecurrence === undefined ? template.defaultRecurrence : params.input.defaultRecurrence, 'template'),
     defaultDescription: params.input.defaultDescription || null,
     updatedAt: serverTimestamp(),
   });
@@ -1079,25 +1084,34 @@ export function watchManagerRoleInvites(managerId: string, cb: (items: RoleAssig
   });
 }
 
-export async function createDispatchEvent(params: {
+export type CreateDispatchEventInput = {
   managerId: string;
   name: string;
   date: string;
   time: string;
+  endTime?: string;
+  recurrence?: RepeatRule | null;
+  timeZone?: string;
   location: string;
   locationPlaceId: string;
   description: string;
   roles: CreateEventRoleInput[];
-}): Promise<DispatchEvent> {
-  const startsAt = new Date(`${params.date.trim()}T${params.time.trim()}:00`);
-  if (Number.isNaN(startsAt.getTime())) {
-    throw new Error('Enter a valid event date and time.');
-  }
+};
+
+export async function createDispatchEvent(params: CreateDispatchEventInput): Promise<DispatchEvent> {
+  return (await createDispatchEventSeries(params))[0];
+}
+
+export async function createDispatchEventSeries(params: CreateDispatchEventInput): Promise<DispatchEvent[]> {
+  const schedule = buildEventSchedule(params.date, params.time, params.endTime);
+  const recurrence = parseRepeatRule(params.recurrence, 'event');
+  const timeZone = params.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const occurrences = expandEventOccurrences(schedule, recurrence, timeZone);
+  const startsAt = new Date(schedule.startsAt);
   if (!params.locationPlaceId.trim()) {
     throw new Error('Choose an event location from the Google Places suggestions.');
   }
 
-  const endsAt = new Date(startsAt.getTime() + 2 * 60 * 60 * 1000);
   const roles = params.roles.map((role) => {
     const assignedWorkerIds = role.assignedWorkerId ? [role.assignedWorkerId] : [];
     return {
@@ -1122,37 +1136,41 @@ export async function createDispatchEvent(params: {
     location: params.location.trim(),
     locationPlaceId: params.locationPlaceId.trim(),
     description: params.description.trim(),
-    startsAt: startsAt.toISOString(),
-    endsAt: endsAt.toISOString(),
+    startsAt: schedule.startsAt,
+    ...(schedule.endsAt ? { endsAt: schedule.endsAt } : {}),
     teamIds: [],
     roles,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 
-  const docRef = await addDoc(collection(db, 'events'), eventPayload);
+  const refs = occurrences.map(() => doc(collection(db, 'events')));
+  const createdEvents = occurrences.map((occurrence, index) => ({
+    ...eventPayload,
+    ...occurrence,
+    roles: params.roles.map(role => ({
+      id: role.id,
+      name: role.name,
+      assignedWorkerIds: role.assignedWorkerId ? [role.assignedWorkerId] : [],
+      openSlots: role.assignedWorkerId ? 0 : 1,
+      tasks: (role.tasks || []).map((task, taskIndex) => buildEventTaskFromTemplate(task, Date.parse(occurrence.startsAt), taskIndex)),
+    })),
+    ...(recurrence ? { recurrence, timeZone, seriesId: refs[0].id, seriesIndex: index, seriesCount: occurrences.length } : {}),
+  }));
+  const batch = writeBatch(db);
+  createdEvents.forEach((event, index) => batch.set(refs[index], event));
+  await batch.commit();
   await Promise.all(
-    roles.flatMap((role) =>
+    createdEvents.flatMap((event, index) => event.roles.flatMap((role) =>
       (role.assignedWorkerIds || []).map((workerId) =>
-        queueEventRoleReminderEmail({ eventId: docRef.id, roleId: role.id, workerId }).catch((error) => {
+        queueEventRoleReminderEmail({ eventId: refs[index].id, roleId: role.id, workerId }).catch((error) => {
           console.warn('Dispatch event reminder email queue failed', error);
         })
       )
-    )
+    ))
   );
 
-  return {
-    id: docRef.id,
-    managerId: eventPayload.managerId,
-    organizationId: eventPayload.organizationId,
-    name: eventPayload.name,
-    location: eventPayload.location,
-    locationPlaceId: eventPayload.locationPlaceId,
-    startsAt: eventPayload.startsAt,
-    endsAt: eventPayload.endsAt,
-    teamIds: eventPayload.teamIds,
-    roles: eventPayload.roles,
-  };
+  return createdEvents.map((event, index) => ({ ...event, id: refs[index].id }));
 }
 
 export async function updateDispatchEventDetails(params: {
@@ -1410,7 +1428,10 @@ export async function ensureTaskBehindScheduleNotification(params: {
   taskId: string;
   taskName: string;
   dueAt: string;
+  notifyManagerWhenOverdue?: boolean;
 }) {
+  if (params.notifyManagerWhenOverdue === false) return [];
+
   const organizationManagerIds = params.organizationId
     ? await loadOrganisationManagerIds(params.organizationId)
     : [];

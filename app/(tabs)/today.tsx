@@ -23,6 +23,7 @@ import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constant
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { headerLogoSource } from '@/constants/branding';
 import { openMapAppPicker } from '@/lib/map-apps';
+import { formatEventTimeRange } from '@/lib/event-schedule';
 
 const lightTodayLogoSource = headerLogoSource;
 const darkTodayLogoSource = headerLogoSource;
@@ -262,7 +263,9 @@ export default function TodayScreen() {
     if (!profile || profile.role !== 'manager') return;
 
     const overdue = today.flatMap((event) =>
-      getOverdueIncompleteTasks(event).map(({ role, task, dueAtMs }) => ({ event, role, task, dueAtMs }))
+      getOverdueIncompleteTasks(event)
+        .filter(({ task }) => task.notifyManagerWhenOverdue !== false)
+        .map(({ role, task, dueAtMs }) => ({ event, role, task, dueAtMs }))
     );
 
     overdue.forEach(({ event, role, task, dueAtMs }) => {
@@ -280,6 +283,7 @@ export default function TodayScreen() {
         taskId: task.id,
         taskName: task.name,
         dueAt: new Date(dueAtMs).toISOString(),
+        notifyManagerWhenOverdue: task.notifyManagerWhenOverdue,
       })
         .then((createdManagerIds) => {
           if (!createdManagerIds.includes(profile.uid)) return;
@@ -732,7 +736,7 @@ export default function TodayScreen() {
     const progress = getProgress(item, { excludeUnfilledRoles: true });
     const startsAtDate = new Date(item.startsAt);
     const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const eventTime = formatEventTimeRange(item.startsAt, item.endsAt);
     const managerNext = managerNextTask(item);
     const managerNextDueAtMs = managerNext ? getTaskDueAtMs(item, managerNext) : Number.POSITIVE_INFINITY;
     const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
@@ -842,7 +846,7 @@ export default function TodayScreen() {
     const progress = getProgress(item, { excludeUnfilledRoles: true });
     const startsAtDate = new Date(item.startsAt);
     const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const eventTime = formatEventTimeRange(item.startsAt, item.endsAt);
     const managerNext = managerNextTask(item);
     const managerNextDueAtMs = managerNext ? getTaskDueAtMs(item, managerNext) : Number.POSITIVE_INFINITY;
     const managerCountdownClock = formatCountdownClock(managerNextDueAtMs);
@@ -991,7 +995,7 @@ export default function TodayScreen() {
           const b = badge(item, progress);
           const startsAtDate = new Date(item.startsAt);
           const eventDate = startsAtDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
-          const eventTime = startsAtDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const eventTime = formatEventTimeRange(item.startsAt, item.endsAt);
           const isExpanded = !!expandedEventIds[item.id];
           const workers = isManager ? getWorkerSummaries(item) : [];
           const managerInfo = managerInfoById[item.managerId];
