@@ -20,6 +20,7 @@ describe('sanitizeEventRoleForFirestore', () => {
         name: 'Open doors',
         description: undefined,
         expectedOffsetMinutes: undefined,
+        notifyManagerWhenOverdue: false,
         dueAt: undefined,
         attachments: [],
         completedBy: [],
@@ -29,6 +30,7 @@ describe('sanitizeEventRoleForFirestore', () => {
     expect(containsUndefined(role)).toBe(false);
     expect(role.tasks[0]).not.toHaveProperty('description');
     expect(role.tasks[0]).not.toHaveProperty('expectedOffsetMinutes');
+    expect(role.tasks[0]).not.toHaveProperty('notifyManagerWhenOverdue');
     expect(role.tasks[0]).not.toHaveProperty('dueAt');
   });
 
@@ -39,12 +41,14 @@ describe('sanitizeEventRoleForFirestore', () => {
       description: 'Unlock the east and west entrances.',
       attachments: [{ id: 'photo-1', name: 'Door map', url: 'https://example.com/door-map.jpg', kind: 'photo' }],
       expectedOffsetMinutes: 30,
+      notifyManagerWhenOverdue: false,
     }, new Date('2026-07-15T10:00:00.000Z').getTime(), 0);
 
     expect(task).toMatchObject({
       description: 'Unlock the east and west entrances.',
       attachments: [{ id: 'photo-1', name: 'Door map', url: 'https://example.com/door-map.jpg', kind: 'photo' }],
       expectedOffsetMinutes: 30,
+      notifyManagerWhenOverdue: false,
       dueAt: '2026-07-15T10:30:00.000Z',
     });
   });
@@ -70,6 +74,7 @@ describe('sanitizeEventRoleForFirestore', () => {
       name: 'Sign off',
       description: 'Finish the report',
       expectedOffsetMinutes: 90,
+      notifyManagerWhenOverdue: true,
       dueAt: '2026-07-15T12:00:00.000Z',
     });
   });

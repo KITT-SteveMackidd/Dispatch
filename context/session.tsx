@@ -8,7 +8,6 @@ import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   reauthenticateWithCredential,
-  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithCredential,
   signInWithEmailAndPassword,
@@ -28,6 +27,7 @@ import { requestDispatchAccountDeletion } from '@/lib/account-deletion';
 import type { DeleteDispatchAccountResult } from '@/lib/account-deletion';
 import { logOutDispatchRevenueCatUser } from '@/services/revenuecat';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
+import { requestDispatchEmailVerification } from '@/lib/email-verification';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
 type CryptoModule = typeof import('expo-crypto');
@@ -42,12 +42,12 @@ type SessionContextType = {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: (params: { idToken: string; accessToken?: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
   signInWithApple: (params: { idToken: string; rawNonce: string; displayName?: string; mode: SocialAuthMode }) => Promise<SocialAuthResult>;
-  signUp: (params: { email: string; password: string; displayName: string }) => Promise<void>;
+  signUp: (params: { email: string; password: string; displayName: string; inviteToken?: string }) => Promise<VerificationEmailDelivery>;
   saveProfile: (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => Promise<void>;
   completeOnboarding: () => Promise<UserProfile | null>;
   refreshProfile: () => Promise<UserProfile | null>;
   sendPasswordReset: (email: string) => Promise<void>;
-  sendVerificationEmail: () => Promise<void>;
+  sendVerificationEmail: (inviteToken?: string) => Promise<void>;
   refreshAuthUser: () => Promise<boolean>;
   revokeSession: () => Promise<void>;
   deleteAccount: (options?: { confirmActiveSubscriptionDeletion?: boolean }) => Promise<DeleteDispatchAccountResult>;
@@ -55,6 +55,12 @@ type SessionContextType = {
 };
 
 type SocialAuthMode = 'signin' | 'signup';
+
+export type VerificationEmailDelivery = {
+  queued: boolean;
+  transport: 'dispatch-mail' | 'none';
+  errorMessage?: string;
+};
 
 export type SocialAuthResult = {
   needsRoleSelection: boolean;
@@ -74,6 +80,39 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timeout);
   });
+}
+
+function describeVerificationDeliveryError(error: unknown) {
+  return error instanceof Error ? error.message : String(error || 'Unknown email delivery error');
+}
+
+function isVerificationCooldownError(error: unknown) {
+  const code = typeof error === 'object' && error && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  return code.includes('resource-exhausted');
+}
+
+async function deliverVerificationEmail(inviteToken?: string): Promise<VerificationEmailDelivery> {
+  try {
+    const result = await requestDispatchEmailVerification(inviteToken);
+    if (result.queued || result.alreadyVerified) {
+      return { queued: true, transport: 'dispatch-mail' };
+    }
+    return {
+      queued: false,
+      transport: 'none',
+      errorMessage: 'The verification service did not queue an email. Please try again.',
+    };
+  } catch (error) {
+    return {
+      queued: false,
+      transport: 'none',
+      errorMessage: isVerificationCooldownError(error)
+        ? describeVerificationDeliveryError(error)
+        : `Dispatch could not send the verification email. ${describeVerificationDeliveryError(error)}`,
+    };
+  }
 }
 
 async function loadProfile(uid: string): Promise<UserProfile | null> {
@@ -333,6 +372,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     await unregisterCurrentDevicePushToken(currentUser.uid);
     await logOutDispatchRevenueCatUser().catch(() => false);
+    await clearDispatchNotificationState();
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setAuthUser(null);
@@ -450,7 +490,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (params: { email: string; password: string; displayName: string }) => {
+  const signUp = async (params: { email: string; password: string; displayName: string; inviteToken?: string }) => {
     assertFirebaseConfigured();
     await signOutExistingUserBeforeCredential();
     const normalizedEmail = params.email.trim();
@@ -458,7 +498,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, params.password);
     await updateProfile(cred.user, { displayName: trimmedName });
-    await sendEmailVerification(cred.user);
+    return deliverVerificationEmail(params.inviteToken);
   };
 
   const saveProfile = async (params: { displayName: string; role: AppRole; phoneNumber?: string; onboardingCompleted?: boolean }) => {
@@ -546,11 +586,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await sendPasswordResetEmail(auth, normalizedEmail);
   };
 
-  const sendVerificationEmail = async () => {
+  const sendVerificationEmail = async (inviteToken?: string) => {
     assertFirebaseConfigured();
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    await sendEmailVerification(user);
+    const delivery = await deliverVerificationEmail(inviteToken);
+    if (!delivery.queued) {
+      throw new Error(delivery.errorMessage || 'Unable to send the verification email. Please try again.');
+    }
   };
 
   const refreshAuthUser = async () => {
@@ -577,6 +620,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     assertFirebaseConfigured();
     if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
     await logOutDispatchRevenueCatUser().catch(() => false);
+    await clearDispatchNotificationState();
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);
@@ -611,6 +655,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     assertFirebaseConfigured();
     if (auth.currentUser) await unregisterCurrentDevicePushToken(auth.currentUser.uid);
     await logOutDispatchRevenueCatUser().catch(() => false);
+    await clearDispatchNotificationState();
     await firebaseSignOut(auth);
     forgetRegisteredDevicePushToken();
     setEmailVerified(false);

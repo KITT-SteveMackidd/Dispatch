@@ -53,3 +53,26 @@ test('skips future and completed tasks', () => {
 
   assert.deepEqual(documents, []);
 });
+
+test('skips overdue tasks when Manager notifications are disabled', () => {
+  const documents = lateTaskNotificationDocuments({
+    nowMs: Date.parse('2026-08-04T18:31:00.000Z'),
+    organizationManagerIds: ['manager-2'],
+    event: {
+      id: 'event-1',
+      managerId: 'manager-1',
+      startsAt: '2026-08-04T18:00:00.000Z',
+      roles: [{
+        id: 'role-1',
+        tasks: [{
+          id: 'quiet-task',
+          expectedOffsetMinutes: 30,
+          notifyManagerWhenOverdue: false,
+          completedBy: [],
+        }],
+      }],
+    },
+  });
+
+  assert.deepEqual(documents, []);
+});

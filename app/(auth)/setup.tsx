@@ -398,8 +398,8 @@ export default function SetupScreen() {
         colors={colors}
         eyebrow="Account ready"
         title="No team invitation yet"
-        body="We did not find an invitation for this email. Your account is ready, and Dispatch will connect you when a manager invites you."
-        points={['Use the same email for your invitation', 'Team access appears after a manager invites you']}
+        body="We did not find a linked invitation. If you received a Dispatch invitation email, open its invitation link to join the organization that invited you."
+        points={['Open the invitation link from your email', 'Team access appears after you join the organization']}
       />
     );
   };

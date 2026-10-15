@@ -1,4 +1,5 @@
 export type NotificationRouteData = {
+  recipientUserId?: string;
   kind?: 'chat' | 'user_notification';
   threadId?: string;
   senderId?: string;

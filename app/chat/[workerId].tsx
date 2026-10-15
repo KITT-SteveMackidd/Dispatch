@@ -76,6 +76,7 @@ export default function WorkerChatScreen() {
   );
   const broadcastCount = memberIds.length;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [threadReady, setThreadReady] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -90,7 +91,6 @@ export default function WorkerChatScreen() {
   const [chatNameDraft, setChatNameDraft] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
-  const [threadReady, setThreadReady] = useState(false);
 
   const organizationMemberById = useMemo(
     () => new Map(organizationMembers.map((member) => [member.uid, member])),
@@ -476,15 +476,13 @@ export default function WorkerChatScreen() {
 
   const sendMessage = async () => {
     const text = draft.trim();
-    if ((!text && !pendingAttachments.length) || !profile || !threadId || sending) return;
-
-    const recipientIds = isTeamBroadcast
-      ? memberIds.filter((id) => id !== profile.uid)
-      : [workerId].filter((id) => id && id !== profile.uid);
+    if ((!text && !pendingAttachments.length) || !profile || !threadId || !threadReady || sending) return;
 
     setSending(true);
     try {
-      const recipientIdsForSend = recipientIds;
+      const recipientIdsForSend = isTeamBroadcast
+        ? memberIds.filter((id) => id !== profile.uid)
+        : [workerId].filter((id) => id && id !== profile.uid);
       await prepareChatThreadForSend({
         threadId,
         teamId,
@@ -508,12 +506,6 @@ export default function WorkerChatScreen() {
 
       await sendChatMessage({
         threadId,
-        teamId,
-        organizationId: profile.organizationId || undefined,
-        kind: isCustomChat ? 'custom' : isTeamChat ? 'direct' : undefined,
-        senderId: profile.uid,
-        senderName: profile.displayName,
-        recipientIds: recipientIdsForSend,
         text,
         attachments: uploadedAttachments,
       });

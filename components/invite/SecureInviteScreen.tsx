@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -26,13 +26,41 @@ export function SecureInviteScreen({
   inviteOnboarding = false,
 }: SecureInviteScreenProps) {
   const router = useRouter();
-  const { authUser, refreshProfile, requiresEmailVerification, signOut } = useSession();
+  const { authUser, refreshAuthUser, refreshProfile, requiresEmailVerification, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [preview, setPreview] = useState<SecureInvitePreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const refreshAuthUserRef = useRef(refreshAuthUser);
+  const verificationRefreshInFlight = useRef(false);
+
+  useEffect(() => {
+    refreshAuthUserRef.current = refreshAuthUser;
+  }, [refreshAuthUser]);
+
+  useEffect(() => {
+    if (!authUser || !requiresEmailVerification) return;
+
+    const refreshVerification = async () => {
+      if (verificationRefreshInFlight.current) return;
+      verificationRefreshInFlight.current = true;
+      try {
+        await refreshAuthUserRef.current();
+      } catch {
+        // The visible verification action remains available if a refresh fails.
+      } finally {
+        verificationRefreshInFlight.current = false;
+      }
+    };
+
+    void refreshVerification();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshVerification();
+    });
+    return () => subscription.remove();
+  }, [authUser?.uid, requiresEmailVerification]);
 
   useEffect(() => {
     let active = true;
@@ -153,7 +181,7 @@ export function SecureInviteScreen({
           ) : null}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-          <Pressable style={styles.textButton} onPress={() => router.push('/invite/index')}>
+          <Pressable style={styles.textButton} onPress={() => router.push('/invite')}>
             <Text style={styles.textButtonLabel}>Enter a different invitation code</Text>
           </Pressable>
           {!embedded ? (

@@ -20,7 +20,7 @@ describe('secure invitation flow wiring', () => {
     const rules = read('firestore.rules');
     expect(dispatchSource).toContain('if (!invite.managerId || invite.claimRequired) continue;');
     expect(dispatchSource).toContain('if (invite.claimRequired) continue;');
-    expect(rules).toContain('resource.data.claimRequired != true');
+    expect(rules).toContain("resource.data.get('claimRequired', false) != true");
     expect(rules).toContain('match /secureInvites/{inviteHash}');
     expect(rules).toContain('allow read, write: if false;');
     expect(functionsSource).toContain('deliveryEmail,');
@@ -52,6 +52,51 @@ describe('secure invitation flow wiring', () => {
     expect(verifyEmail).toContain("inviteResume: '1'");
   });
 
+  it('always sends account verification through the Dispatch-hosted result page', () => {
+    const session = read('context/session.tsx');
+    const signUp = read('app/(auth)/signup.tsx');
+    const verifyEmail = read('app/(auth)/verify-email.tsx');
+    const verificationClient = read('lib/email-verification.ts');
+    const verificationFunction = read('functions/index.js');
+    const verificationEmail = read('functions/lib/email-verification.js');
+
+    expect(session).toContain('requestDispatchEmailVerification(inviteToken)');
+    expect(session).not.toContain('sendEmailVerification');
+    expect(session).not.toContain("'firebase-auth'");
+    expect(verificationClient).toContain("'sendDispatchEmailVerification'");
+    expect(verificationFunction).toContain('generateEmailVerificationLink');
+    expect(verificationEmail).toContain('https://dispatchcrewmanager.com/verify-email');
+    expect(verificationEmail).toContain('buildDispatchVerificationLink');
+    expect(verificationEmail).toContain("destination.searchParams.set('inviteToken'");
+    expect(signUp).toContain('inviteToken,');
+    expect(verifyEmail).toContain('sendVerificationEmail(inviteToken)');
+    expect(verifyEmail).toContain("AppState.addEventListener('change'");
+    expect(verifyEmail).toContain("state === 'active'");
+  });
+
+  it('refreshes Firebase verification before showing an invitation as blocked', () => {
+    const secureInviteScreen = read('components/invite/SecureInviteScreen.tsx');
+    expect(secureInviteScreen).toContain('refreshAuthUserRef.current()');
+    expect(secureInviteScreen).toContain("AppState.addEventListener('change'");
+    expect(secureInviteScreen).toContain('requiresEmailVerification');
+  });
+
+  it('routes manual invitation actions to the code entry screen', () => {
+    const signIn = read('app/(auth)/signin.tsx');
+    const signUp = read('app/(auth)/signup.tsx');
+    const profile = read('app/(tabs)/profile.tsx');
+    const secureInviteScreen = read('components/invite/SecureInviteScreen.tsx');
+
+    expect(signIn).toContain('href="/invite"');
+    expect(signUp).toContain('href="/invite"');
+    expect(profile).toContain("router.push('/invite')");
+    expect(secureInviteScreen).toContain("router.push('/invite')");
+
+    for (const source of [signIn, signUp, profile, secureInviteScreen]) {
+      expect(source).not.toContain('/invite/index');
+    }
+  });
+
   it('keeps ordinary account onboarding separate from invite-link onboarding', () => {
     const setup = read('app/(auth)/setup.tsx');
     expect(setup).toContain("title={`Welcome to Dispatch");
@@ -69,5 +114,17 @@ describe('secure invitation flow wiring', () => {
     expect(setup).toContain('await completeOnboarding();');
     expect(setup).toContain("router.replace('/(tabs)/profile');");
     expect(setup).toContain('continue without one while you wait for an invitation');
+  });
+
+  it('guides unaffiliated Workers back to their invitation email', () => {
+    const tabLayout = read('app/(tabs)/_layout.tsx');
+    const setup = read('app/(auth)/setup.tsx');
+    const teams = read('app/(tabs)/teams.tsx');
+
+    expect(tabLayout).toContain("'No invitation yet'");
+    expect(tabLayout).toContain('open the invitation link in that email');
+    expect(setup).toContain('open its invitation link to join the organization');
+    expect(teams).toContain('No team invite yet. Please check email for an invitation link.');
+    expect(teams).toContain("profile?.role === 'worker'");
   });
 });

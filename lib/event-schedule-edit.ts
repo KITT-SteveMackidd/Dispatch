@@ -24,7 +24,7 @@ export function buildEventDetailsUpdate(event: DispatchEvent, draft: EventDetail
   const previousEndMs = event.endsAt ? new Date(event.endsAt).getTime() : Number.NaN;
   const durationMs = Number.isFinite(previousStartMs) && Number.isFinite(previousEndMs) && previousEndMs > previousStartMs
     ? previousEndMs - previousStartMs
-    : 2 * 60 * 60 * 1000;
+    : null;
   const startsAtMs = startsAt.getTime();
 
   const roles: EventRole[] = (event.roles || []).map((role) => ({
@@ -47,7 +47,7 @@ export function buildEventDetailsUpdate(event: DispatchEvent, draft: EventDetail
     locationPlaceId: draft.locationPlaceId.trim(),
     description,
     startsAt: startsAt.toISOString(),
-    endsAt: new Date(startsAtMs + durationMs).toISOString(),
+    ...(durationMs !== null ? { endsAt: new Date(startsAtMs + durationMs).toISOString() } : {}),
     roles,
   };
 }

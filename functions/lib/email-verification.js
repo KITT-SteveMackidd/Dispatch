@@ -1,0 +1,73 @@
+const EMAIL_VERIFICATION_COOLDOWN_MS = 60 * 1000;
+const DISPATCH_VERIFICATION_URL = 'https://dispatchcrewmanager.com/verify-email';
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function buildVerificationEmail({ deliveryEmail, displayName, verificationLink }) {
+  const name = typeof displayName === 'string' && displayName.trim()
+    ? displayName.trim()
+    : 'Dispatch user';
+  const safeName = escapeHtml(name);
+  const safeLink = escapeHtml(verificationLink);
+
+  return {
+    to: [deliveryEmail],
+    message: {
+      subject: 'Verify your Dispatch email',
+      text: `Hi ${name}, verify your email address to finish creating your Dispatch account: ${verificationLink} If you did not create this account, you can ignore this email.`,
+      html: `<p>Hi <strong>${safeName}</strong>,</p><p>Verify your email address to finish creating your Dispatch account.</p><p><a href="${safeLink}"><strong>Verify my Dispatch email</strong></a></p><p>If you did not create this account, you can ignore this email.</p>`,
+    },
+  };
+}
+
+function buildDispatchVerificationLink(
+  firebaseVerificationLink,
+  publicVerificationUrl = DISPATCH_VERIFICATION_URL,
+  inviteToken
+) {
+  const source = new URL(firebaseVerificationLink);
+  const oobCode = source.searchParams.get('oobCode');
+  if (source.searchParams.get('mode') !== 'verifyEmail' || !oobCode) {
+    throw new Error('Firebase verification link is missing a verifyEmail action code.');
+  }
+
+  const destination = new URL(publicVerificationUrl);
+  destination.searchParams.set('mode', 'verifyEmail');
+  destination.searchParams.set('oobCode', oobCode);
+
+  const languageCode = source.searchParams.get('lang');
+  if (languageCode) destination.searchParams.set('lang', languageCode);
+
+  const normalizedInviteToken = normalizeVerificationInviteToken(inviteToken);
+  if (normalizedInviteToken) destination.searchParams.set('inviteToken', normalizedInviteToken);
+
+  return destination.toString();
+}
+
+function normalizeVerificationInviteToken(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (normalized.length < 8 || normalized.length > 256 || normalized.includes('/')) return null;
+  return normalized;
+}
+
+function verificationCooldownSeconds(lastRequestedAtMs, nowMs = Date.now()) {
+  if (!Number.isFinite(lastRequestedAtMs) || lastRequestedAtMs <= 0) return 0;
+  const remainingMs = EMAIL_VERIFICATION_COOLDOWN_MS - (nowMs - lastRequestedAtMs);
+  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+}
+
+module.exports = {
+  DISPATCH_VERIFICATION_URL,
+  EMAIL_VERIFICATION_COOLDOWN_MS,
+  buildDispatchVerificationLink,
+  buildVerificationEmail,
+  normalizeVerificationInviteToken,
+  verificationCooldownSeconds,
+};

@@ -25,8 +25,8 @@ export default function TabLayout() {
 
     workerInvitePromptShownRef.current = profile.uid;
     Alert.alert(
-      'No team invite yet',
-      'You have not been invited to join a team yet. Please wait until a manager invites you.'
+      'No invitation yet',
+      'If you received a Dispatch invitation email, open the invitation link in that email to join the organization that invited you.'
     );
   }, [profile?.uid, profile?.role, profile?.organizationId]);
 

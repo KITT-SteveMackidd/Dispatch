@@ -21,6 +21,7 @@ const ACCOUNT_DELETION_COLLECTIONS = [
   'chatThreads',
   'chatUnread',
   'dispatchBetaChecklistRuns',
+  '_emailVerificationRequests',
   'mail',
   'pushDeliveries',
   'pushTickets',
@@ -960,6 +961,13 @@ async function deleteDispatchUserData(params) {
     queue.update(record.ref, updates);
   });
 
+  records._emailVerificationRequests.forEach((record) => {
+    if (record.id === uid || record.data.uid === uid) {
+      queue.delete(record.ref);
+      deletedSourcePaths.add(record.ref.path);
+    }
+  });
+
   records.mail.forEach((record) => {
     const data = record.data;
     const relatedInviteId = data.dispatchInvite?.inviteId;
@@ -1144,6 +1152,7 @@ async function deleteDispatchUserData(params) {
       'roleAssignmentNotifications',
       'userNotifications',
       'chatUnread',
+      '_emailVerificationRequests',
       'mail',
       'pushDeliveries',
       'pushTickets',

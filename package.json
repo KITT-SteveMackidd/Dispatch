@@ -10,6 +10,7 @@
     "postinstall": "patch-package",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project dispatch-rules-test \"node --test tests/firestore-rules.node.mjs\"",
     "check": "npm run typecheck && npm run test",
     "billing:test:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-billing-test-config.ps1",
     "billing:test:rules": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-billing-test-rules.ps1",
@@ -20,6 +21,7 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
+    "@js-temporal/polyfill": "^0.5.1",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-google-signin/google-signin": "^16.1.2",
     "@react-navigation/native": "^7.1.8",
@@ -54,9 +56,11 @@
     "react-native-svg": "15.12.1",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.5.1",
+    "rrule": "^2.8.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/react": "~19.1.10",
     "patch-package": "^8.0.1",
     "typescript": "~5.9.2",

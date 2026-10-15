@@ -38,6 +38,7 @@ export type EventTask = {
   description?: string;
   attachments?: EventTaskAttachment[];
   expectedOffsetMinutes?: number;
+  notifyManagerWhenOverdue?: boolean;
   dueAt?: string;
   optional?: boolean;
   completedBy?: string[];
@@ -56,6 +57,9 @@ export type EventRole = {
 };
 
 export type DispatchEvent = {
+  seriesId?: string;
+  seriesIndex?: number;
+  seriesCount?: number;
   id: string;
   managerId: string;
   organizationId?: string | null;
@@ -67,6 +71,7 @@ export type DispatchEvent = {
   startsAt: string;
   endsAt?: string;
   teamIds: string[];
+  workerIds?: string[];
   roles: EventRole[];
   pendingInviteNotificationId?: string;
   pendingInviteRoleId?: string;
@@ -176,6 +181,7 @@ export type EventTemplateTask = {
   description?: string;
   attachments?: EventTaskAttachment[];
   expectedOffsetMinutes?: number;
+  notifyManagerWhenOverdue?: boolean;
 };
 
 export type EventTemplateRole = {
@@ -185,6 +191,7 @@ export type EventTemplateRole = {
 };
 
 export type EventTemplate = {
+  defaultRecurrence?: import('@/lib/event-recurrence').TemplateRepeatRule | null;
   id: string;
   managerId: string;
   name: string;

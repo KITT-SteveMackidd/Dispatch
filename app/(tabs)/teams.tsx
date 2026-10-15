@@ -509,7 +509,13 @@ export default function TeamsScreen() {
             ) : null}
           </>
         )}
-        ListEmptyComponent={<Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>No conversations yet.</Text>}
+        ListEmptyComponent={(
+          <Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
+            {profile?.role === 'worker'
+              ? 'No team invite yet. Please check email for an invitation link.'
+              : 'No conversations yet.'}
+          </Text>
+        )}
         renderItem={({ item }) => {
           const head = threadHeadById.get(item.id);
           const unread = unreadCountByThreadId[item.id] ?? (item.teamId ? legacyUnreadCountByTeamId[item.teamId] || 0 : 0);

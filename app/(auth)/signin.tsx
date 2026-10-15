@@ -207,7 +207,7 @@ export default function SignInScreen() {
             <Text style={authStyles.lightActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
 
-          <Link href="/invite/index" style={authStyles.lightActionLink}>Use Invitation Code</Link>
+          <Link href="/invite" style={authStyles.lightActionLink}>Use Invitation Code</Link>
 
           <SocialAuthButtons
             mode="signin"
@@ -297,7 +297,7 @@ export default function SignInScreen() {
             <Text style={authStyles.darkActionLink}>{resetting ? 'Sending reset email...' : 'Forgot Password?'}</Text>
           </Pressable>
 
-          <Link href="/invite/index" style={authStyles.darkActionLink}>Use Invitation Code</Link>
+          <Link href="/invite" style={authStyles.darkActionLink}>Use Invitation Code</Link>
 
           <SocialAuthButtons
             mode="signin"

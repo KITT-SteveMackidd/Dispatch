@@ -1,6 +1,5 @@
 import {
   addDoc,
-  arrayRemove,
   arrayUnion,
   collection,
   deleteDoc,
@@ -30,10 +29,15 @@ import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
 import { canManagerManageEvent, hasConcurrentEventChange, mergeManagerEventScopes } from '@/lib/event-manager-access';
 import { preserveTemplateTaskOrder } from '@/lib/template-task-order';
 import { buildEventDetailsUpdate, type EventDetailsDraft } from '@/lib/event-schedule-edit';
+import { buildEventSchedule } from '@/lib/event-schedule';
+import { expandEventOccurrences, parseRepeatRule, type RepeatRule, type TemplateRepeatRule } from '@/lib/event-recurrence';
 import { clearWorkerTaskCompletions } from '@/services/event-logic';
 import { buildLateTaskNotificationTargets } from '@/lib/task-notification-targets';
 import { removeCustomChatParticipant } from '@/lib/custom-chat-membership';
-import { clearWorkerEventRoleRemoval, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
+import { prepareWorkerEventRoleInvitation, removeEventRoleAndRebuildWorkers, removeWorkerFromEventRoleAndRebuildWorkers } from '@/lib/event-role-deletion';
+import { prepareEventRoleInviteResponse, respondToEventRoleInvite } from '@/lib/event-role-invite-access';
+import { addCustomChatParticipantsThroughServer, sendChatMessageThroughServer } from '@/lib/chat-message-access';
+import { registerDevicePushTokenThroughServer, unregisterDevicePushTokenThroughServer } from '@/lib/push-token-access';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { resolveBillingManagerId } from '@/lib/billing-manager';
@@ -123,6 +127,7 @@ export type CreateEventRoleInput = {
 };
 
 export type UpsertEventTemplateInput = {
+  defaultRecurrence?: TemplateRepeatRule | null;
   name: string;
   roles: EventTemplateRole[];
   defaultLocation?: string;
@@ -302,6 +307,34 @@ export function watchIncomingChatThreadHeads(
   return () => unsubscribe();
 }
 
+export async function ensureChatThread(params: {
+  threadId: string;
+  organizationId: string;
+  teamId?: string | null;
+  title?: string | null;
+  kind: NonNullable<ChatThreadHead['kind']>;
+  creatorId: string;
+  participantIds: string[];
+}) {
+  const participants = [...new Set([params.creatorId, ...params.participantIds].filter(Boolean))];
+  if (participants.length < 2) throw new Error('A chat needs at least two participants.');
+
+  const threadRef = doc(db, 'chatThreads', params.threadId);
+  const existing = await getDoc(threadRef).catch(() => null);
+  if (existing?.exists()) return;
+
+  await setDoc(threadRef, {
+    id: params.threadId,
+    organizationId: params.organizationId,
+    teamId: params.teamId || null,
+    title: params.title?.trim() || 'Chat',
+    kind: params.kind,
+    participants,
+    createdBy: params.creatorId,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function uploadChatAttachment(params: {
   senderId: string;
   threadId: string;
@@ -362,63 +395,13 @@ export async function uploadTemplateTaskAttachment(params: {
 
 export async function sendChatMessage(params: {
   threadId: string;
-  teamId?: string;
-  organizationId?: string;
-  kind?: ChatThreadHead['kind'];
-  senderId: string;
-  senderName?: string;
-  recipientIds: string[];
   text: string;
   attachments?: ChatAttachment[];
 }) {
   const text = params.text.trim();
   const attachments = params.attachments || [];
   if (!text && !attachments.length) return;
-  const requestedRecipientIds = [...new Set(params.recipientIds.filter((id) => id && id !== params.senderId))];
-  const currentParticipants = await prepareChatThreadForSend({
-    threadId: params.threadId,
-    teamId: params.teamId,
-    organizationId: params.organizationId,
-    kind: params.kind,
-    senderId: params.senderId,
-    recipientIds: requestedRecipientIds,
-  });
-  const threadRef = doc(db, 'chatThreads', params.threadId);
-  const recipientIds = requestedRecipientIds.filter((userId) => currentParticipants.includes(userId));
-
-  await addDoc(collection(db, 'chatThreads', params.threadId, 'messages'), {
-    threadId: params.threadId,
-    teamId: params.teamId || null,
-    senderId: params.senderId,
-    senderName: params.senderName?.trim() || null,
-    recipientIds,
-    text,
-    attachments,
-    createdAt: serverTimestamp(),
-  });
-
-  await updateDoc(threadRef, {
-    pushSeenBy: [params.senderId],
-    lastMessageText: text || (attachments.length ? `Sent ${attachments.length} attachment${attachments.length > 1 ? 's' : ''}` : ''),
-    lastMessageSenderId: params.senderId,
-    updatedAt: serverTimestamp(),
-  });
-
-  await Promise.all(
-    recipientIds.map((userId) =>
-      setDoc(
-        doc(db, 'chatUnread', `${userId}__${params.threadId}`),
-        {
-          userId,
-          threadId: params.threadId,
-          teamId: params.teamId || null,
-          unreadCount: increment(1),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      )
-    )
-  );
+  await sendChatMessageThroughServer({ threadId: params.threadId, text, attachments });
 }
 
 export async function markChatThreadRead(params: { userId: string; threadId: string; teamId?: string }) {
@@ -790,12 +773,7 @@ export async function createChatGroup(params: {
 export async function addChatParticipants(params: { threadId: string; participantIds: string[] }) {
   const participantIds = [...new Set(params.participantIds.filter(Boolean))];
   if (!participantIds.length) return;
-
-  await setDoc(
-    doc(db, 'chatThreads', params.threadId),
-    { participants: arrayUnion(...participantIds) },
-    { merge: true }
-  );
+  await addCustomChatParticipantsThroughServer({ threadId: params.threadId, participantIds });
 }
 
 export async function renameCustomChat(params: { threadId: string; userId: string; title: string }) {
@@ -967,6 +945,7 @@ export async function createEventTemplate(managerId: string, input: UpsertEventT
     defaultLocation: input.defaultLocation || null,
     defaultLocationPlaceId: input.defaultLocationPlaceId || null,
     defaultTime: input.defaultTime || null,
+    defaultRecurrence: parseRepeatRule(input.defaultRecurrence, 'template'),
     defaultDescription: input.defaultDescription || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -989,6 +968,7 @@ export async function updateEventTemplate(params: { managerId: string; templateI
     defaultLocation: params.input.defaultLocation || null,
     defaultLocationPlaceId: params.input.defaultLocationPlaceId || null,
     defaultTime: params.input.defaultTime || null,
+    defaultRecurrence: parseRepeatRule(params.input.defaultRecurrence === undefined ? template.defaultRecurrence : params.input.defaultRecurrence, 'template'),
     defaultDescription: params.input.defaultDescription || null,
     updatedAt: serverTimestamp(),
   });
@@ -1134,25 +1114,34 @@ export function watchManagerRoleInvites(managerId: string, cb: (items: RoleAssig
   });
 }
 
-export async function createDispatchEvent(params: {
+export type CreateDispatchEventInput = {
   managerId: string;
   name: string;
   date: string;
   time: string;
+  endTime?: string;
+  recurrence?: RepeatRule | null;
+  timeZone?: string;
   location: string;
   locationPlaceId: string;
   description: string;
   roles: CreateEventRoleInput[];
-}): Promise<DispatchEvent> {
-  const startsAt = new Date(`${params.date.trim()}T${params.time.trim()}:00`);
-  if (Number.isNaN(startsAt.getTime())) {
-    throw new Error('Enter a valid event date and time.');
-  }
+};
+
+export async function createDispatchEvent(params: CreateDispatchEventInput): Promise<DispatchEvent> {
+  return (await createDispatchEventSeries(params))[0];
+}
+
+export async function createDispatchEventSeries(params: CreateDispatchEventInput): Promise<DispatchEvent[]> {
+  const schedule = buildEventSchedule(params.date, params.time, params.endTime);
+  const recurrence = parseRepeatRule(params.recurrence, 'event');
+  const timeZone = params.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const occurrences = expandEventOccurrences(schedule, recurrence, timeZone);
+  const startsAt = new Date(schedule.startsAt);
   if (!params.locationPlaceId.trim()) {
     throw new Error('Choose an event location from the Google Places suggestions.');
   }
 
-  const endsAt = new Date(startsAt.getTime() + 2 * 60 * 60 * 1000);
   const roles = params.roles.map((role) => {
     const assignedWorkerIds = role.assignedWorkerId ? [role.assignedWorkerId] : [];
     return {
@@ -1177,37 +1166,41 @@ export async function createDispatchEvent(params: {
     location: params.location.trim(),
     locationPlaceId: params.locationPlaceId.trim(),
     description: params.description.trim(),
-    startsAt: startsAt.toISOString(),
-    endsAt: endsAt.toISOString(),
+    startsAt: schedule.startsAt,
+    ...(schedule.endsAt ? { endsAt: schedule.endsAt } : {}),
     teamIds: [],
     roles,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 
-  const docRef = await addDoc(collection(db, 'events'), eventPayload);
+  const refs = occurrences.map(() => doc(collection(db, 'events')));
+  const createdEvents = occurrences.map((occurrence, index) => ({
+    ...eventPayload,
+    ...occurrence,
+    roles: params.roles.map(role => ({
+      id: role.id,
+      name: role.name,
+      assignedWorkerIds: role.assignedWorkerId ? [role.assignedWorkerId] : [],
+      openSlots: role.assignedWorkerId ? 0 : 1,
+      tasks: (role.tasks || []).map((task, taskIndex) => buildEventTaskFromTemplate(task, Date.parse(occurrence.startsAt), taskIndex)),
+    })),
+    ...(recurrence ? { recurrence, timeZone, seriesId: refs[0].id, seriesIndex: index, seriesCount: occurrences.length } : {}),
+  }));
+  const batch = writeBatch(db);
+  createdEvents.forEach((event, index) => batch.set(refs[index], event));
+  await batch.commit();
   await Promise.all(
-    roles.flatMap((role) =>
+    createdEvents.flatMap((event, index) => event.roles.flatMap((role) =>
       (role.assignedWorkerIds || []).map((workerId) =>
-        queueEventRoleReminderEmail({ eventId: docRef.id, roleId: role.id, workerId }).catch((error) => {
+        queueEventRoleReminderEmail({ eventId: refs[index].id, roleId: role.id, workerId }).catch((error) => {
           console.warn('Dispatch event reminder email queue failed', error);
         })
       )
-    )
+    ))
   );
 
-  return {
-    id: docRef.id,
-    managerId: eventPayload.managerId,
-    organizationId: eventPayload.organizationId,
-    name: eventPayload.name,
-    location: eventPayload.location,
-    locationPlaceId: eventPayload.locationPlaceId,
-    startsAt: eventPayload.startsAt,
-    endsAt: eventPayload.endsAt,
-    teamIds: eventPayload.teamIds,
-    roles: eventPayload.roles,
-  };
+  return createdEvents.map((event, index) => ({ ...event, id: refs[index].id }));
 }
 
 export async function updateDispatchEventDetails(params: {
@@ -1375,27 +1368,21 @@ export async function saveUserPushToken(params: {
   platform: 'ios' | 'android' | 'web' | 'unknown';
   permissionStatus: 'granted' | 'denied' | 'undetermined';
 }) {
-  await setDoc(
-    doc(db, 'users', params.userId),
-    {
-      pushTokens: arrayUnion(params.token),
-      pushPermissionStatus: params.permissionStatus,
-      pushTokenUpdatedAt: serverTimestamp(),
-      pushPlatform: params.platform,
-    },
-    { merge: true }
-  );
+  if (auth.currentUser?.uid !== params.userId) {
+    throw new Error('Push notifications can only be registered for the signed-in account.');
+  }
+  await registerDevicePushTokenThroughServer({
+    token: params.token,
+    platform: params.platform,
+    permissionStatus: params.permissionStatus,
+  });
 }
 
 export async function removeUserPushToken(params: { userId: string; token: string }) {
-  await setDoc(
-    doc(db, 'users', params.userId),
-    {
-      pushTokens: arrayRemove(params.token),
-      pushTokenUpdatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  if (!auth.currentUser) {
+    throw new Error('Push notifications can only be unregistered while signed in.');
+  }
+  await unregisterDevicePushTokenThroughServer({ token: params.token });
 }
 
 export function watchUserNotifications(userId: string, cb: (items: UserNotification[]) => void) {
@@ -1471,7 +1458,10 @@ export async function ensureTaskBehindScheduleNotification(params: {
   taskId: string;
   taskName: string;
   dueAt: string;
+  notifyManagerWhenOverdue?: boolean;
 }) {
+  if (params.notifyManagerWhenOverdue === false) return [];
+
   const organizationManagerIds = params.organizationId
     ? await loadOrganisationManagerIds(params.organizationId)
     : [];
@@ -2792,11 +2782,11 @@ export async function updateEventRoleAssignment(params: {
       return;
     }
 
-    const clearedRemoval = clearWorkerEventRoleRemoval(roles, roleId, workerId);
-    nextRoles = clearedRemoval.roles;
+    const pendingInvitation = prepareWorkerEventRoleInvitation(roles, roleId, workerId);
+    nextRoles = pendingInvitation.roles;
     tx.update(ref, {
       roles: nextRoles,
-      workerIds: clearedRemoval.workerIds,
+      workerIds: pendingInvitation.workerIds,
       revision: (event.revision ?? 0) + 1,
       updatedAt: serverTimestamp(),
     });
@@ -3078,12 +3068,7 @@ async function legacyCancelWorkerEventRole(params: {
           : [...eligibleWaitlistWorkerIds, workerId],
       };
     });
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(ref, {
       roles: nextRoles,
@@ -3169,12 +3154,7 @@ async function legacyJoinRoleWaitlist(params: {
         }
         : item
     ));
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
 
@@ -3229,12 +3209,7 @@ async function legacyJoinEventRoleWaitlist(params: {
         }
         : item
     ));
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
   });
@@ -3295,12 +3270,7 @@ async function legacyAcceptEventRoleWaitlistInvite(params: {
           }
           : item
       ));
-      const workerIds = [...new Set(nextRoles.flatMap((item) => [
-        ...(item.assignedWorkerIds || []),
-        ...(item.waitlistWorkerIds || []),
-        ...(item.eligibleWaitlistWorkerIds || []),
-        ...(item.waitlistInviteWorkerIds || []),
-      ]))];
+      const workerIds = [...new Set(event.workerIds || [])];
 
       tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
       return;
@@ -3324,12 +3294,7 @@ async function legacyAcceptEventRoleWaitlistInvite(params: {
 
       return removeWorkerFromOtherRoleWaitlists(item, params.roleId, params.workerId);
     });
-    const workerIds = [...new Set(nextRoles.flatMap((item) => [
-      ...(item.assignedWorkerIds || []),
-      ...(item.waitlistWorkerIds || []),
-      ...(item.eligibleWaitlistWorkerIds || []),
-      ...(item.waitlistInviteWorkerIds || []),
-    ]))];
+    const workerIds = [...new Set(event.workerIds || [])];
 
     tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
 

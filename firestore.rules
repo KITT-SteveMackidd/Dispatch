@@ -223,7 +223,8 @@ service cloud.firestore {
       return signedIn()
         && userOrganizationId() is string
         && 'organizationId' in resource.data
-        && resource.data.organizationId == userOrganizationId();
+        && resource.data.organizationId == userOrganizationId()
+        && isOrganizationMember(userOrganizationId());
     }
 
     function validInviteStatus(status) {
@@ -249,6 +250,7 @@ service cloud.firestore {
       allow read: if isSelf(userId) || isSameOrganizationProfile();
       allow create: if mutationAllowed()
         && isSelf(userId)
+        && request.resource.data.uid == userId
         && request.resource.data.role in ['manager', 'worker']
         && missingOrNull('organizationId')
         && missingOrNull('organizationName');
@@ -314,7 +316,7 @@ service cloud.firestore {
           || (resource.data.workerIds is list && request.auth.uid in resource.data.workerIds)
         );
 
-      allow create: if isManager()
+      allow create: if isOrganizationManager(request.resource.data.organizationId)
         && organizationWriteEnabled(request.resource.data.organizationId)
         && request.resource.data.managerId == request.auth.uid
         && request.resource.data.workerIds is list
@@ -324,7 +326,7 @@ service cloud.firestore {
         && request.resource.data.organizationId == resource.data.organizationId
         && (
           (
-            isTeamManager(teamId)
+            isOrganizationManager(resource.data.organizationId)
             && request.resource.data.managerId == resource.data.managerId
             && request.resource.data.workerIds is list
           )
@@ -354,6 +356,7 @@ service cloud.firestore {
             && request.resource.data.workerIds is list
             && request.resource.data.workerIds.hasAll(resource.data.workerIds)
             && request.auth.uid in request.resource.data.workerIds
+            && request.resource.data.workerIds.size() == resource.data.workerIds.size() + 1
           )
           || (
             signedIn()
@@ -580,7 +583,7 @@ service cloud.firestore {
       allow update: if mutationAllowed()
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId == resource.data.userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'pushSeenBy', 'updatedAt']);
       allow delete: if mutationAllowed() && (
         resource.data.userId == request.auth.uid
         || (isManager() && isEventOwner(resource.data.relatedEventId))

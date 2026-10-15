@@ -29,6 +29,7 @@ const {
 } = require('./lib/organization-membership');
 const { removeWorkerFromEventMembership } = require('./lib/event-membership');
 const { planWorkerEventAction } = require('./lib/worker-event-actions');
+const { assertOrganizationMutationAccess } = require('./lib/organization-mutation-access');
 const { legacyOrganizationRecordUpdate } = require('./lib/legacy-organization-records');
 const {
   accessModeForBillingAndSeatUsage,
@@ -75,6 +76,7 @@ const {
   documentKey,
   eventReminderTargets,
   normalizeExpoPushTokens,
+  pushMessageForUser,
   rolePushContent,
   rolePushRecipientId,
   uniqueStrings,
@@ -84,7 +86,14 @@ const {
   roleNotificationStateChanged,
   roleStateFingerprint,
 } = require('./lib/role-state');
+const {
+  normalizePushTokenRegistration,
+  stalePushTokenOwnerIds,
+} = require('./lib/push-token-ownership');
 const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications');
+const { eventAccessForRoleInvitation } = require('./lib/event-role-access');
+const { buildEventRoleResponse } = require('./lib/event-role-response');
+const { MAX_CHAT_PARTICIPANTS, buildChatMessageMutation } = require('./lib/chat-message');
 const {
   INVITE_TTL_MS,
   buildInviteUrls,
@@ -101,6 +110,12 @@ const {
   LegacyInviteOrganizationConflictError,
   buildLegacyInviteAdoptionPlan,
 } = require('./lib/legacy-invites');
+const {
+  buildDispatchVerificationLink,
+  buildVerificationEmail,
+  normalizeVerificationInviteToken,
+  verificationCooldownSeconds,
+} = require('./lib/email-verification');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
@@ -134,6 +149,7 @@ onInit(() => {
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const PROCESSING_LEASE_MS = 5 * 60 * 1000;
+const MAX_PUSH_TOKEN_OWNERS = 450;
 
 function chunks(values, size) {
   const result = [];
@@ -250,6 +266,25 @@ async function assertAccountDeletionNotStarted(transaction, userId) {
   if (snapshot.exists && accountDeletionTombstoneIsActive(snapshot.data())) {
     throw new HttpsError('failed-precondition', 'Account deletion is already in progress. No further account changes are allowed.');
   }
+}
+
+async function assertOrganizationMutationAllowed(transaction, userId, organizationId) {
+  await assertAccountDeletionNotStarted(transaction, userId);
+  if (typeof organizationId !== 'string' || !organizationId.trim()) {
+    throw new HttpsError('failed-precondition', 'This record has no organization authority.');
+  }
+  const [userSnapshot, organizationSnapshot, billingSnapshot] = await transaction.getAll(
+    db.collection('users').doc(userId),
+    db.collection('organizations').doc(organizationId),
+    db.collection('organizationBilling').doc(organizationId)
+  );
+  assertOrganizationMutationAccess({
+    userId,
+    organizationId,
+    user: userSnapshot.exists ? userSnapshot.data() : null,
+    organization: organizationSnapshot.exists ? organizationSnapshot.data() : null,
+    billing: billingSnapshot.exists ? billingSnapshot.data() : null,
+  });
 }
 
 function accountDeletionLockRef() {
@@ -528,6 +563,14 @@ function storedAccountDeletionAuthUser(userId, tombstone = {}) {
   };
 }
 
+function callableDocumentId(value, label) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized || normalized.length > 512 || normalized.includes('/')) {
+    throw new HttpsError('invalid-argument', `A valid ${label} is required.`);
+  }
+  return normalized;
+}
+
 function invitationPreview(invite, currentUserId = null) {
   return {
     inviteKind: invite.inviteKind,
@@ -589,6 +632,226 @@ function communicationThreadIds(organizationId, workerId) {
     managers: `organization:${organizationId}:managers:${workerId}`,
   };
 }
+
+async function ensureRoleInviteEventAccess(notification, userId) {
+  const eventRef = db.collection('events').doc(notification.eventId);
+  return db.runTransaction(async (transaction) => {
+    const eventSnapshot = await transaction.get(eventRef);
+    if (!eventSnapshot.exists) throw new HttpsError('not-found', 'The invited Event no longer exists.');
+
+    await assertOrganizationMutationAllowed(transaction, userId, eventSnapshot.data().organizationId);
+    let access;
+    try {
+      access = eventAccessForRoleInvitation(notification, eventSnapshot.data(), userId);
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
+    if (access.changed) {
+      transaction.update(eventRef, {
+        workerIds: access.workerIds,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    return { eventId: notification.eventId, repaired: access.changed };
+  });
+}
+
+exports.prepareEventRoleInviteResponse = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before responding to a role invitation.');
+  const notificationId = typeof request.data?.notificationId === 'string'
+    ? request.data.notificationId.trim()
+    : '';
+  if (!notificationId || notificationId.length > 160) {
+    throw new HttpsError('invalid-argument', 'A valid role invitation is required.');
+  }
+
+  const notificationSnapshot = await db.collection('roleAssignmentNotifications').doc(notificationId).get();
+  if (!notificationSnapshot.exists) throw new HttpsError('not-found', 'The role invitation no longer exists.');
+  const notification = { id: notificationSnapshot.id, ...notificationSnapshot.data() };
+  if (notification.workerId !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'This role invitation belongs to another user.');
+  }
+  if (notification.action !== 'assign') {
+    return { eventId: notification.eventId, repaired: false };
+  }
+  if (notification.status === 'accepted') {
+    return { eventId: notification.eventId, repaired: false };
+  }
+
+  return ensureRoleInviteEventAccess(notification, request.auth.uid);
+});
+
+exports.respondToEventRoleInvite = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before responding to a role invitation.');
+  const notificationId = typeof request.data?.notificationId === 'string'
+    ? request.data.notificationId.trim()
+    : '';
+  const response = request.data?.response;
+  if (!notificationId || notificationId.length > 160 || !['accept', 'decline'].includes(response)) {
+    throw new HttpsError('invalid-argument', 'A valid role invitation and response are required.');
+  }
+
+  const result = await db.runTransaction(async (transaction) => {
+    const notificationRef = db.collection('roleAssignmentNotifications').doc(notificationId);
+    const notificationSnapshot = await transaction.get(notificationRef);
+    if (!notificationSnapshot.exists) throw new HttpsError('not-found', 'The role invitation no longer exists.');
+    const notification = { id: notificationSnapshot.id, ...notificationSnapshot.data() };
+    if (notification.workerId !== request.auth.uid) {
+      throw new HttpsError('permission-denied', 'This role invitation belongs to another user.');
+    }
+
+    const eventRef = db.collection('events').doc(notification.eventId);
+    const workerRef = db.collection('users').doc(request.auth.uid);
+    const [eventSnapshot, workerSnapshot] = await Promise.all([
+      transaction.get(eventRef),
+      transaction.get(workerRef),
+    ]);
+    if (!eventSnapshot.exists) throw new HttpsError('not-found', 'The invited Event no longer exists.');
+    await assertOrganizationMutationAllowed(transaction, request.auth.uid, eventSnapshot.data().organizationId);
+    await assertOrganizationMutationAllowed(transaction, notification.managerId, eventSnapshot.data().organizationId);
+    const workerName = workerSnapshot.exists ? workerSnapshot.data().displayName : 'Worker';
+
+    let mutation;
+    try {
+      mutation = buildEventRoleResponse({
+        notification,
+        event: eventSnapshot.data(),
+        workerId: request.auth.uid,
+        workerName,
+        response,
+      });
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
+    if (mutation.alreadyHandled) return mutation;
+
+    if (mutation.eventPatch) {
+      transaction.update(eventRef, {
+        ...mutation.eventPatch,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    transaction.update(notificationRef, {
+      ...mutation.notificationPatch,
+      respondedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    transaction.set(db.collection('userNotifications').doc(), {
+      ...mutation.managerNotification,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return mutation;
+  });
+
+  return {
+    eventId: result.eventId,
+    roleId: result.roleId,
+    shouldQueueReminder: result.shouldQueueReminder,
+    alreadyHandled: result.alreadyHandled,
+  };
+});
+
+exports.sendChatMessage = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before sending a message.');
+  const threadId = callableDocumentId(request.data?.threadId, 'chat');
+  const threadRef = db.collection('chatThreads').doc(threadId);
+  const senderRef = db.collection('users').doc(request.auth.uid);
+  const messageRef = threadRef.collection('messages').doc();
+
+  return db.runTransaction(async (transaction) => {
+    const [threadSnapshot, senderSnapshot] = await Promise.all([
+      transaction.get(threadRef),
+      transaction.get(senderRef),
+    ]);
+    if (!threadSnapshot.exists) throw new HttpsError('not-found', 'This chat no longer exists.');
+
+    const thread = { id: threadSnapshot.id, ...threadSnapshot.data() };
+    for (const userId of uniqueStrings([request.auth.uid, ...uniqueStrings(thread.participants)])) {
+      await assertOrganizationMutationAllowed(transaction, userId, thread.organizationId);
+    }
+    const senderName = senderSnapshot.exists
+      ? senderSnapshot.data().displayName
+      : request.auth.token.name;
+    let mutation;
+    try {
+      mutation = buildChatMessageMutation({
+        thread,
+        senderId: request.auth.uid,
+        senderName,
+        text: request.data?.text,
+        attachments: request.data?.attachments,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to send this message.';
+      const code = message.includes('not a member') ? 'permission-denied' : 'invalid-argument';
+      throw new HttpsError(code, message);
+    }
+
+    transaction.create(messageRef, {
+      ...mutation.message,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    transaction.update(threadRef, {
+      ...mutation.threadPatch,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    mutation.recipientIds.forEach((userId) => {
+      transaction.set(db.collection('chatUnread').doc(`${userId}__${threadId}`), {
+        userId,
+        threadId,
+        teamId: mutation.message.teamId,
+        unreadCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+
+    return { messageId: messageRef.id, recipientCount: mutation.recipientIds.length };
+  });
+});
+
+exports.addCustomChatParticipants = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before changing chat members.');
+  const threadId = callableDocumentId(request.data?.threadId, 'chat');
+  const participantIds = uniqueStrings(request.data?.participantIds);
+  if (!participantIds.length || participantIds.length > MAX_CHAT_PARTICIPANTS) {
+    throw new HttpsError('invalid-argument', 'Select valid organization members.');
+  }
+
+  const threadRef = db.collection('chatThreads').doc(threadId);
+  const senderRef = db.collection('users').doc(request.auth.uid);
+  const participantRefs = participantIds.map((userId) => db.collection('users').doc(callableDocumentId(userId, 'user')));
+  return db.runTransaction(async (transaction) => {
+    const [threadSnapshot, senderSnapshot, ...participantSnapshots] = await Promise.all([
+      transaction.get(threadRef),
+      transaction.get(senderRef),
+      ...participantRefs.map((participantRef) => transaction.get(participantRef)),
+    ]);
+    if (!threadSnapshot.exists) throw new HttpsError('not-found', 'This chat no longer exists.');
+    const thread = { id: threadSnapshot.id, ...threadSnapshot.data() };
+    const currentParticipants = uniqueStrings(thread.participants);
+    if (thread.kind !== 'custom') throw new HttpsError('failed-precondition', 'Default chat membership cannot be changed here.');
+    if (!currentParticipants.includes(request.auth.uid)) throw new HttpsError('permission-denied', 'You are not a member of this chat.');
+    if (!senderSnapshot.exists || senderSnapshot.data().organizationId !== thread.organizationId) {
+      throw new HttpsError('permission-denied', 'You are no longer a member of this organization.');
+    }
+    if (participantSnapshots.some((snapshot) => !snapshot.exists || snapshot.data().organizationId !== thread.organizationId)) {
+      throw new HttpsError('permission-denied', 'Only members of this organization can be added.');
+    }
+
+    const nextParticipants = uniqueStrings([...currentParticipants, ...participantIds]);
+    for (const userId of uniqueStrings([request.auth.uid, ...nextParticipants])) {
+      await assertOrganizationMutationAllowed(transaction, userId, thread.organizationId);
+    }
+    if (nextParticipants.length > MAX_CHAT_PARTICIPANTS) {
+      throw new HttpsError('resource-exhausted', 'This chat has too many participants.');
+    }
+    transaction.update(threadRef, {
+      participants: nextParticipants,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { participantIds: nextParticipants };
+  });
+});
 
 async function syncClaimedInvitationChats(organizationId, guardUserId) {
   const organizationRef = db.collection('organizations').doc(organizationId);
@@ -3496,6 +3759,91 @@ exports.revenueCatWebhook = onRequest({
   }
 });
 
+exports.sendDispatchEmailVerification = onCall({ maxInstances: 10 }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Sign in before requesting a verification email.');
+  }
+
+  const authUser = await adminAuth.getUser(request.auth.uid);
+  if (authUser.emailVerified) {
+    return { queued: false, alreadyVerified: true };
+  }
+
+  const deliveryEmail = normalizeEmail(authUser.email);
+  if (!isValidEmail(deliveryEmail)) {
+    throw new HttpsError('failed-precondition', 'This account does not have a valid email address to verify.');
+  }
+
+  const requestRef = db.collection('_emailVerificationRequests').doc(request.auth.uid);
+  const existingRequest = await requestRef.get();
+  const initialWaitSeconds = verificationCooldownSeconds(
+    timestampMillis(existingRequest.data()?.lastRequestedAt)
+  );
+  if (initialWaitSeconds > 0) {
+    throw new HttpsError(
+      'resource-exhausted',
+      `Wait ${initialWaitSeconds} seconds before requesting another verification email.`
+    );
+  }
+
+  let verificationLink;
+  try {
+    const firebaseVerificationLink = await adminAuth.generateEmailVerificationLink(deliveryEmail);
+    verificationLink = buildDispatchVerificationLink(
+      firebaseVerificationLink,
+      undefined,
+      normalizeVerificationInviteToken(request.data?.inviteToken)
+    );
+  } catch (error) {
+    logger.error('Unable to generate a Dispatch email verification link.', {
+      uid: request.auth.uid,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new HttpsError('internal', 'Unable to generate the verification link. Please try again.');
+  }
+
+  const mailRef = db.collection('mail').doc();
+  const now = FieldValue.serverTimestamp();
+  await db.runTransaction(async (transaction) => {
+    await assertAccountDeletionNotStarted(transaction, request.auth.uid);
+    const latestRequest = await transaction.get(requestRef);
+    const waitSeconds = verificationCooldownSeconds(
+      timestampMillis(latestRequest.data()?.lastRequestedAt)
+    );
+    if (waitSeconds > 0) {
+      throw new HttpsError(
+        'resource-exhausted',
+        `Wait ${waitSeconds} seconds before requesting another verification email.`
+      );
+    }
+
+    transaction.set(requestRef, {
+      uid: request.auth.uid,
+      lastRequestedAt: now,
+      lastMailId: mailRef.id,
+      updatedAt: now,
+    }, { merge: true });
+    transaction.set(mailRef, {
+      ...buildVerificationEmail({
+        deliveryEmail,
+        displayName: authUser.displayName,
+        verificationLink,
+      }),
+      dispatchEmailVerification: {
+        uid: request.auth.uid,
+        mailId: mailRef.id,
+      },
+      createdAt: now,
+    });
+  });
+
+  logger.info('Queued Dispatch email verification.', {
+    uid: request.auth.uid,
+    mailId: mailRef.id,
+  });
+  return { queued: true, alreadyVerified: false };
+});
+
 exports.resetDispatchDatabase = onCall({
   maxInstances: 1,
   timeoutSeconds: 540,
@@ -4157,6 +4505,110 @@ exports.reapOrphanedDispatchStorageObject = onObjectFinalized({ retry: true }, a
   });
 });
 
+function pushTokenOwnerQuery(token) {
+  return db.collection('users')
+    .where('pushTokens', 'array-contains', token)
+    .limit(MAX_PUSH_TOKEN_OWNERS);
+}
+
+function assertCompletePushTokenOwnerSnapshot(snapshot) {
+  if (snapshot.size >= MAX_PUSH_TOKEN_OWNERS) {
+    throw new HttpsError('resource-exhausted', 'Too many accounts are associated with this device token.');
+  }
+}
+
+async function removePushTokenFromAllUsers(token) {
+  return db.runTransaction(async (transaction) => {
+    await assertAccountDeletionMutationLeaseAvailable(transaction);
+    const ownersSnapshot = await transaction.get(pushTokenOwnerQuery(token));
+    assertCompletePushTokenOwnerSnapshot(ownersSnapshot);
+    ownersSnapshot.docs.forEach((ownerSnapshot) => {
+      transaction.update(ownerSnapshot.ref, {
+        pushTokens: FieldValue.arrayRemove(token),
+        pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+    return ownersSnapshot.size;
+  });
+}
+
+exports.registerDevicePushToken = onCall({ maxInstances: 20 }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Sign in before registering this device for notifications.');
+  }
+
+  let registration;
+  try {
+    registration = normalizePushTokenRegistration(request.data);
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error instanceof Error ? error.message : String(error));
+  }
+
+  const callerRef = db.collection('users').doc(request.auth.uid);
+  return db.runTransaction(async (transaction) => {
+    await assertAccountDeletionNotStarted(transaction, request.auth.uid);
+    const callerSnapshot = await transaction.get(callerRef);
+    if (!callerSnapshot.exists) {
+      throw new HttpsError('failed-precondition', 'Create your Dispatch profile before enabling notifications.');
+    }
+
+    const ownersSnapshot = await transaction.get(pushTokenOwnerQuery(registration.token));
+    assertCompletePushTokenOwnerSnapshot(ownersSnapshot);
+    const previousOwnerIds = stalePushTokenOwnerIds(
+      ownersSnapshot.docs.map((ownerSnapshot) => ownerSnapshot.id),
+      request.auth.uid
+    );
+
+    ownersSnapshot.docs
+      .filter((ownerSnapshot) => previousOwnerIds.includes(ownerSnapshot.id))
+      .forEach((ownerSnapshot) => {
+        transaction.set(ownerSnapshot.ref, {
+          pushTokens: FieldValue.arrayRemove(registration.token),
+          pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+
+    transaction.set(callerRef, {
+      pushTokens: FieldValue.arrayUnion(registration.token),
+      pushPermissionStatus: registration.permissionStatus,
+      pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+      pushPlatform: registration.platform,
+    }, { merge: true });
+
+    return { previousOwnersRemoved: previousOwnerIds.length };
+  });
+});
+
+exports.unregisterDevicePushToken = onCall({ maxInstances: 20 }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Sign in before unregistering this device from notifications.');
+  }
+
+  let token;
+  try {
+    token = normalizePushTokenRegistration(request.data).token;
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error instanceof Error ? error.message : String(error));
+  }
+
+  return db.runTransaction(async (transaction) => {
+    await assertAccountDeletionNotStarted(transaction, request.auth.uid);
+    const ownersSnapshot = await transaction.get(pushTokenOwnerQuery(token));
+    assertCompletePushTokenOwnerSnapshot(ownersSnapshot);
+    if (!ownersSnapshot.docs.some((ownerSnapshot) => ownerSnapshot.id === request.auth.uid)) {
+      return { ownersRemoved: 0 };
+    }
+
+    ownersSnapshot.docs.forEach((ownerSnapshot) => {
+      transaction.set(ownerSnapshot.ref, {
+        pushTokens: FieldValue.arrayRemove(token),
+        pushTokenUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+    return { ownersRemoved: ownersSnapshot.size };
+  });
+});
+
 async function expoRequest(url, body) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -4225,16 +4677,8 @@ async function claimDelivery(deliveryId, metadata, sourceGuards = []) {
   });
 }
 
-async function removeInvalidToken(userId, token) {
-  return db.runTransaction(async (transaction) => {
-    const state = await readPushMutationState(transaction, userId);
-    if (!state.allowed) return false;
-    transaction.update(state.userRef, {
-      pushTokens: FieldValue.arrayRemove(token),
-      pushTokenUpdatedAt: FieldValue.serverTimestamp(),
-    });
-    return true;
-  });
+async function removeInvalidToken(_userId, token) {
+  await removePushTokenFromAllUsers(token);
 }
 
 async function savePushTicket(ticketId, userId, token, deliveryId, deliveryRef, sourceGuards = []) {
@@ -4359,13 +4803,10 @@ async function sendPushToUser({
   try {
     let successfulTickets = 0;
     for (const tokenChunk of chunks(tokens, 100)) {
-      const messages = tokenChunk.map((token) => ({
+      const messages = tokenChunk.map((token) => pushMessageForUser(userId, {
         to: token,
         title,
         body,
-        sound: 'default',
-        priority: 'high',
-        channelId: 'dispatch-default',
         data,
       }));
       const response = await expoRequest(EXPO_PUSH_URL, messages);
@@ -4503,6 +4944,16 @@ exports.pushRoleAssignmentNotification = onDocumentCreated('roleAssignmentNotifi
     || managerSnapshot.data().organizationId !== organizationId
     || normalizedRole(managerSnapshot.data().role) !== 'manager') {
     return;
+  }
+  if (notification.action === 'assign') {
+    await ensureRoleInviteEventAccess(notification, recipientId).catch((error) => {
+      logger.error('Unable to grant the invited Worker Event access.', {
+        notificationId: event.params.notificationId,
+        eventId: notification.eventId,
+        workerId: recipientId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
   const content = rolePushContent(notification);
   await sendPushToUser({

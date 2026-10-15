@@ -17,6 +17,7 @@ function lateTaskNotificationDocuments(params) {
 
   return (params.event.roles || []).flatMap((role) =>
     (role.tasks || []).flatMap((task) => {
+      if (task.notifyManagerWhenOverdue === false) return [];
       const dueAtMs = taskDueAtMs(params.event, task);
       if (!Number.isFinite(dueAtMs) || dueAtMs > params.nowMs || (task.completedBy || []).length) return [];
 

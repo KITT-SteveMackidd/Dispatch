@@ -68,6 +68,20 @@ export function clearWorkerEventRoleRemoval(
   };
 }
 
+export function prepareWorkerEventRoleInvitation(
+  roles: EventRole[],
+  roleId: string,
+  workerId: string
+) {
+  const clearedRemoval = clearWorkerEventRoleRemoval(roles, roleId, workerId);
+  return {
+    ...clearedRemoval,
+    // Pending invitees need read access to the Event before they can accept,
+    // decline, or join its waitlist. This does not assign them to the role.
+    workerIds: [...new Set([...clearedRemoval.workerIds, workerId].filter(Boolean))],
+  };
+}
+
 export function mergePersistedAndOptimisticEvents(persisted: DispatchEvent[], optimistic: DispatchEvent[]) {
   const persistedIds = new Set(persisted.map((event) => event.id));
   return [...persisted, ...optimistic.filter((event) => !persistedIds.has(event.id))];

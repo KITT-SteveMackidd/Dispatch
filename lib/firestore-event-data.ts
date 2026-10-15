@@ -2,7 +2,7 @@ import type { EventRole, EventTask } from '@/types/dispatch';
 
 export type EventTaskTemplateInput = Pick<
   EventTask,
-  'id' | 'name' | 'description' | 'attachments' | 'expectedOffsetMinutes' | 'optional'
+  'id' | 'name' | 'description' | 'attachments' | 'expectedOffsetMinutes' | 'notifyManagerWhenOverdue' | 'optional'
 >;
 
 export function sanitizeEventTaskForFirestore(task: EventTask, index: number): EventTask {
@@ -22,6 +22,7 @@ export function sanitizeEventTaskForFirestore(task: EventTask, index: number): E
       kind: attachment.kind,
     })),
     ...(hasCountdown ? { expectedOffsetMinutes: Math.max(0, expectedOffsetMinutes) } : {}),
+    ...(hasCountdown ? { notifyManagerWhenOverdue: task.notifyManagerWhenOverdue !== false } : {}),
     ...(dueAt ? { dueAt } : {}),
     optional: Boolean(task.optional),
     completedBy: [...new Set((task.completedBy || []).filter(Boolean))],

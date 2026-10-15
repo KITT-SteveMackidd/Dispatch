@@ -402,6 +402,7 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
     },
     [`dispatchBetaChecklistRuns/${deletingUid}`]: { userId: deletingUid },
     [`dispatchBetaChecklistRuns/${deletingUid}/items/one`]: { done: true },
+    [`_emailVerificationRequests/${deletingUid}`]: { uid: deletingUid, lastMailId: 'mail-1' },
     'mail/mail-1': { to: ['steve+dispatch@example.com'], message: { text: 'Hello Steve Manager' } },
     'mail/mail-deleted-invite': {
       to: ['unrelated@example.com'],
@@ -517,6 +518,7 @@ test('deleteDispatchUserData cleans personal records and preserves shared work u
   assert.equal(db.documents.has(`chatUnread/${deletingUid}__organization:org-1:all`), false);
   assert.equal(db.documents.get('chatUnread/worker-1__organization:org-1:all').unreadCount, 0);
   assert.equal(db.documents.has(`dispatchBetaChecklistRuns/${deletingUid}`), false);
+  assert.equal(db.documents.has(`_emailVerificationRequests/${deletingUid}`), false);
   assert.equal(db.documents.has('mail/mail-1'), false);
   assert.equal(db.documents.has('mail/mail-deleted-invite'), false);
   assert.equal(db.documents.has('mail/mail-other'), true);
