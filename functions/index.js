@@ -1030,12 +1030,6 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
     const billing = billingSnapshot.exists
       ? { ...billingSnapshot.data() }
       : defaultOrganizationBilling(nowMs);
-    if (billing.accessMode === 'read_only') {
-      throw new HttpsError(
-        'failed-precondition',
-        'This organization is read-only. Resolve billing or Free-plan capacity before inviting another member.'
-      );
-    }
     const seededReservations = { ...(billing.seatReservations || {}) };
     organizationInvites.docs.forEach((document) => {
       const pendingInvite = document.data();
@@ -1048,6 +1042,28 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
         expiresAtMs,
       };
     });
+
+    if (billing.accessMode === 'read_only') {
+      const usage = calculateSeatUsage({
+        organization: freshOrganization,
+        billing: { ...billing, seatReservations: seededReservations },
+        nowMs,
+      });
+      throw new HttpsError(
+        'failed-precondition',
+        'This organization is read-only. Resolve billing or Free-plan capacity before inviting another member.',
+        {
+          reason: 'organization-read-only',
+          planId: billing.planId || 'free',
+          pendingPlanId: billing.pendingPlanId || null,
+          billingManagerId: resolveBillingManagerId(freshOrganization),
+          memberCap: usage.memberCap,
+          seatUsage: usage.seatUsage,
+          acceptedSeats: usage.acceptedSeats,
+          reservedSeats: usage.reservedSeats,
+        }
+      );
+    }
 
     const replacedInvites = organizationInvites.docs.filter((document) => (
       document.data().deliveryEmail === deliveryEmail
@@ -1086,8 +1102,12 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
       throw new HttpsError('resource-exhausted', capacityResult.message, {
         reason: capacityResult.code,
         planId: billing.planId || 'free',
+        pendingPlanId: billing.pendingPlanId || null,
+        billingManagerId: resolveBillingManagerId(freshOrganization),
         memberCap: capacityResult.memberCap,
         seatUsage: capacityResult.seatUsage,
+        acceptedSeats: capacityResult.acceptedSeats,
+        reservedSeats: capacityResult.reservedSeats,
       });
     }
 
@@ -2612,6 +2632,22 @@ exports.initializeOrganizationBilling = onCall({ maxInstances: 20 }, async (requ
   return billingResponse(initialized);
 });
 
+// Older local web builds used a separate customer map. Never claim an identity
+// assigned there to another organization while migrating to the shared map.
+async function assertLegacyWebBillingAssignment(transaction, purchaserUserId, organizationId) {
+  const legacy = await transaction.get(db.collection('webBillingCustomers').doc(hashedDocumentId(purchaserUserId)));
+  if (legacy.exists && (legacy.data().organizationId !== organizationId || legacy.data().uid !== purchaserUserId)) {
+    throw new HttpsError('failed-precondition', 'This browser purchaser is already assigned to another organization.');
+  }
+}
+
+async function assertNoPendingBrowserCheckout(transaction, organizationId) {
+  const checkout = await transaction.get(db.collection('webBillingCheckout').doc(organizationId));
+  if (checkout.exists && checkout.data().state === 'prepared') {
+    throw new HttpsError('failed-precondition', 'A browser checkout is awaiting verification. Verify it in the web app before purchasing or restoring on mobile.');
+  }
+}
+
 exports.prepareOrganizationSubscriptionChange = onCall({
   maxInstances: 10,
   secrets: [revenueCatSecretApiKey],
@@ -2658,7 +2694,7 @@ exports.prepareOrganizationSubscriptionChange = onCall({
         currentBilling: identity === verificationPayerId
           ? verificationBilling
           : defaultOrganizationBilling(),
-        expectedEnvironment,
+        expectedEnvironment: expectedRevenueCatEnvironment(),
       })];
     })));
   } catch (error) {
@@ -2670,7 +2706,9 @@ exports.prepareOrganizationSubscriptionChange = onCall({
   return db.runTransaction(async (transaction) => {
     for (const identity of verificationIdentities) {
       await assertAccountDeletionNotStarted(transaction, identity);
+      await assertLegacyWebBillingAssignment(transaction, identity, organizationId);
     }
+    await assertNoPendingBrowserCheckout(transaction, organizationId);
     const mappingRefs = new Map(preloadedCustomerMappings.map((mapping) => [mapping.ref.path, mapping.ref]));
     const snapshots = await transaction.getAll(
       organizationRef,
@@ -2768,7 +2806,9 @@ exports.prepareOrganizationSubscriptionChange = onCall({
     if (activePaidStatus && billing.sourceStore && billing.sourceStore !== purchaseStore) {
       throw new HttpsError(
         'failed-precondition',
-        `This subscription is owned by ${billing.sourceStore === 'app_store' ? 'Apple' : billing.sourceStore === 'play_store' ? 'Google Play' : 'RevenueCat Test Store'}. Complete plan changes on that original store account and device.`
+        billing.sourceStore === 'rc_billing'
+          ? 'This subscription is managed in the Dispatch web app. Do not purchase a second mobile subscription.'
+          : `This subscription is owned by ${billing.sourceStore === 'app_store' ? 'Apple' : billing.sourceStore === 'play_store' ? 'Google Play' : 'RevenueCat Test Store'}. Complete plan changes on that original store account and device.`
       );
     }
     const timing = subscriptionChangeTiming(
@@ -2798,6 +2838,7 @@ exports.prepareOrganizationSubscriptionChange = onCall({
     const purchaseIntent = {
       purchaserUserId: request.auth.uid,
       operation: 'purchase',
+      purchaseStore,
       planId,
       billingPeriod,
       packageIdentifier,
@@ -2864,6 +2905,8 @@ exports.prepareOrganizationSubscriptionRestore = onCall({ maxInstances: 10 }, as
 
   return db.runTransaction(async (transaction) => {
     await assertAccountDeletionNotStarted(transaction, request.auth.uid);
+    await assertLegacyWebBillingAssignment(transaction, request.auth.uid, organizationId);
+    await assertNoPendingBrowserCheckout(transaction, organizationId);
     const [freshCallerSnapshot, organizationSnapshot, billingSnapshot, customerSnapshot] = await transaction.getAll(
       callerRef,
       organizationRef,
@@ -2940,7 +2983,7 @@ exports.refreshOrganizationSubscription = onCall({
   secrets: [revenueCatSecretApiKey],
 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before refreshing subscription status.');
-  const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
+  revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
   const callerRef = db.collection('users').doc(request.auth.uid);
   const callerSnapshot = await callerRef.get();
   const organizationId = callerSnapshot.data()?.organizationId;
@@ -2962,12 +3005,8 @@ exports.refreshOrganizationSubscription = onCall({
     : defaultOrganizationBilling();
   const activePaidStatus = existingBilling.planId !== 'free'
     && ['trialing', 'active', 'grace'].includes(existingBilling.status);
-  if (activePaidStatus && existingBilling.sourceStore && existingBilling.sourceStore !== purchaseStore) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Subscription verification must use the original Apple, Google Play, or RevenueCat Test Store account and device.'
-    );
-  }
+  // Verification is a server read of the organization payer, independent of
+  // this device's store. Purchase and restore preflights remain store-bound.
   const purchaserUserId = activePaidStatus
     ? (existingBilling.purchaserUserId || request.auth.uid)
     : (existingBilling.purchaseIntent?.purchaserUserId || request.auth.uid);
@@ -2996,6 +3035,7 @@ exports.refreshOrganizationSubscription = onCall({
 
   const nextBilling = await db.runTransaction(async (transaction) => {
     await assertAccountDeletionNotStarted(transaction, request.auth.uid);
+    await assertLegacyWebBillingAssignment(transaction, purchaserUserId, organizationId);
     if (purchaserUserId !== request.auth.uid) {
       await assertAccountDeletionNotStarted(transaction, purchaserUserId);
     }

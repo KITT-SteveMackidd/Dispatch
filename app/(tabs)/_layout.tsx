@@ -130,7 +130,7 @@ export default function TabLayout() {
         options={{
           title: 'Today',
           headerShown: false,
-          tabBarIcon: ({ color }) => <Feather name="clock" size={18} color={color} />,
+          tabBarIcon: ({ color }) => <Feather name="clock" size={18} color={typeof color === 'string' ? color : undefined} />,
           headerRight: () => (
             <Pressable style={{ marginRight: 14 }}>
               <Feather name="bell" size={18} color={isDarkMode ? '#F4F8FF' : '#334155'} />
@@ -152,7 +152,7 @@ export default function TabLayout() {
           title: 'Teams',
           headerShown: false,
           tabBarBadge: teamTabBadge,
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="account-group-outline" size={21} color={color} />,
+          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="account-group-outline" size={21} color={typeof color === 'string' ? color : undefined} />,
         }}
       />
       <Tabs.Screen
@@ -161,7 +161,7 @@ export default function TabLayout() {
           title: 'Profile',
           headerShown: false,
           tabBarBadge: profileTabBadge,
-          tabBarIcon: ({ color }) => <Feather name="user" size={18} color={color} />,
+          tabBarIcon: ({ color }) => <Feather name="user" size={18} color={typeof color === 'string' ? color : undefined} />,
           headerRight: () => (
             <Pressable
               onPress={switchProfile}

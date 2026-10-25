@@ -11,37 +11,37 @@ const PRODUCT_CATALOG = Object.freeze([
     planId: 'crew',
     billingPeriod: 'monthly',
     packageIdentifier: 'crew_monthly',
-    productIdentifiers: ['dispatch_crew_20_monthly', 'dispatch_crew_20:monthly'],
+    productIdentifiers: ['dispatch_crew_20_monthly', 'dispatch_crew_20:monthly', 'dispatch_crew_monthly'],
   },
   {
     planId: 'crew',
     billingPeriod: 'annual',
     packageIdentifier: 'crew_annual',
-    productIdentifiers: ['dispatch_crew_20_annual', 'dispatch_crew_20:annual'],
+    productIdentifiers: ['dispatch_crew_20_annual', 'dispatch_crew_20:annual', 'dispatch_crew_annual'],
   },
   {
     planId: 'production',
     billingPeriod: 'monthly',
     packageIdentifier: 'production_monthly',
-    productIdentifiers: ['dispatch_production_50_monthly', 'dispatch_production_50:monthly'],
+    productIdentifiers: ['dispatch_production_50_monthly', 'dispatch_production_50:monthly', 'dispatch_production_monthly'],
   },
   {
     planId: 'production',
     billingPeriod: 'annual',
     packageIdentifier: 'production_annual',
-    productIdentifiers: ['dispatch_production_50_annual', 'dispatch_production_50:annual'],
+    productIdentifiers: ['dispatch_production_50_annual', 'dispatch_production_50:annual', 'dispatch_production_annual'],
   },
   {
     planId: 'organization',
     billingPeriod: 'monthly',
     packageIdentifier: 'organization_monthly',
-    productIdentifiers: ['dispatch_organization_100_monthly', 'dispatch_organization_100:monthly'],
+    productIdentifiers: ['dispatch_organization_100_monthly', 'dispatch_organization_100:monthly', 'dispatch_organization_monthly'],
   },
   {
     planId: 'organization',
     billingPeriod: 'annual',
     packageIdentifier: 'organization_annual',
-    productIdentifiers: ['dispatch_organization_100_annual', 'dispatch_organization_100:annual'],
+    productIdentifiers: ['dispatch_organization_100_annual', 'dispatch_organization_100:annual', 'dispatch_organization_annual'],
   },
 ]);
 
@@ -123,6 +123,7 @@ function sourceStore(value) {
   if (store === 'APP_STORE' || store === 'MAC_APP_STORE') return 'app_store';
   if (store === 'PLAY_STORE') return 'play_store';
   if (store === 'TEST_STORE') return 'test_store';
+  if (store === 'RC_BILLING') return 'rc_billing';
   return null;
 }
 
@@ -194,7 +195,7 @@ function deriveOrganizationBillingFromSubscriber({
   const entitlementActive = Boolean(entitlement && (expirationAtMs === null || expirationAtMs > nowMs || inGrace));
   const trialing = entitlementActive && String(subscription.period_type || '').toUpperCase() === 'TRIAL';
   const status = !entitlementActive
-    ? (currentBilling.planId && currentBilling.planId !== 'free' ? 'expired' : 'free')
+    ? (entitlement || (currentBilling.planId && currentBilling.planId !== 'free') ? 'expired' : 'free')
     : inGrace || subscription.billing_issues_detected_at
       ? 'grace'
       : trialing
@@ -257,7 +258,9 @@ function applyRevenueCatLifecyclePolicy({ billing = {}, projection, seatUsage = 
     pendingPlanEffectiveAt = null;
   }
 
-  if (projection.status === 'expired') {
+  // RevenueCat retains expired entitlement/product history after the first
+  // downgrade. Repeated verification must never revive its old plan or seats.
+  if (projection.status === 'expired' || projection.status === 'free') {
     return {
       ...projection,
       planId: 'free',

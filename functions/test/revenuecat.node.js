@@ -230,7 +230,7 @@ test('maps only allowlisted products and stable packages', () => {
     planId: 'production',
     billingPeriod: 'annual',
     packageIdentifier: 'production_annual',
-    productIdentifiers: ['dispatch_production_50_annual', 'dispatch_production_50:annual'],
+    productIdentifiers: ['dispatch_production_50_annual', 'dispatch_production_50:annual', 'dispatch_production_annual'],
   });
   assert.equal(packageIdentifierForPlan('crew', 'monthly'), 'crew_monthly');
   assert.equal(resolveRevenueCatProduct('unexpected_product'), null);
@@ -293,6 +293,27 @@ test('derives active, grace, cancellation, and expired access from authoritative
     willRenew: false,
     managementURL: null,
   });
+});
+
+test('keeps Free access when a purchased product has no organization_access entitlement', () => {
+  const projection = deriveOrganizationBillingFromSubscriber({
+    subscriber: {
+      entitlements: {},
+      subscriptions: {
+        dispatch_crew_20_monthly: {
+          store: 'test_store',
+          is_sandbox: true,
+          expires_date: '2030-02-01T00:00:00.000Z',
+        },
+      },
+    },
+    currentBilling: { planId: 'free', status: 'free' },
+    nowMs: Date.parse('2030-01-01T00:00:00.000Z'),
+    expectedEnvironment: 'sandbox',
+  });
+  assert.equal(projection.planId, 'free');
+  assert.equal(projection.status, 'free');
+  assert.equal(projection.seatLimit, 5);
 });
 
 test('never maps anonymous RevenueCat identities to a Dispatch organization', () => {
@@ -514,6 +535,52 @@ test('authoritative expiry reaches Free even when an earlier cancellation event 
   assert.equal(overCapacity.planId, 'free');
   assert.equal(overCapacity.status, 'free');
   assert.equal(overCapacity.accessMode, 'read_only');
+});
+
+test('repeated verification of historical expired entitlements stays Free across stores and capacity limits', () => {
+  const nowMs = Date.parse('2030-02-01T00:00:00.000Z');
+  for (const [store, productIdentifier] of [
+    ['RC_BILLING', 'dispatch_production_annual'],
+    ['APP_STORE', 'dispatch_production_50_annual'],
+    ['PLAY_STORE', 'dispatch_production_50:annual'],
+    ['TEST_STORE', 'dispatch_production_50_annual'],
+  ]) {
+    const subscriber = {
+      entitlements: { organization_access: {
+        product_identifier: productIdentifier,
+        expires_date: '2030-01-31T00:00:00.000Z',
+      } },
+      subscriptions: { [productIdentifier]: { store, is_sandbox: true } },
+    };
+    for (const seatUsage of [3, 5, 6]) {
+      let billing = { planId: 'production', status: 'active', seatLimit: 50 };
+      for (let verification = 0; verification < 4; verification += 1) {
+        billing = applyRevenueCatLifecyclePolicy({
+          billing,
+          projection: deriveOrganizationBillingFromSubscriber({ subscriber, currentBilling: billing, nowMs, expectedEnvironment: 'sandbox' }),
+          seatUsage,
+        });
+        assert.equal(billing.planId, 'free', `${store}, verification ${verification + 1}`);
+        assert.equal(billing.status, 'free');
+        assert.equal(billing.seatLimit, 5);
+        assert.equal(billing.accessMode, seatUsage <= 5 ? 'full' : 'read_only');
+        assert.equal(billing.productIdentifier, null);
+        assert.equal(billing.sourceStore, null);
+        assert.equal(billing.currentPeriodEndsAt, null);
+      }
+    }
+  }
+});
+
+test('verification repairs stale paid fields on Free records even when the entitlement was removed', () => {
+  const billing = { planId: 'free', status: 'free', productIdentifier: 'dispatch_production_annual', billingPeriod: 'annual' };
+  const projection = deriveOrganizationBillingFromSubscriber({ subscriber: { entitlements: {}, subscriptions: {} }, currentBilling: billing });
+  const result = applyRevenueCatLifecyclePolicy({ billing, projection, seatUsage: 3 });
+  assert.equal(result.planId, 'free');
+  assert.equal(result.seatLimit, 5);
+  assert.equal(result.accessMode, 'full');
+  assert.equal(result.billingPeriod, null);
+  assert.equal(result.productIdentifier, null);
 });
 
 test('verified renewal clears a pending cancellation before expiry', () => {

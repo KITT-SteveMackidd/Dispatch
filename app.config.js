@@ -1,3 +1,5 @@
+const { assertStoreBetaConfiguration } = require('./config/store-beta-policy');
+
 const projectId =
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
   process.env.EAS_PROJECT_ID ||
@@ -12,13 +14,6 @@ const googleIosUrlScheme = googleIosClientId
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
-  config.newArchEnabled = true;
-  config.splash = {
-    ...(config.splash || {}),
-    image: './assets/images/dispatch-splash-full.png',
-    resizeMode: 'contain',
-    backgroundColor: '#06132a',
-  };
 
   if (owner) {
     config.owner = owner;
@@ -27,7 +22,7 @@ module.exports = ({ config: baseConfig }) => {
   config.ios = {
     ...(config.ios || {}),
     bundleIdentifier: config.ios?.bundleIdentifier || 'com.smackidd.dispatch',
-    runtimeVersion: 'dispatch-sdk54-rn081-newarch-delegate-textlayout-v5',
+    runtimeVersion: 'dispatch-sdk58-rn088-billing-v1',
     usesAppleSignIn: true,
     associatedDomains: [
       ...new Set([
@@ -46,7 +41,7 @@ module.exports = ({ config: baseConfig }) => {
   config.android = {
     ...(config.android || {}),
     package: config.android?.package || 'com.smackidd.dispatch',
-    googleServicesFile: config.android?.googleServicesFile || './google-services.json',
+    googleServicesFile: process.env.GOOGLE_SERVICES_JSON || config.android?.googleServicesFile || './google-services.json',
     intentFilters: [
       ...(config.android?.intentFilters || []),
       {
@@ -69,7 +64,15 @@ module.exports = ({ config: baseConfig }) => {
     ],
   };
 
-  config.runtimeVersion = 'dispatch-sdk54-rn081-newarch-delegate-v4';
+  assertStoreBetaConfiguration({
+    buildProfile,
+    platform: process.env.EAS_BUILD_PLATFORM,
+    env: process.env,
+    projectRoot: __dirname,
+    androidGoogleServicesFile: config.android.googleServicesFile,
+  });
+
+  config.runtimeVersion = 'dispatch-sdk58-rn088-billing-v1';
 
   const plugins = [...(config.plugins || [])];
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-splash-screen')) {
@@ -92,6 +95,12 @@ module.exports = ({ config: baseConfig }) => {
   }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-font')) {
     plugins.push('expo-font');
+  }
+  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-sharing')) {
+    plugins.push('expo-sharing');
+  }
+  if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-status-bar')) {
+    plugins.push('expo-status-bar');
   }
   if (!plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-apple-authentication')) {
     plugins.push('expo-apple-authentication');

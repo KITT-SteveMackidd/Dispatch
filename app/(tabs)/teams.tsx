@@ -32,6 +32,8 @@ import {
 } from '@/services/dispatch';
 import { getWorkerInviteErrorMessage } from '@/lib/worker-invite-validation';
 import { createSecureDispatchInvite, secureInviteErrorMessage } from '@/lib/secure-invites';
+import { getInviteBillingAlert } from '@/lib/invite-billing-alert';
+import { resolveBillingManagerId } from '@/lib/billing-manager';
 import { billingErrorMessage, transferOrganizationBillingManager, watchOrganizationBilling } from '@/services/billing';
 import { defaultOrganizationBilling, getOrganizationSeatUsage, getSubscriptionPlan, isLivePaidSubscription, type OrganizationBilling } from '@/lib/subscriptions';
 import type { Organisation, Team, UserProfile } from '@/types/dispatch';
@@ -374,11 +376,6 @@ export default function TeamsScreen() {
 
   const handleSubmitDrawer = async () => {
     if (!profile || profile.role !== 'manager' || saving) return;
-    if (drawerMode !== 'add-team' && !organizationSeatUsage.canReserveSeat) {
-      setDrawerMessageTone('error');
-      setDrawerMessage(`Your ${subscriptionPlan.name} plan has no open member seats. Ask the Billing Manager to upgrade before sending another invitation.`);
-      return;
-    }
     try {
       setSaving(true);
       setDrawerMessage(null);
@@ -405,6 +402,24 @@ export default function TeamsScreen() {
       setDrawerMessageTone('success');
     } catch (error) {
       setDrawerMessageTone('error');
+      const billingAlert = drawerMode !== 'add-team' ? getInviteBillingAlert(error, {
+        currentUserId: profile.uid,
+        billingManagerId: organization ? resolveBillingManagerId(organization) : null,
+      }) : null;
+      if (billingAlert) {
+        setDrawerMessage(billingAlert.message);
+        Alert.alert(billingAlert.title, billingAlert.message, [
+          { text: 'Not now', style: 'cancel' },
+          {
+            text: billingAlert.actionLabel,
+            onPress: () => {
+              setDrawerOpen(false);
+              router.push('/billing');
+            },
+          },
+        ]);
+        return;
+      }
       setDrawerMessage(
         drawerMode === 'invite-worker'
           ? getWorkerInviteErrorMessage(error)
@@ -634,8 +649,8 @@ export default function TeamsScreen() {
                 )}
                 {drawerMessage ? <Text selectable style={drawerMessageTone === 'error' ? styles.errorText : styles.successText}>{drawerMessage}</Text> : null}
                 <Pressable
-                  style={[styles.chatButton, (saving || (drawerMode !== 'add-team' && !organizationSeatUsage.canReserveSeat)) && styles.disabled]}
-                  disabled={saving || (drawerMode !== 'add-team' && !organizationSeatUsage.canReserveSeat)}
+                  style={[styles.chatButton, saving && styles.disabled]}
+                  disabled={saving}
                   onPress={handleSubmitDrawer}>
                   <Text style={styles.chatButtonText}>{saving ? 'Saving...' : drawerMode === 'add-team' ? 'Create Team' : drawerMode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
                 </Pressable>

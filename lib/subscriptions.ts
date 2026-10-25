@@ -27,13 +27,13 @@ export type OrganizationBilling = {
   seatLimit: number | null;
   seatReservations: Record<string, SubscriptionSeatReservation>;
   purchaserUserId: string | null;
-  sourceStore: 'app_store' | 'play_store' | 'test_store' | null;
+  sourceStore: 'app_store' | 'play_store' | 'test_store' | 'rc_billing' | null;
   willRenew: boolean;
   pendingPlanId: SubscriptionPlanId | null;
   pendingBillingPeriod: SubscriptionBillingPeriod | null;
-  pendingPlanEffectiveAt: { toDate?: () => Date } | Date | null;
-  currentPeriodEndsAt?: { toDate?: () => Date } | Date | null;
-  gracePeriodExpiresAt?: { toDate?: () => Date } | Date | null;
+  pendingPlanEffectiveAt: { toDate?: () => Date } | Date | string | null;
+  currentPeriodEndsAt?: { toDate?: () => Date } | Date | string | null;
+  gracePeriodExpiresAt?: { toDate?: () => Date } | Date | string | null;
   productIdentifier?: string | null;
   managementURL?: string | null;
   lastRevenueCatEventAtMs?: number;
@@ -188,6 +188,18 @@ export function formatCadPrice(cents: number | null): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+export function getSubscriptionVerificationMessage(
+  billing: Pick<OrganizationBilling, 'planId' | 'status' | 'accessMode'>
+): string {
+  if (isLivePaidSubscription(billing)) return `${getSubscriptionPlan(billing.planId).name} subscription verified.`;
+  if (billing.planId === 'free' && billing.status === 'free') {
+    return billing.accessMode === 'full'
+      ? 'No active paid subscription remains. Free plan verified: 5 seats. Organization changes are available.'
+      : 'No active paid subscription remains. Free plan verified: 5 seats. Reduce members and pending invitations to 5, or upgrade, to restore organization changes.';
+  }
+  return 'No active paid subscription was verified. Review the current plan and access status above.';
+}
+
 export function getSubscriptionPlanChange(
   currentPlanId: SubscriptionPlanId,
   nextPlanId: SubscriptionPlanId,
@@ -216,6 +228,23 @@ export function getSubscriptionPlanChange(
 
 export function isLivePaidSubscription(billing: Pick<OrganizationBilling, 'planId' | 'status'>) {
   return billing.planId !== 'free' && ['trialing', 'active', 'grace'].includes(billing.status);
+}
+
+export function assertSubscriptionUpgradeVerified(params: {
+  billing: Pick<OrganizationBilling, 'planId' | 'billingPeriod' | 'status'>;
+  planId: 'crew' | 'production' | 'organization';
+  billingPeriod: SubscriptionBillingPeriod;
+}) {
+  if (
+    params.billing.planId === params.planId
+    && params.billing.billingPeriod === params.billingPeriod
+    && isLivePaidSubscription(params.billing)
+  ) return;
+
+  const plan = getSubscriptionPlan(params.planId);
+  throw new Error(
+    `Checkout finished, but the ${plan.name} ${params.billingPeriod} subscription is not yet verified. Tap Verify current subscription to retry.`
+  );
 }
 
 export function getSubscriptionAccessMode(params: {

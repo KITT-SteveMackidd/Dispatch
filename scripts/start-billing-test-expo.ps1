@@ -1,6 +1,9 @@
 . (Join-Path $PSScriptRoot 'billing-test-common.ps1')
 
 & (Join-Path $PSScriptRoot 'check-billing-test-config.ps1')
+if (-not $?) { exit 1 }
+
+& node (Join-Path $PSScriptRoot 'check-expo-go-compatibility.mjs')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $npx = Get-Command npx.cmd -ErrorAction SilentlyContinue

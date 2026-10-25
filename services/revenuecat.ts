@@ -154,7 +154,7 @@ export async function purchaseDispatchRevenueCatPackage(params: {
   packageIdentifier: string;
   changeTiming: SubscriptionPlanChangeTiming;
   currentProductIdentifier?: string | null;
-  currentSourceStore?: RevenueCatPurchaseStore | null;
+  currentSourceStore?: RevenueCatPurchaseStore | 'rc_billing' | null;
 }) {
   return serializeRevenueCatOperation(async () => {
     if (params.firebaseUid !== params.billingManagerId) {
@@ -170,7 +170,9 @@ export async function purchaseDispatchRevenueCatPackage(params: {
       && params.currentSourceStore
       && params.currentSourceStore !== getRevenueCatPurchaseStore()
     ) {
-      throw new Error('Plan changes must be completed on the original Apple or Google store account and device.');
+      throw new Error(params.currentSourceStore === 'rc_billing'
+        ? 'Manage this browser subscription in the Dispatch web app. Do not purchase a second mobile subscription.'
+        : 'Plan changes must be completed on the original store account and device.');
     }
     const productChangeInfo = Platform.OS === 'android'
       && params.currentSourceStore === 'play_store'

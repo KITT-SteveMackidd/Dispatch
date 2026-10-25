@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Image, Keyboard, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Image, Keyboard, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Swipeable } from 'react-native-gesture-handler';
+import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
@@ -416,8 +416,8 @@ export default function EventsScreen() {
     base.setHours(0, 0, 0, 0);
     return base;
   });
-  const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
-  const createTemplateScrollRef = useRef<ScrollView | null>(null);
+  const swipeableRefs = useRef<Record<string, SwipeableMethods | null>>({});
+  const createTemplateScrollRef = useRef<ScrollViewInstance | null>(null);
   const createTemplateScrollOffsetRef = useRef(0);
   const templateRoleYByIdRef = useRef<Record<string, number>>({});
   const templateTaskReturnScrollYRef = useRef(0);

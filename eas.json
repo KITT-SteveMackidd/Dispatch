@@ -15,6 +15,19 @@
       "environment": "preview",
       "autoIncrement": true
     },
+    "beta": {
+      "distribution": "store",
+      "channel": "beta",
+      "environment": "preview",
+      "autoIncrement": true,
+      "ios": {
+        "image": "sdk-58"
+      },
+      "android": {
+        "image": "sdk-58",
+        "buildType": "app-bundle"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "channel": "production",
@@ -22,6 +35,15 @@
     }
   },
   "submit": {
+    "beta": {
+      "ios": {
+        "ascAppId": "6799206233"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    },
     "production": {
       "ios": {
         "ascAppId": "6799206233"

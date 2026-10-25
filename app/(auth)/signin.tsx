@@ -7,8 +7,10 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   Text,
   TextInput,
+  type TextInputInstance,
   View,
 } from 'react-native';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
@@ -49,8 +51,8 @@ export default function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
-  const passwordInputRef = useRef<TextInput>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const passwordInputRef = useRef<TextInputInstance>(null);
 
   const scrollToActions = () => {
     setTimeout(() => {

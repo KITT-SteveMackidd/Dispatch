@@ -42,6 +42,7 @@ import {
 } from '@/services/revenuecat';
 import {
   SUBSCRIPTION_PLANS,
+  assertSubscriptionUpgradeVerified,
   canDowngradeToPlan,
   defaultOrganizationBilling,
   formatCadPrice,
@@ -49,6 +50,7 @@ import {
   getOrganizationSeatUsage,
   getSubscriptionPlan,
   getSubscriptionPlanChange,
+  getSubscriptionVerificationMessage,
   isLivePaidSubscription,
   type OrganizationBilling,
   type SubscriptionBillingPeriod,
@@ -252,6 +254,7 @@ export default function BillingScreen() {
       return;
     }
     let preflightCompleted = false;
+    let verificationCompleted = false;
     try {
       setBusyAction(`purchasing:${planId}`);
       setScreenError(null);
@@ -276,12 +279,20 @@ export default function BillingScreen() {
       setWorkflowMessage(preflight.changeTiming === 'immediate'
         ? 'Purchase confirmed. Verifying the organization subscription…'
         : 'Plan change submitted. Verifying its renewal schedule…');
-      await refreshOrganizationSubscription(purchaseStore);
+      const verifiedBilling = await refreshOrganizationSubscription(purchaseStore);
+      verificationCompleted = true;
+      if (preflight.changeTiming === 'immediate') {
+        assertSubscriptionUpgradeVerified({
+          billing: verifiedBilling,
+          planId: preflight.planId,
+          billingPeriod: preflight.billingPeriod,
+        });
+      }
       setWorkflowMessage(preflight.changeTiming === 'immediate'
         ? 'Subscription verified. Organization access now reflects the store entitlement.'
         : 'Plan change submitted. Dispatch will limit seat growth only after RevenueCat confirms the renewal schedule.');
     } catch (error) {
-      if (preflightCompleted) {
+      if (preflightCompleted && !verificationCompleted) {
         await refreshOrganizationSubscription(purchaseStore).catch(() => undefined);
       }
       setWorkflowMessage(null);
@@ -307,8 +318,10 @@ export default function BillingScreen() {
       restorePrepared = true;
       await restoreDispatchPurchases({ firebaseUid: authUser.uid, billingManagerId });
       setWorkflowMessage('Purchase history found. Verifying the organization subscription…');
-      await refreshOrganizationSubscription(purchaseStore);
-      setWorkflowMessage('Restore complete. The organization now reflects the verified entitlement.');
+      const verifiedBilling = await refreshOrganizationSubscription(purchaseStore);
+      setWorkflowMessage(isLivePaidSubscription(verifiedBilling)
+        ? `Restore complete. ${getSubscriptionPlan(verifiedBilling.planId).name} is active for this organization.`
+        : getSubscriptionVerificationMessage(verifiedBilling));
     } catch (error) {
       if (restorePrepared) {
         await refreshOrganizationSubscription(purchaseStore).catch(() => undefined);
@@ -321,7 +334,9 @@ export default function BillingScreen() {
   };
 
   const verifySubscription = async () => {
-    if (!canUseStoreActions || !revenueCatConfiguration.configured || busyAction) return;
+    // Server verification reads the existing payer across stores; it does not
+    // open a purchase sheet or restore a different store's transactions.
+    if (!isBillingManager || busyAction) return;
     const purchaseStore = getRevenueCatPurchaseStore();
     if (!purchaseStore) {
       setScreenError('Apple and Google subscription verification requires the iOS or Android app.');
@@ -331,8 +346,8 @@ export default function BillingScreen() {
       setBusyAction('verifying');
       setScreenError(null);
       setWorkflowMessage('Verifying the current RevenueCat subscriber with Dispatch…');
-      await refreshOrganizationSubscription(purchaseStore);
-      setWorkflowMessage('Verification complete.');
+      const verifiedBilling = await refreshOrganizationSubscription(purchaseStore);
+      setWorkflowMessage(getSubscriptionVerificationMessage(verifiedBilling));
     } catch (error) {
       setWorkflowMessage(null);
       setScreenError(billingErrorMessage(error));
@@ -548,7 +563,9 @@ export default function BillingScreen() {
         ) : activeStoreBelongsToAnotherPlatform ? (
           <Callout
             icon="phonelink-off"
-            text={`This subscription belongs to ${billing.sourceStore === 'app_store' ? 'Apple' : billing.sourceStore === 'play_store' ? 'Google Play' : 'RevenueCat Test Store'}. Open Billing on that original store device and account to change or cancel it.`}
+            text={billing.sourceStore === 'rc_billing'
+              ? 'This organization is subscribed through the Dispatch web app. Manage upgrades and cancellation there, then tap Verify current subscription here. Your organization shares the same seats on web and mobile.'
+              : `This subscription belongs to ${billing.sourceStore === 'app_store' ? 'Apple' : billing.sourceStore === 'play_store' ? 'Google Play' : 'RevenueCat Test Store'}. Open Billing on that original store device and account to change or cancel it. You can verify its status here.`}
             colors={colors}
             warning
           />
@@ -810,7 +827,9 @@ export default function BillingScreen() {
         {isBillingManager ? (
           <View style={[styles.actionsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.actionsTitle, { color: colors.text }]}>Manage and recover</Text>
-            <Text style={[styles.actionsBody, { color: colors.muted }]}>Store settings belong to the paying Apple or Google account. Use them to reverse or replace a scheduled change, then verify here. Restore only when that account's purchase is missing.</Text>
+            <Text style={[styles.actionsBody, { color: colors.muted }]}>{billing.sourceStore === 'rc_billing'
+              ? 'Manage this subscription from Billing in the Dispatch web app. Verify here after a web change. Mobile Restore purchases does not restore browser payments.'
+              : 'Store settings belong to the original paying account. Use them to reverse or replace a scheduled change, then verify here. Restore only when that account\'s purchase is missing.'}</Text>
             {billing.planId !== 'free' ? (
               <Pressable
                 accessibilityRole="button"
@@ -831,16 +850,16 @@ export default function BillingScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              disabled={!canUseStoreActions || !revenueCatConfiguration.configured || Boolean(busyAction)}
+              disabled={!isBillingManager || Boolean(busyAction)}
               onPress={() => void verifySubscription()}
-              style={[styles.textButton, (!canUseStoreActions || !revenueCatConfiguration.configured || Boolean(busyAction)) && styles.disabled]}>
+              style={[styles.textButton, (!isBillingManager || Boolean(busyAction)) && styles.disabled]}>
               <Text style={[styles.textButtonText, { color: colors.accentText }]}>Verify current subscription</Text>
             </Pressable>
           </View>
         ) : null}
 
         <Text style={[styles.footnote, { color: colors.muted }]}>
-          Apple or Google owns the store transaction. Passing the Dispatch Billing Manager role does not transfer that store purchase.
+          The subscription remains with its original purchaser and payment provider. Passing the Dispatch Billing Manager role does not transfer the payment account.
         </Text>
       </ScrollView>
     </>
@@ -904,7 +923,7 @@ function statusLabel(status: OrganizationBilling['status']) {
 
 function formatBillingDate(value: OrganizationBilling['currentPeriodEndsAt']) {
   if (!value) return null;
-  const date = value instanceof Date ? value : value.toDate?.();
+  const date = typeof value === 'string' ? new Date(value) : value instanceof Date ? value : value.toDate?.();
   if (!date || Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }

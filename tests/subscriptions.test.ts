@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SUBSCRIPTION_PLANS,
+  assertSubscriptionUpgradeVerified,
   canDowngradeToPlan,
   evaluateSubscriptionCapacity,
   defaultOrganizationBilling,
@@ -8,9 +9,29 @@ import {
   getSubscriptionAccessMode,
   getSubscriptionPlan,
   getSubscriptionPlanChange,
+  getSubscriptionVerificationMessage,
   getOrganizationSeatUsage,
 } from '../lib/subscriptions';
 import { isOrganizationBillingManager, resolveBillingManagerId } from '../lib/billing-manager';
+
+describe('subscription verification feedback', () => {
+  it('explains that an under-capacity Free organization can keep working', () => {
+    const message = getSubscriptionVerificationMessage(defaultOrganizationBilling());
+    expect(message).toContain('Free plan verified: 5 seats');
+    expect(message).toContain('Organization changes are available');
+  });
+
+  it('explains how to unlock Free access when capacity is exceeded', () => {
+    const message = getSubscriptionVerificationMessage({ ...defaultOrganizationBilling(), accessMode: 'read_only' });
+    expect(message).toContain('Reduce members and pending invitations to 5, or upgrade');
+    expect(message).not.toContain('Organization changes are available');
+  });
+
+  it('only confirms paid verification for a live paid entitlement', () => {
+    expect(getSubscriptionVerificationMessage({ planId: 'production', status: 'active', accessMode: 'full' })).toBe('Production subscription verified.');
+    expect(getSubscriptionVerificationMessage({ planId: 'production', status: 'expired', accessMode: 'read_only' })).toContain('No active paid subscription was verified');
+  });
+});
 
 describe('Dispatch subscription catalog', () => {
   it('locks the approved member caps and Canadian prices', () => {
@@ -45,6 +66,29 @@ describe('Dispatch subscription catalog', () => {
 });
 
 describe('Dispatch subscription lifecycle rules', () => {
+  it.each(['active', 'trialing', 'grace'] as const)('confirms an upgrade only when the requested subscription is %s', (status) => {
+    expect(() => assertSubscriptionUpgradeVerified({
+      billing: { planId: 'crew', billingPeriod: 'monthly', status },
+      planId: 'crew',
+      billingPeriod: 'monthly',
+    })).not.toThrow();
+  });
+
+  it.each([
+    { planId: 'free', billingPeriod: null, status: 'free' },
+    { planId: 'production', billingPeriod: 'monthly', status: 'active' },
+    { planId: 'crew', billingPeriod: 'annual', status: 'active' },
+    { planId: 'crew', billingPeriod: 'monthly', status: 'expired' },
+    { planId: 'crew', billingPeriod: 'monthly', status: 'revoked' },
+    { planId: 'crew', billingPeriod: 'monthly', status: 'billing_retry' },
+  ] as const)('does not report a verified upgrade for $planId/$billingPeriod/$status', (billing) => {
+    expect(() => assertSubscriptionUpgradeVerified({
+      billing,
+      planId: 'crew',
+      billingPeriod: 'monthly',
+    })).toThrow(/Crew monthly subscription is not yet verified.*Verify current subscription/);
+  });
+
   it('applies upgrades immediately and downgrades at renewal', () => {
     expect(getSubscriptionPlanChange('free', 'crew')).toBe('immediate');
     expect(getSubscriptionPlanChange('crew', 'organization')).toBe('immediate');

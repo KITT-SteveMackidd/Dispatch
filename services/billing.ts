@@ -16,14 +16,14 @@ export type SubscriptionChangePreflight = {
   packageIdentifier: string;
   changeTiming: 'immediate' | 'next_renewal';
   currentProductIdentifier: string | null;
-  currentSourceStore: 'app_store' | 'play_store' | 'test_store' | null;
+  currentSourceStore: OrganizationBilling['sourceStore'];
 };
 
 export type RefreshedOrganizationBilling = {
-  planId: string;
+  planId: OrganizationBilling['planId'];
   billingPeriod: 'monthly' | 'annual' | null;
-  status: string;
-  accessMode: string;
+  status: OrganizationBilling['status'];
+  accessMode: OrganizationBilling['accessMode'];
   seatLimit: number | null;
   purchaserUserId: string | null;
   sourceStore: string | null;

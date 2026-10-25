@@ -1,0 +1,27 @@
+# Build from app sources and EAS environment variables, never local emulator credentials.
+node_modules/
+.git/
+.expo/
+.local-data/
+dist/
+web-build/
+ios/
+android/
+.env
+.env.*
+**/.env
+**/.env.*
+**/.secret.local
+**/env.loca
+*.log
+*.tsbuildinfo
+*.pem
+*.p8
+*.p12
+*.key
+*.jks
+*.mobileprovision
+# Backend sources and local harness are deployed separately, never bundled in a store app.
+functions/
+docs/
+tests/

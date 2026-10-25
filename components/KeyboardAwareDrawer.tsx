@@ -22,8 +22,10 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ScrollViewProps,
+  type ScrollViewInstance,
   type StyleProp,
   type TextInputProps,
+  type TextInputInstance,
   type ViewStyle,
 } from 'react-native';
 import { DrawerBottomFill } from '@/components/DrawerBottomFill';
@@ -40,8 +42,8 @@ type KeyboardAwareDrawerProps = {
 };
 
 type DrawerScrollContextValue = {
-  focusInput: (input: TextInput | null) => void;
-  blurInput: (input: TextInput | null) => void;
+  focusInput: (input: TextInputInstance | null) => void;
+  blurInput: (input: TextInputInstance | null) => void;
 };
 
 const DrawerScrollContext = createContext<DrawerScrollContextValue | null>(null);
@@ -82,7 +84,7 @@ type KeyboardAwareDrawerScrollViewProps = ScrollViewProps & {
   focusedInputGap?: number;
 };
 
-export const KeyboardAwareDrawerScrollView = forwardRef<ScrollView, KeyboardAwareDrawerScrollViewProps>(
+export const KeyboardAwareDrawerScrollView = forwardRef<ScrollViewInstance, KeyboardAwareDrawerScrollViewProps>(
   function KeyboardAwareDrawerScrollView(
     {
       children,
@@ -95,19 +97,19 @@ export const KeyboardAwareDrawerScrollView = forwardRef<ScrollView, KeyboardAwar
     },
     forwardedRef
   ) {
-    const scrollRef = useRef<ScrollView>(null);
+    const scrollRef = useRef<ScrollViewInstance>(null);
     const scrollOffsetRef = useRef(0);
-    const activeInputRef = useRef<TextInput | null>(null);
+    const activeInputRef = useRef<TextInputInstance | null>(null);
     const timersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
-    useImperativeHandle(forwardedRef, () => scrollRef.current as ScrollView);
+    useImperativeHandle(forwardedRef, () => scrollRef.current as ScrollViewInstance);
 
     const clearTimers = useCallback(() => {
       timersRef.current.forEach(clearTimeout);
       timersRef.current = [];
     }, []);
 
-    const revealInput = useCallback((input: TextInput | null, animated = true) => {
+    const revealInput = useCallback((input: TextInputInstance | null, animated = true) => {
       const scrollView = scrollRef.current;
       if (!input || !scrollView) return;
 
@@ -131,7 +133,7 @@ export const KeyboardAwareDrawerScrollView = forwardRef<ScrollView, KeyboardAwar
       });
     }, [focusedInputGap]);
 
-    const scheduleReveal = useCallback((input: TextInput | null) => {
+    const scheduleReveal = useCallback((input: TextInputInstance | null) => {
       if (!input) return;
       clearTimers();
       requestAnimationFrame(() => revealInput(input));
@@ -189,12 +191,12 @@ export const KeyboardAwareDrawerScrollView = forwardRef<ScrollView, KeyboardAwar
   }
 );
 
-export const KeyboardAwareDrawerTextInput = forwardRef<TextInput, TextInputProps>(
+export const KeyboardAwareDrawerTextInput = forwardRef<TextInputInstance, TextInputProps>(
   function KeyboardAwareDrawerTextInput({ onBlur, onFocus, ...props }, forwardedRef) {
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<TextInputInstance>(null);
     const drawerScroll = useContext(DrawerScrollContext);
 
-    useImperativeHandle(forwardedRef, () => inputRef.current as TextInput);
+    useImperativeHandle(forwardedRef, () => inputRef.current as TextInputInstance);
 
     return (
       <TextInput

@@ -20,7 +20,14 @@ describe('secure invitation flow wiring', () => {
     const rules = read('firestore.rules');
     expect(dispatchSource).toContain('if (!invite.managerId || invite.claimRequired) continue;');
     expect(dispatchSource).toContain('if (invite.claimRequired) continue;');
-    expect(rules).toContain("resource.data.get('claimRequired', false) != true");
+    // Billing-capacity checks make every invite write server-authoritative,
+    // including the legacy paths that previously checked claimRequired here.
+    for (const collectionName of ['workerInvites', 'managerInvites']) {
+      const inviteRules = rules.match(new RegExp(
+        `match /${collectionName}/\\{inviteId\\} \\{([\\s\\S]*?)\\n    \\}`
+      ))?.[1];
+      expect(inviteRules).toContain('allow create, update, delete: if false;');
+    }
     expect(rules).toContain('match /secureInvites/{inviteHash}');
     expect(rules).toContain('allow read, write: if false;');
     expect(functionsSource).toContain('deliveryEmail,');

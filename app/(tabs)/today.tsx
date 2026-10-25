@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
+import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
@@ -107,7 +107,7 @@ export default function TodayScreen() {
   const [inviteStatusByRoleWorkerKey, setInviteStatusByRoleWorkerKey] = useState<Record<string, 'pending' | 'accepted' | 'declined'>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingTaskIds, setSavingTaskIds] = useState<Record<string, boolean>>({});
-  const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
+  const swipeableRefs = useRef<Record<string, SwipeableMethods | null>>({});
   const behindScheduleNotificationCache = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
