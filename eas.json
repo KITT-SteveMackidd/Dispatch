@@ -4,6 +4,59 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "android-customer-beta": {
+      "distribution": "store",
+      "channel": "android-customer-beta",
+      "environment": "preview",
+      "autoIncrement": true,
+      "android": {
+        "image": "sdk-58",
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_NO_DOTENV": "1",
+        "EXPO_PUBLIC_EAS_BUILD_PROFILE": "android-customer-beta",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "dispatch-customer-beta",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyCjpvkXKefhosvWHgkt-jke9lF2ji04z9k",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "dispatch-customer-beta.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "dispatch-customer-beta.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "1092767164671",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:1092767164671:web:343cd123cb3dffbcfc84ca",
+        "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "false",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": "disabled"
+      }
+    },
+    "android-billing-qa": {
+      "distribution": "store",
+      "channel": "android-billing-qa",
+      "environment": "preview",
+      "autoIncrement": true,
+      "android": {
+        "image": "sdk-58",
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_NO_DOTENV": "1",
+        "EXPO_PUBLIC_EAS_BUILD_PROFILE": "android-billing-qa",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "dispatch-billing-qa",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "CONFIGURE_AFTER_PROVISIONING",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "dispatch-billing-qa.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "CONFIGURE_AFTER_PROVISIONING",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "CONFIGURE_AFTER_PROVISIONING",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "CONFIGURE_AFTER_PROVISIONING",
+        "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "false",
+        "EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY": "CONFIGURE_GOOGLE_REVENUECAT_KEY",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": "disabled"
+      }
+    },
     "development": {
       "distribution": "internal",
       "channel": "development",
@@ -35,6 +88,18 @@
     }
   },
   "submit": {
+    "android-customer-beta": {
+      "android": {
+        "track": "alpha",
+        "releaseStatus": "draft"
+      }
+    },
+    "android-billing-qa": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    },
     "beta": {
       "ios": {
         "ascAppId": "6799206233"

@@ -1,4 +1,5 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
 
 type PrepareEventRoleInviteResponseResult = {
   eventId: string;
@@ -9,7 +10,7 @@ export async function prepareEventRoleInviteResponse(notificationId: string) {
   const callable = httpsCallable<
     { notificationId: string },
     PrepareEventRoleInviteResponseResult
-  >(getFunctions(undefined, 'us-central1'), 'prepareEventRoleInviteResponse');
+  >(functions, 'prepareEventRoleInviteResponse');
   const result = await callable({ notificationId });
   return result.data;
 }
@@ -28,7 +29,7 @@ export async function respondToEventRoleInvite(
   const callable = httpsCallable<
     { notificationId: string; response: 'accept' | 'decline' },
     RespondToEventRoleInviteResult
-  >(getFunctions(undefined, 'us-central1'), 'respondToEventRoleInvite');
+  >(functions, 'respondToEventRoleInvite');
   const result = await callable({ notificationId, response });
   return result.data;
 }

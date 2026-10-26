@@ -11,6 +11,7 @@ import { headerLogoSource } from '@/constants/branding';
 import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
 import { canResetDispatchDatabase, resetDispatchDatabase } from '@/lib/admin-database-reset';
 import { DISPATCH_PRIVACY_URL, DISPATCH_SUPPORT_URL } from '@/constants/legal';
+import { isCustomerBeta } from '@/config/beta-mode';
 import {
   KeyboardAwareDrawer,
   KeyboardAwareDrawerScrollView,
@@ -26,6 +27,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const customerBeta = isCustomerBeta();
   const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
   const canManageTemplates = profile?.role === 'manager';
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -123,10 +125,12 @@ export default function ProfileScreen() {
     const managerSoleOrgMessage = profile.role === 'manager' && profile.organizationId
       ? ' If you are the only Manager, an organization with remaining members is preserved read-only until Manager recovery; an empty organization is deleted.'
       : '';
+    const subscriptionDeletionMessage = customerBeta ? ''
+      : ' Deleting Dispatch does not cancel an Apple or Google subscription. If this account pays for an organization, paid access is released immediately, Billing Manager responsibility passes to another Manager when available, and store renewal may keep charging until you cancel it with Apple or Google. RevenueCat customer data is never deleted automatically: a minimal fenced record remains for secure manual review after signed-in devices have drained.';
 
     Alert.alert(
       'Delete account?',
-      `This permanently deletes your Dispatch account, messages, invitations, notifications, assignments, and uploaded files. This cannot be undone.${managerSoleOrgMessage} Deleting Dispatch does not cancel an Apple or Google subscription. If this account pays for an organization, paid access is released immediately, Billing Manager responsibility passes to another Manager when available, and store renewal may keep charging until you cancel it with Apple or Google. RevenueCat customer data is never deleted automatically: a minimal fenced record remains for secure manual review after signed-in devices have drained.${usesAppleProvider(authUser) ? ' Apple will ask you to confirm your identity before deletion begins.' : ''}`,
+      `This permanently deletes your Dispatch account, messages, invitations, notifications, assignments, and uploaded files. This cannot be undone.${managerSoleOrgMessage}${subscriptionDeletionMessage}${usesAppleProvider(authUser) ? ' Apple will ask you to confirm your identity before deletion begins.' : ''}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -135,7 +139,7 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               setDeletingAccount(true);
-              const deletionResult = await deleteAccount({ confirmActiveSubscriptionDeletion: true });
+              const deletionResult = await deleteAccount({ confirmActiveSubscriptionDeletion: !customerBeta });
               router.replace('/(auth)/signin');
               if (deletionResult.revenueCatManualReviewRequired) {
                 Alert.alert(
@@ -310,8 +314,8 @@ export default function ProfileScreen() {
           accessibilityRole="button"
           style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]}
           onPress={() => router.push('/billing')}>
-          <MaterialIcons name="payments" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
-          <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Organization Billing</Text>
+          <MaterialIcons name={customerBeta ? 'science' : 'payments'} size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
+          <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>{customerBeta ? 'Complimentary Beta' : 'Organization Billing'}</Text>
         </Pressable>
       ) : null}
       <Pressable style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/invite')}>

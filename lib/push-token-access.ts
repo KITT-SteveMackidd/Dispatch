@@ -1,4 +1,5 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
 
 type RegisterDevicePushTokenInput = {
   token: string;
@@ -8,7 +9,7 @@ type RegisterDevicePushTokenInput = {
 
 export async function registerDevicePushTokenThroughServer(input: RegisterDevicePushTokenInput) {
   const registerDevicePushToken = httpsCallable<RegisterDevicePushTokenInput, { previousOwnersRemoved: number }>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'registerDevicePushToken'
   );
   await registerDevicePushToken(input);
@@ -16,7 +17,7 @@ export async function registerDevicePushTokenThroughServer(input: RegisterDevice
 
 export async function unregisterDevicePushTokenThroughServer(input: { token: string }) {
   const unregisterDevicePushToken = httpsCallable<{ token: string }, { ownersRemoved: number }>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'unregisterDevicePushToken'
   );
   await unregisterDevicePushToken(input);

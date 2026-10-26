@@ -677,6 +677,7 @@ test('deleteDispatchUserData preserves worker-only organizations in read-only re
   assert.equal('managerId' in template, false);
   assert.equal(template.ownershipState, 'orphaned');
   assert.equal(db.documents.get('users/worker-keep').organizationId, 'org-workers');
+  assert.equal(db.documents.get('users/worker-keep').organizationRecoveryState, 'orphaned_no_manager');
 
   assert.equal(db.documents.has('organizations/org-empty'), false);
   assert.equal(db.documents.has('organizationBilling/org-empty'), false);
@@ -685,4 +686,29 @@ test('deleteDispatchUserData preserves worker-only organizations in read-only re
   assert.equal(db.documents.has('eventTemplates/template-empty'), false);
   assert.equal(result.organizationsDeleted, 1);
   assert.equal(result.orphanedOrganizations, 1);
+});
+
+test('last Manager deletion locks retained customer-beta profiles and chats without creating billing', async () => {
+  const db = new FakeFirestore({
+    'users/manager-delete': { role: 'manager', organizationId: 'org-customer' },
+    'users/worker-a': { role: 'worker', organizationId: 'org-customer' },
+    'users/worker-b': { role: 'worker', organizationId: 'org-customer' },
+    'organizations/org-customer': {
+      name: 'Customer beta', managerIds: ['manager-delete'], workerIds: ['worker-a', 'worker-b'],
+      createdBy: 'manager-delete', billingManagerId: 'manager-delete',
+    },
+    'chatThreads/workers-only': {
+      organizationId: 'org-customer', participants: ['worker-a', 'worker-b'], createdBy: 'worker-a', kind: 'custom',
+    },
+    'chatThreads/workers-only/messages/retained': { senderId: 'worker-a', recipientIds: ['worker-b'], text: 'Retained history' },
+  });
+  const bucket = new FakeStorageBucket(['chatAttachments/workers-only/worker-a/retained.txt']);
+  await deleteDispatchUserData({ db, bucket, FieldValue, authUser: { uid: 'manager-delete', providerData: [] } });
+  assert.equal(db.documents.get('organizations/org-customer').recoveryState, 'orphaned_no_manager');
+  assert.equal(db.documents.get('users/worker-a').organizationRecoveryState, 'orphaned_no_manager');
+  assert.equal(db.documents.get('users/worker-b').organizationRecoveryState, 'orphaned_no_manager');
+  assert.equal(db.documents.get('chatThreads/workers-only').organizationRecoveryState, 'orphaned_no_manager');
+  assert.equal(db.documents.get('chatThreads/workers-only/messages/retained').text, 'Retained history');
+  assert.equal(bucket.files.has('chatAttachments/workers-only/worker-a/retained.txt'), true);
+  assert.equal(db.documents.has('organizationBilling/org-customer'), false);
 });

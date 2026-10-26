@@ -1,4 +1,5 @@
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
 
 type ChatAttachmentInput = {
   id: string;
@@ -20,7 +21,7 @@ export async function sendChatMessageThroughServer(params: {
   attachments: ChatAttachmentInput[];
 }) {
   const callable = httpsCallable<typeof params, SendChatMessageResult>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'sendChatMessage'
   );
   const result = await callable(params);
@@ -32,7 +33,7 @@ export async function addCustomChatParticipantsThroughServer(params: {
   participantIds: string[];
 }) {
   const callable = httpsCallable<typeof params, { participantIds: string[] }>(
-    getFunctions(undefined, 'us-central1'),
+    functions,
     'addCustomChatParticipants'
   );
   const result = await callable(params);

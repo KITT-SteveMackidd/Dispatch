@@ -36,6 +36,15 @@ test('builds web and installed-app links without storing the raw token', () => {
   assert.equal(maskEmail('Worker+Apple@example.com'), 'wo**********@example.com');
 });
 
+test('customer beta links never use the production or configured invitation website', () => {
+  for (const webBaseUrl of [undefined, 'https://dispatchcrewmanager.com/invite', 'https://example.test/invite']) {
+    const links = buildInviteUrls('secret/token', webBaseUrl, { projectId: 'dispatch-customer-beta' });
+    assert.equal(links.webUrl, null);
+    assert.equal(links.appUrl, 'dispatch://invite/secret%2Ftoken');
+  }
+  assert.equal(buildInviteUrls('token', undefined, { projectId: 'dispatch-billing-qa' }).webUrl, 'https://dispatchcrewmanager.com/invite/token');
+});
+
 test('invitation email permits Apple, Google, or email identities', () => {
   const email = buildSecureInviteEmail({
     deliveryEmail: 'delivery@example.com',

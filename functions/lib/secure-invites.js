@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { isCustomerBetaProject } = require('./customer-beta-policy');
 
 const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const INVITE_CODE_LENGTH = 12;
@@ -62,10 +63,12 @@ function cleanBaseUrl(value) {
   return candidate.replace(/\/+$/, '');
 }
 
-function buildInviteUrls(token, webBaseUrl) {
+function buildInviteUrls(token, webBaseUrl, { projectId } = {}) {
   const encodedToken = encodeURIComponent(token);
   return {
-    webUrl: `${cleanBaseUrl(webBaseUrl)}/${encodedToken}`,
+    // The customer beta has no invitation website or mail sender. Its native
+    // link and backup code stay within the isolated installed application.
+    webUrl: isCustomerBetaProject(projectId) ? null : `${cleanBaseUrl(webBaseUrl)}/${encodedToken}`,
     appUrl: `dispatch://invite/${encodedToken}`,
   };
 }

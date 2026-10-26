@@ -19,13 +19,27 @@ service firebase.storage {
         && !('accountDeletionStartedAt' in userProfile().data);
     }
 
+    function isCustomerBetaProject() {
+      return authenticated() && request.auth.token.aud == 'dispatch-customer-beta';
+    }
+
+    function customerBetaAccessEnabled() {
+      return firestore.exists(/databases/(default)/documents/dispatchConfig/billing)
+        && firestore.get(/databases/(default)/documents/dispatchConfig/billing).data.mode == 'customer_beta'
+        && firestore.get(/databases/(default)/documents/dispatchConfig/billing).data.projectId == request.auth.token.aud;
+    }
+
     function organizationStorageWriteEnabled(organizationId) {
       return organizationId is string
-        && firestore.exists(/databases/(default)/documents/organizationBilling/$(organizationId))
-        && (
+        // Branch before the document read: Storage permits only two distinct
+        // Firestore reads (thread/profile plus policy OR organization billing).
+        && (isCustomerBetaProject() ? customerBetaAccessEnabled() : (
+          firestore.exists(/databases/(default)/documents/organizationBilling/$(organizationId))
+          && (
           !('accessMode' in firestore.get(/databases/(default)/documents/organizationBilling/$(organizationId)).data)
           || firestore.get(/databases/(default)/documents/organizationBilling/$(organizationId)).data.accessMode != 'read_only'
-        );
+          )
+        ));
     }
 
     function participatesInExplicitOrganizationChat(threadId) {
@@ -49,6 +63,9 @@ service firebase.storage {
       // the finalizer reaps any race or legacy organization mismatch.
       return authenticated()
         && participatesInExplicitOrganizationChat(threadId)
+        && (!isCustomerBetaProject()
+          || !('organizationRecoveryState' in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data)
+          || firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationRecoveryState != 'orphaned_no_manager')
         && organizationStorageWriteEnabled(
           firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationId
         );
@@ -59,6 +76,9 @@ service firebase.storage {
       allow list: if false;
       allow create: if canReadDispatchStorage()
         && request.auth.uid == ownerId
+        && (!isCustomerBetaProject()
+          || !('organizationRecoveryState' in userProfile().data)
+          || userProfile().data.organizationRecoveryState != 'orphaned_no_manager')
         && organizationStorageWriteEnabled(userProfile().data.organizationId);
       // This legacy path has no immutable organization segment. Client-side
       // replacement/deletion could otherwise mutate an old organization's

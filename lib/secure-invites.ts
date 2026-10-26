@@ -19,6 +19,7 @@ export type CreateSecureInviteResult = {
   appLink: string;
   expiresAt: string;
   deliveryQueued: boolean;
+  deliveryChannel?: 'share' | 'email';
   reused: boolean;
   seatUsage?: number;
   memberCap?: number | null;

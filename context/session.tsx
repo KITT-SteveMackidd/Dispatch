@@ -47,7 +47,7 @@ type SessionContextType = {
   completeOnboarding: () => Promise<UserProfile | null>;
   refreshProfile: () => Promise<UserProfile | null>;
   sendPasswordReset: (email: string) => Promise<void>;
-  sendVerificationEmail: (inviteToken?: string) => Promise<void>;
+  sendVerificationEmail: (inviteToken?: string) => Promise<VerificationEmailDelivery>;
   refreshAuthUser: () => Promise<boolean>;
   revokeSession: () => Promise<void>;
   deleteAccount: (options?: { confirmActiveSubscriptionDeletion?: boolean }) => Promise<DeleteDispatchAccountResult>;
@@ -58,7 +58,8 @@ type SocialAuthMode = 'signin' | 'signup';
 
 export type VerificationEmailDelivery = {
   queued: boolean;
-  transport: 'dispatch-mail' | 'none';
+  transport: 'dispatch-mail' | 'firebase-auth' | 'none';
+  alreadyVerified?: boolean;
   errorMessage?: string;
 };
 
@@ -97,7 +98,7 @@ async function deliverVerificationEmail(inviteToken?: string): Promise<Verificat
   try {
     const result = await requestDispatchEmailVerification(inviteToken);
     if (result.queued || result.alreadyVerified) {
-      return { queued: true, transport: 'dispatch-mail' };
+      return { queued: result.queued, alreadyVerified: result.alreadyVerified, transport: result.transport || 'dispatch-mail' };
     }
     return {
       queued: false,
@@ -591,9 +592,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
     const delivery = await deliverVerificationEmail(inviteToken);
-    if (!delivery.queued) {
+    if (!delivery.queued && !delivery.alreadyVerified) {
       throw new Error(delivery.errorMessage || 'Unable to send the verification email. Please try again.');
     }
+    return delivery;
   };
 
   const refreshAuthUser = async () => {

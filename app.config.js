@@ -1,19 +1,31 @@
-const { assertStoreBetaConfiguration } = require('./config/store-beta-policy');
+const { assertStoreBetaConfiguration, getStoreBetaMode } = require('./config/store-beta-policy');
 
-const projectId =
+const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE;
+const dispatchBetaMode = getStoreBetaMode(buildProfile);
+const projectId = dispatchBetaMode === 'customer_beta'
+  ? '8ecbfda3-7884-434d-815a-90c8ca5dc253'
+  :
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
   process.env.EAS_PROJECT_ID ||
   '7d0f7257-64f9-443f-ba27-a75af5fbafaa';
 const owner = process.env.EXPO_PUBLIC_EXPO_OWNER || process.env.EXPO_OWNER || 'smackidd';
-const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE;
+const betaGoogleServicesFile = dispatchBetaMode === 'customer_beta'
+  ? process.env.CUSTOMER_BETA_GOOGLE_SERVICES_JSON
+  : dispatchBetaMode === 'billing_qa' ? process.env.BILLING_QA_GOOGLE_SERVICES_JSON : undefined;
 const updatesEnabled = buildProfile === 'production' || buildProfile === 'preview';
-const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+const googleIosClientId = /^\d+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '')
+  ? process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID : undefined;
 const googleIosUrlScheme = googleIosClientId
   ? `com.googleusercontent.apps.${googleIosClientId.replace(/\.apps\.googleusercontent\.com$/, '')}`
   : null;
 
 module.exports = ({ config: baseConfig }) => {
   const config = { ...baseConfig };
+
+  if (dispatchBetaMode === 'customer_beta') {
+    config.name = 'Dispatch Customer Beta';
+    config.slug = 'dispatch-customer-beta';
+  }
 
   if (owner) {
     config.owner = owner;
@@ -41,8 +53,10 @@ module.exports = ({ config: baseConfig }) => {
   config.android = {
     ...(config.android || {}),
     package: config.android?.package || 'com.smackidd.dispatch',
-    googleServicesFile: process.env.GOOGLE_SERVICES_JSON || config.android?.googleServicesFile || './google-services.json',
-    intentFilters: [
+    googleServicesFile: dispatchBetaMode !== 'standard'
+      ? betaGoogleServicesFile
+      : process.env.GOOGLE_SERVICES_JSON || config.android?.googleServicesFile || './google-services.json',
+    intentFilters: dispatchBetaMode === 'customer_beta' ? [] : [
       ...(config.android?.intentFilters || []),
       {
         action: 'VIEW',
@@ -178,6 +192,7 @@ module.exports = ({ config: baseConfig }) => {
 
   config.extra = {
     ...(config.extra || {}),
+    dispatchBetaMode,
     privacyPolicyUrl: 'https://dispatchcrewmanager.com/privacy',
     supportUrl: 'https://dispatchcrewmanager.com/support',
     eas: {

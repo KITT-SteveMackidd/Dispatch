@@ -1,3 +1,5 @@
+import { optionalGoogleApiKey } from './optional-google-config';
+
 export type PlaceAutocompleteSuggestion = {
   id: string;
   label: string;
@@ -17,7 +19,7 @@ type AutocompleteResponse = {
   }>;
 };
 
-const PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY;
+const PLACES_API_KEY = optionalGoogleApiKey(process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY);
 
 export async function fetchPlaceAutocomplete(input: string, signal?: AbortSignal): Promise<PlaceAutocompleteSuggestion[]> {
   const query = input.trim();

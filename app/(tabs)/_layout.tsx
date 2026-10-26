@@ -7,12 +7,14 @@ import { useSession } from '@/context/session';
 import { watchUserTeamUnreadCounts, watchUserUnreadNotificationCount } from '@/services/dispatch';
 import { useThemeMode } from '@/context/theme';
 import { initializeOrganizationBilling, watchOrganizationBilling } from '@/services/billing';
+import { isCustomerBeta } from '@/config/beta-mode';
 
 export default function TabLayout() {
   const router = useRouter();
   const { profile, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const customerBeta = isCustomerBeta();
   const [teamUnreadTotal, setTeamUnreadTotal] = useState(0);
   const [profileUnreadTotal, setProfileUnreadTotal] = useState(0);
   const [organizationReadOnly, setOrganizationReadOnly] = useState(false);
@@ -51,8 +53,8 @@ export default function TabLayout() {
   }, [profile]);
 
   useEffect(() => {
-    if (!profile?.organizationId) {
-      setOrganizationReadOnly(false);
+    setOrganizationReadOnly(false);
+    if (customerBeta || !profile?.organizationId) {
       return;
     }
     let active = true;
@@ -65,14 +67,14 @@ export default function TabLayout() {
       });
     const unsubscribe = watchOrganizationBilling(
       profile.organizationId,
-      (billing) => setOrganizationReadOnly(billing.accessMode === 'read_only'),
-      () => setOrganizationReadOnly(true)
+      (billing) => { if (active) setOrganizationReadOnly(billing.accessMode === 'read_only'); },
+      () => { if (active) setOrganizationReadOnly(true); }
     );
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [profile?.organizationId]);
+  }, [customerBeta, profile?.organizationId]);
 
   useEffect(() => {
     if (!profile) {
@@ -93,7 +95,7 @@ export default function TabLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-    {organizationReadOnly ? (
+    {!customerBeta && organizationReadOnly ? (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Organization is read-only. Open billing."

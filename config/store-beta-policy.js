@@ -10,7 +10,13 @@ function clean(value) {
 }
 
 function isBetaProfile(buildProfile) {
-  return clean(buildProfile) === 'beta';
+  return ['beta', 'android-customer-beta', 'android-billing-qa'].includes(clean(buildProfile));
+}
+
+function getStoreBetaMode(buildProfile) {
+  if (clean(buildProfile) === 'android-customer-beta') return 'customer_beta';
+  if (clean(buildProfile) === 'android-billing-qa') return 'billing_qa';
+  return 'standard';
 }
 
 /**
@@ -24,8 +30,24 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
   if (!isBetaProfile(buildProfile)) return [];
 
   const errors = [];
+  const mode = getStoreBetaMode(buildProfile);
   const targetPlatform = clean(platform);
   const firebaseProjectId = clean(env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
+  if (mode !== 'standard') {
+    const expectedProject = mode === 'customer_beta' ? 'dispatch-customer-beta' : 'dispatch-billing-qa';
+    if (firebaseProjectId !== expectedProject) errors.push(`${buildProfile} requires its dedicated Firebase project ${expectedProject}.`);
+    if (targetPlatform && targetPlatform !== 'android') errors.push(`${buildProfile} supports Android only.`);
+    if (clean(env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY)) errors.push('Android store builds must not contain a RevenueCat Test Store key.');
+    if (clean(env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS) !== 'false') errors.push('Android store builds must explicitly set EXPO_PUBLIC_USE_FIREBASE_EMULATORS=false.');
+    if (clean(env.EXPO_NO_DOTENV) !== '1') errors.push('Android store builds must set EXPO_NO_DOTENV=1 to exclude local sandbox credentials.');
+    if (mode === 'customer_beta' && (clean(env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY) || clean(env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY))) {
+      errors.push('Customer beta must not configure native RevenueCat purchase keys.');
+    }
+    const googleIds = [env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID].map(clean);
+    if (googleIds.some(id => id && id !== 'disabled') && !googleIds.every(id => /^\d+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(id))) {
+      errors.push('Android Google sign-in requires both matching-project Web and Android OAuth client IDs, or disabled for both.');
+    }
+  }
   if (!firebaseProjectId || firebaseProjectId.toLowerCase().startsWith('demo-')) {
     errors.push('Store beta requires a hosted, non-demo EXPO_PUBLIC_FIREBASE_PROJECT_ID.');
   } else if (firebaseProjectId.toLowerCase() === PRODUCTION_FIREBASE_PROJECT) {
@@ -76,13 +98,13 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
   }
   // EAS may evaluate app config before choosing a platform. Validate both in
   // that case rather than silently omitting one platform's release gates.
-  if (!targetPlatform || targetPlatform === 'ios') {
+  if (mode === 'standard' && (!targetPlatform || targetPlatform === 'ios')) {
     if (!/^appl_\S+$/.test(clean(env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY))) {
       errors.push('Store beta iOS requires EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY with an appl_ public SDK key.');
     }
   }
   if (!targetPlatform || targetPlatform === 'android') {
-    if (!/^goog_\S+$/.test(clean(env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY))) {
+    if (mode !== 'customer_beta' && !/^goog_\S+$/.test(clean(env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY))) {
       errors.push('Store beta Android requires EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY with a goog_ public SDK key.');
     }
     const googleProjectId = clean(androidGoogleServicesProjectId);
@@ -111,8 +133,19 @@ function assertStoreBetaConfiguration({
     try {
       const googleServices = JSON.parse(readFileSync(path.resolve(projectRoot, androidGoogleServicesFile), 'utf8'));
       androidGoogleServicesProjectId = googleServices?.project_info?.project_id;
-    } catch {
+      if (getStoreBetaMode(buildProfile) !== 'standard') {
+        if (String(googleServices?.project_info?.project_number || '') !== clean(env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)) {
+          throw new Error('android-project-number-mismatch');
+        }
+        const appClient = googleServices?.client?.find(client => client?.client_info?.android_client_info?.package_name === 'com.smackidd.dispatch');
+        if (!appClient || !clean(appClient.client_info?.mobilesdk_app_id).startsWith(`1:${googleServices.project_info.project_number}:android:`)) {
+          throw new Error('android-package-mismatch');
+        }
+      }
+    } catch (error) {
       // Do not echo file contents or credentials in a build error.
+      if (error.message === 'android-project-number-mismatch') throw new Error('Store beta blocked: Android services project number must match the Firebase sender ID.');
+      if (error.message === 'android-package-mismatch') throw new Error('Store beta blocked: Android services must include com.smackidd.dispatch from the same Firebase project.');
       throw new Error('Store beta blocked: the selected Android google-services.json could not be read or parsed.');
     }
   }
@@ -120,4 +153,4 @@ function assertStoreBetaConfiguration({
   if (errors.length) throw new Error(`Store beta blocked:\n- ${errors.join('\n- ')}`);
 }
 
-module.exports = { getStoreBetaPolicyErrors, assertStoreBetaConfiguration };
+module.exports = { getStoreBetaPolicyErrors, assertStoreBetaConfiguration, getStoreBetaMode };

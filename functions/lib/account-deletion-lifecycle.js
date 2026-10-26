@@ -42,7 +42,11 @@ function accountDeletionCleanupStatus({
   revenueCatCustomerDeleted,
   authUserDeleted,
   revenueCatDeletionPolicy = 'automatic',
+  customerBeta = false,
 }) {
+  if (customerBeta && revenueCatDeletionPolicy === 'not_applicable_customer_beta') {
+    return authUserDeleted ? 'completed' : 'ready_for_auth_deletion';
+  }
   if (revenueCatDeletionPolicy !== 'automatic') return 'manual_revenuecat_review';
   if (!revenueCatCustomerDeleted) return 'ready_for_revenuecat_deletion';
   if (!authUserDeleted) return 'ready_for_auth_deletion';

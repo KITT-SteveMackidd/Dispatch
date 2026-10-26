@@ -735,6 +735,15 @@ async function deleteDispatchUserData(params) {
 
   records.users.forEach((record) => {
     if (record.id === uid) return;
+    if (orphanedOrgIds.has(record.data.organizationId)) {
+      // Storage Rules cannot read an additional organization document. This
+      // server-owned projection keeps retained files readable but prevents new
+      // uploads after the organization's final Manager has been removed.
+      queue.update(record.ref, {
+        organizationRecoveryState: 'orphaned_no_manager',
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
     if (deletedOrgIds.has(record.data.organizationId)) {
       queue.update(record.ref, {
         organizationId: null,
@@ -1011,6 +1020,7 @@ async function deleteDispatchUserData(params) {
     const redactedLastMessage = redactIdentityText(data.lastMessage, identity);
     const redactedLastMessageText = redactIdentityText(data.lastMessageText, identity);
     let threadAffected = !sameArray(participants, data.participants)
+      || orphanedOrgIds.has(data.organizationId)
       || data.createdBy === uid
       || data.lastMessageSenderId === uid
       || redactedTitle !== data.title
@@ -1067,6 +1077,7 @@ async function deleteDispatchUserData(params) {
     if (threadAffected) {
       affectedThreadIds.add(thread.id);
       const updates = {};
+      if (orphanedOrgIds.has(data.organizationId)) updates.organizationRecoveryState = 'orphaned_no_manager';
       changedArrayUpdate(updates, 'participants', data.participants, participants);
       changedArrayUpdate(updates, 'pushSeenBy', data.pushSeenBy, uniqueStrings(data.pushSeenBy).filter((id) => id !== uid));
       if (data.createdBy === uid) updates.createdBy = FieldValue.delete();

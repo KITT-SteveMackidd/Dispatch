@@ -218,3 +218,24 @@ test('removes a former member from chat authorization state while preserving oth
     pushSeenBy: [],
   });
 });
+
+test('customer beta lets any active Manager remove a member while preserving the last Manager', () => {
+  assert.equal(removal({ customerBeta: true, callerId: 'manager-2' }).ok, true);
+  assert.equal(removal({ customerBeta: true, callerId: 'worker-1' }).code, 'permission-denied');
+  const billingManagerRemoval = removal({
+    customerBeta: true, callerId: 'manager-2', targetUserId: 'billing-manager',
+    targetUser: { uid: 'billing-manager', role: 'manager', organizationId: 'org-1' },
+  });
+  assert.equal(billingManagerRemoval.ok, true);
+  assert.deepEqual(billingManagerRemoval.managerIds, ['manager-2']);
+  assert.equal(billingManagerRemoval.organizationUpdate.billingManagerId, 'manager-2');
+  assert.equal(removal({
+    customerBeta: true, organization: baseOrganization({ managerIds: ['billing-manager'] }),
+    targetUserId: 'billing-manager', targetUser: { uid: 'billing-manager', role: 'manager', organizationId: 'org-1' },
+  }).reason, 'target-is-sole-manager');
+  assert.equal(removal({ customerBeta: true, targetUser: { uid: 'worker-1', role: 'worker', organizationId: 'other-org' } }).ok, false);
+  assert.equal(removal({
+    customerBeta: true, organization: baseOrganization({ managerIds: ['billing-manager'] }),
+    targetUserId: 'billing-manager', targetUser: { uid: 'billing-manager', role: 'worker', organizationId: 'org-1' },
+  }).reason, 'target-is-sole-manager');
+});

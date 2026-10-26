@@ -7,6 +7,7 @@ import type { Firestore } from 'firebase/firestore';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
 import type { FirebaseStorage } from 'firebase/storage';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
+import { firebaseFunctionsRegion } from './firebase-region';
 import type { Functions } from 'firebase/functions';
 import { selectFirebaseEmulatorConfiguration } from './firebase-emulator-config';
 
@@ -95,7 +96,7 @@ const storageInstance = initializeFirebaseService('Firebase Storage', (firebaseA
   getStorage(firebaseApp, storageBucketUrl)
 );
 const functionsInstance = initializeFirebaseService('Firebase Functions', (firebaseApp) =>
-  getFunctions(firebaseApp, 'us-central1')
+  getFunctions(firebaseApp, firebaseFunctionsRegion(firebaseConfig.projectId))
 );
 
 type DispatchFirebaseGlobal = typeof globalThis & {

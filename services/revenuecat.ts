@@ -11,6 +11,7 @@ import {
   type RevenueCatRuntime,
 } from '@/lib/revenuecat-config';
 import { firebaseEmulatorConfiguration } from '@/lib/firebase';
+import { isCustomerBeta } from '@/config/beta-mode';
 import {
   SUBSCRIPTION_PLANS,
   type SubscriptionBillingPeriod,
@@ -31,6 +32,11 @@ export type DispatchRevenueCatPackage = {
 
 let revenueCatOperationTail: Promise<void> = Promise.resolve();
 const blockedRevenueCatUserIds = new Set<string>();
+const CUSTOMER_BETA_BILLING_DISABLED_MESSAGE = 'Subscriptions are disabled during the complimentary customer beta.';
+
+function assertStoreActionsEnabled() {
+  if (isCustomerBeta()) throw new Error(CUSTOMER_BETA_BILLING_DISABLED_MESSAGE);
+}
 
 function serializeRevenueCatOperation<T>(operation: () => Promise<T>): Promise<T> {
   const result = revenueCatOperationTail.then(operation, operation);
@@ -53,6 +59,7 @@ function runtime(): RevenueCatRuntime {
 }
 
 export function getRevenueCatPurchaseStore(): RevenueCatPurchaseStore | null {
+  if (isCustomerBeta()) return null;
   const currentRuntime = runtime();
   if (currentRuntime === 'expo_go') return 'test_store';
   if (currentRuntime === 'ios') return 'app_store';
@@ -61,6 +68,15 @@ export function getRevenueCatPurchaseStore(): RevenueCatPurchaseStore | null {
 }
 
 export function getRevenueCatConfiguration(): RevenueCatConfiguration {
+  if (isCustomerBeta()) {
+    return {
+      configured: false,
+      runtime: runtime(),
+      preview: false,
+      reason: 'customer_beta_disabled',
+      message: CUSTOMER_BETA_BILLING_DISABLED_MESSAGE,
+    };
+  }
   return selectRevenueCatConfiguration({
     runtime: runtime(),
     keys: {
@@ -97,6 +113,7 @@ export async function identifyRevenueCatUser(firebaseUid: string) {
 }
 
 export async function logOutDispatchRevenueCatUser(expectedFirebaseUid?: string) {
+  if (isCustomerBeta()) return false;
   if (expectedFirebaseUid) blockedRevenueCatUserIds.add(expectedFirebaseUid);
   return serializeRevenueCatOperation(async () => {
     const configuration = getRevenueCatConfiguration();
@@ -157,6 +174,7 @@ export async function purchaseDispatchRevenueCatPackage(params: {
   currentSourceStore?: RevenueCatPurchaseStore | 'rc_billing' | null;
 }) {
   return serializeRevenueCatOperation(async () => {
+    assertStoreActionsEnabled();
     if (params.firebaseUid !== params.billingManagerId) {
       throw new Error('Only the organization Billing Manager can purchase or change a plan.');
     }
@@ -193,6 +211,7 @@ export async function restoreDispatchPurchases(params: {
   billingManagerId: string;
 }) {
   return serializeRevenueCatOperation(async () => {
+    assertStoreActionsEnabled();
     if (params.firebaseUid !== params.billingManagerId) {
       throw new Error('Only the organization Billing Manager can restore purchases.');
     }
@@ -204,6 +223,7 @@ export async function restoreDispatchPurchases(params: {
 
 export async function openDispatchSubscriptionManagement(verifiedManagementURL?: string | null) {
   return serializeRevenueCatOperation(async () => {
+    assertStoreActionsEnabled();
     const configuration = getRevenueCatConfiguration();
     if (!verifiedManagementURL && !configuration.configured) {
       throw new Error('Store subscription management is unavailable until RevenueCat is configured. Expo Go can use only a Test Store Preview API key.');

@@ -39,13 +39,17 @@ function planOrganizationMemberRemoval({
   targetUserId,
   targetUser,
   verifiedLivePaidPurchaserId = null,
+  customerBeta = false,
 } = {}) {
   const normalizedCallerId = normalizedId(callerId);
   const normalizedTargetUserId = normalizedId(targetUserId);
   const organizationId = normalizedId(organization?.id);
   const currentBillingManagerId = resolveBillingManagerId(organization);
 
-  if (!normalizedCallerId || currentBillingManagerId !== normalizedCallerId) {
+  if (customerBeta && !uniqueSortedIds(organization.managerIds).includes(normalizedCallerId)) {
+    return failure('permission-denied', 'caller-not-manager', 'Only an active organization Manager can remove a member.');
+  }
+  if (!customerBeta && (!normalizedCallerId || currentBillingManagerId !== normalizedCallerId)) {
     return failure(
       'permission-denied',
       'caller-not-billing-manager',
@@ -73,7 +77,8 @@ function planOrganizationMemberRemoval({
     );
   }
 
-  if (targetRole === 'manager' && managerIds.length === 1) {
+  if ((targetRole === 'manager' && managerIds.length === 1)
+    || (customerBeta && managerIds.filter((id) => id !== normalizedTargetUserId).length === 0)) {
     return failure(
       'failed-precondition',
       'target-is-sole-manager',
@@ -81,7 +86,7 @@ function planOrganizationMemberRemoval({
     );
   }
 
-  if (normalizedTargetUserId === currentBillingManagerId) {
+  if (!customerBeta && normalizedTargetUserId === currentBillingManagerId) {
     return failure(
       'failed-precondition',
       'target-is-billing-manager',
@@ -90,7 +95,7 @@ function planOrganizationMemberRemoval({
   }
 
   if (
-    normalizedId(verifiedLivePaidPurchaserId)
+    !customerBeta && normalizedId(verifiedLivePaidPurchaserId)
     && normalizedId(verifiedLivePaidPurchaserId) === normalizedTargetUserId
   ) {
     return failure(
@@ -105,6 +110,9 @@ function planOrganizationMemberRemoval({
   const organizationUpdate = {
     managerIds: nextManagerIds,
     workerIds: nextWorkerIds,
+    ...(customerBeta && normalizedTargetUserId === currentBillingManagerId
+      ? { billingManagerId: nextManagerIds[0] }
+      : {}),
   };
 
   return {

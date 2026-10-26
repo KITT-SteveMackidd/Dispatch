@@ -29,7 +29,8 @@ const {
 } = require('./lib/organization-membership');
 const { removeWorkerFromEventMembership } = require('./lib/event-membership');
 const { planWorkerEventAction } = require('./lib/worker-event-actions');
-const { assertOrganizationMutationAccess } = require('./lib/organization-mutation-access');
+const { assertOrganizationMutationAccess, assertCustomerBetaOrganizationWritable } = require('./lib/organization-mutation-access');
+const { customerBetaPolicyEnabled, getFunctionsRegion, isCustomerBetaProject, organizationHasManagerAuthority } = require('./lib/customer-beta-policy');
 const { legacyOrganizationRecordUpdate } = require('./lib/legacy-organization-records');
 const {
   accessModeForBillingAndSeatUsage,
@@ -117,7 +118,7 @@ const {
   verificationCooldownSeconds,
 } = require('./lib/email-verification');
 
-setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
+setGlobalOptions({ region: getFunctionsRegion(runtimeProjectId()), maxInstances: 10 });
 
 let db;
 let FieldValue;
@@ -127,13 +128,13 @@ let storageBucket;
 const RECENT_AUTH_MAX_AGE_SECONDS = 5 * 60;
 const ACCOUNT_DELETION_TOMBSTONE_MS = 2 * 60 * 60 * 1000;
 const ACCOUNT_DELETION_LOCK_MS = 12 * 60 * 1000;
-const revenueCatWebhookAuthorization = defineSecret('REVENUECAT_WEBHOOK_AUTHORIZATION');
-const revenueCatWebhookSigningSecret = defineSecret('REVENUECAT_WEBHOOK_SIGNING_SECRET');
-const revenueCatSecretApiKey = defineSecret('REVENUECAT_SECRET_API_KEY');
-const revenueCatV2SecretApiKey = defineSecret('REVENUECAT_V2_SECRET_API_KEY');
-const revenueCatAllowedAppIds = defineSecret('REVENUECAT_ALLOWED_APP_IDS');
-const revenueCatExpectedEnvironment = defineString('REVENUECAT_EXPECTED_ENVIRONMENT');
-const revenueCatProjectId = defineString('REVENUECAT_PROJECT_ID');
+const revenueCatWebhookAuthorization = subscriptionParameter(() => defineSecret('REVENUECAT_WEBHOOK_AUTHORIZATION'));
+const revenueCatWebhookSigningSecret = subscriptionParameter(() => defineSecret('REVENUECAT_WEBHOOK_SIGNING_SECRET'));
+const revenueCatSecretApiKey = subscriptionParameter(() => defineSecret('REVENUECAT_SECRET_API_KEY'));
+const revenueCatV2SecretApiKey = subscriptionParameter(() => defineSecret('REVENUECAT_V2_SECRET_API_KEY'));
+const revenueCatAllowedAppIds = subscriptionParameter(() => defineSecret('REVENUECAT_ALLOWED_APP_IDS'));
+const revenueCatExpectedEnvironment = subscriptionParameter(() => defineString('REVENUECAT_EXPECTED_ENVIRONMENT'));
+const revenueCatProjectId = subscriptionParameter(() => defineString('REVENUECAT_PROJECT_ID'));
 
 onInit(() => {
   const { initializeApp } = require('firebase-admin/app');
@@ -150,6 +151,40 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const PROCESSING_LEASE_MS = 5 * 60 * 1000;
 const MAX_PUSH_TOKEN_OWNERS = 450;
+
+function runtimeProjectId() {
+  return process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || '';
+}
+
+function subscriptionSecrets(secrets) {
+  return isCustomerBetaProject(runtimeProjectId()) ? [] : secrets;
+}
+
+function subscriptionParameter(declareParameter) {
+  // Firebase discovers all declared params, including unbound secrets. Do not
+  // register billing credentials at all for the dedicated customer project.
+  if (!isCustomerBetaProject(runtimeProjectId())) return declareParameter();
+  return Object.freeze({
+    value() { throw new Error('RevenueCat parameters are unavailable in the customer beta project.'); },
+  });
+}
+
+async function customerBetaAccessEnabled(transaction) {
+  const projectId = runtimeProjectId();
+  if (!isCustomerBetaProject(projectId)) return false;
+  const policyRef = db.collection('dispatchConfig').doc('billing');
+  const policySnapshot = transaction ? await transaction.get(policyRef) : await policyRef.get();
+  const enabled = customerBetaPolicyEnabled({ projectId, policy: policySnapshot.exists ? policySnapshot.data() : null });
+  if (!enabled) throw new HttpsError('failed-precondition', 'Customer beta access has not been configured for this environment.');
+  return true;
+}
+
+async function assertSubscriptionsAvailable() {
+  // Fail closed for the dedicated customer project even if its policy is absent.
+  if (isCustomerBetaProject(runtimeProjectId())) {
+    throw new HttpsError('failed-precondition', 'Subscriptions are unavailable during the complimentary customer beta.');
+  }
+}
 
 function chunks(values, size) {
   const result = [];
@@ -180,6 +215,7 @@ function escapeMailHtml(value) {
 }
 
 function workerEventReminderMail({ event, role, workerId, email }) {
+  if (isCustomerBetaProject(runtimeProjectId())) return null;
   const normalizedEmail = normalizeEmail(email);
   const startsAt = new Date(event?.startsAt);
   if (!normalizedEmail || Number.isNaN(startsAt.getTime()) || startsAt.getTime() <= Date.now()) return null;
@@ -270,6 +306,7 @@ async function assertAccountDeletionNotStarted(transaction, userId) {
 
 async function assertOrganizationMutationAllowed(transaction, userId, organizationId) {
   await assertAccountDeletionNotStarted(transaction, userId);
+  const customerBeta = await customerBetaAccessEnabled(transaction);
   if (typeof organizationId !== 'string' || !organizationId.trim()) {
     throw new HttpsError('failed-precondition', 'This record has no organization authority.');
   }
@@ -284,6 +321,7 @@ async function assertOrganizationMutationAllowed(transaction, userId, organizati
     user: userSnapshot.exists ? userSnapshot.data() : null,
     organization: organizationSnapshot.exists ? organizationSnapshot.data() : null,
     billing: billingSnapshot.exists ? billingSnapshot.data() : null,
+    customerBeta,
   });
 }
 
@@ -460,14 +498,18 @@ async function completeLocalAccountDeletionCleanup(tombstoneRef) {
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(tombstoneRef);
     if (!snapshot.exists) throw new Error('Account-deletion tombstone disappeared during cleanup.');
-    const status = 'manual_revenuecat_review';
+    const customerBeta = isCustomerBetaProject(runtimeProjectId())
+      && snapshot.data().revenueCatDeletionPolicy === 'not_applicable_customer_beta';
+    const status = customerBeta
+      ? (snapshot.data().authUserDeleted === true ? 'completed' : 'ready_for_auth_deletion')
+      : 'manual_revenuecat_review';
     transaction.set(tombstoneRef, {
       status,
       dataCleanupCompletedAt: FieldValue.serverTimestamp(),
       revenueCatCustomerDeleted: false,
       revenueCatDeletionPending: false,
-      revenueCatManualReviewRequired: true,
-      revenueCatDeletionPolicy: 'manual_alias_review',
+      revenueCatManualReviewRequired: !customerBeta,
+      revenueCatDeletionPolicy: customerBeta ? 'not_applicable_customer_beta' : 'manual_alias_review',
       revenueCatDeletionOwnershipVerified: false,
       authUserDeleted: snapshot.data().authUserDeleted === true,
       authDeletionPending: snapshot.data().authUserDeleted !== true,
@@ -503,6 +545,7 @@ async function finalizeRemoteAccountDeletion({
       revenueCatCustomerDeleted: effectiveRevenueCatDeleted,
       authUserDeleted: effectiveAuthDeleted,
       revenueCatDeletionPolicy: tombstone.revenueCatDeletionPolicy,
+      customerBeta: isCustomerBetaProject(runtimeProjectId()),
     });
     const purgeAt = status === 'completed'
       ? new Date(Date.now() + ACCOUNT_DELETION_TOMBSTONE_MS)
@@ -980,11 +1023,13 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
   const inviteHash = hashInviteToken(token);
   const codeHash = hashInviteCode(code);
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
-  const { webUrl, appUrl } = buildInviteUrls(token, process.env.DISPATCH_INVITE_BASE_URL);
+  const customerBetaProject = isCustomerBetaProject(runtimeProjectId());
+  const { webUrl, appUrl } = buildInviteUrls(token, process.env.DISPATCH_INVITE_BASE_URL, { projectId: runtimeProjectId() });
+  const appLink = webUrl || appUrl;
   const inviteRef = db.collection('secureInvites').doc(inviteHash);
   const codeRef = db.collection('secureInviteCodes').doc(codeHash);
   const sourceRef = db.collection(inviteKind === 'worker' ? 'workerInvites' : 'managerInvites').doc();
-  const mailRef = db.collection('mail').doc();
+  const mailRef = customerBetaProject ? null : db.collection('mail').doc();
   const now = FieldValue.serverTimestamp();
 
   const activeOrganizationInvitesQuery = db.collection('secureInvites')
@@ -996,6 +1041,7 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
 
   await db.runTransaction(async (transaction) => {
     await assertAccountDeletionNotStarted(transaction, request.auth.uid);
+    const customerBeta = await customerBetaAccessEnabled(transaction);
     const documentRefs = [callerRef, organizationRef, billingRef, ...(teamRef ? [teamRef] : [])];
     const documentSnapshots = await transaction.getAll(...documentRefs);
     const [freshCallerSnapshot, freshOrganizationSnapshot, billingSnapshot, freshTeamSnapshot] = documentSnapshots;
@@ -1013,6 +1059,7 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
       freshOrganizationSnapshot.data(),
       organizationMembers
     );
+    if (customerBeta) assertCustomerBetaOrganizationWritable(freshOrganizationSnapshot.data());
     if (!Array.isArray(freshOrganization.managerIds) || !freshOrganization.managerIds.includes(request.auth.uid)) {
       throw new HttpsError('permission-denied', 'You are not an active Manager in this organization.');
     }
@@ -1043,7 +1090,7 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
       };
     });
 
-    if (billing.accessMode === 'read_only') {
+    if (!customerBeta && billing.accessMode === 'read_only') {
       const usage = calculateSeatUsage({
         organization: freshOrganization,
         billing: { ...billing, seatReservations: seededReservations },
@@ -1089,6 +1136,7 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
     );
 
     capacityResult = reserveInvitationSeat({
+      customerBeta,
       organization: freshOrganization,
       billing: { ...billing, seatReservations: seededReservations },
       deliveryEmail,
@@ -1111,11 +1159,13 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
       });
     }
 
-    transaction.set(billingRef, {
-      ...capacityResult.billing,
-      ...(billingSnapshot.exists ? {} : { createdAt: now }),
-      updatedAt: now,
-    }, { merge: true });
+    if (!customerBeta) {
+      transaction.set(billingRef, {
+        ...capacityResult.billing,
+        ...(billingSnapshot.exists ? {} : { createdAt: now }),
+        updatedAt: now,
+      }, { merge: true });
+    }
 
     replacedInvites.forEach((document) => {
       const previous = document.data();
@@ -1174,20 +1224,22 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
       teamName: teamName || (teamId ? 'Dispatch Team' : 'Solo worker'),
       organizationId,
       organizationName,
-      appLink: webUrl,
+      appLink,
       deliveryEmail,
       workerId: null,
       claimRequired: true,
       secureInviteId: inviteHash,
-      deliveryChannel: 'email',
-      emailDelivery: 'firebase-mail-collection',
-      status: 'delivery_queued',
-      statusReason: 'Secure invitation link queued for email delivery.',
-      sendCount: 1,
+      deliveryChannel: customerBeta ? 'share' : 'email',
+      emailDelivery: customerBeta ? 'not_sent_customer_beta' : 'firebase-mail-collection',
+      status: customerBeta ? 'created' : 'delivery_queued',
+      statusReason: customerBeta
+        ? 'Share the invitation link or code with the recipient. No email was sent.'
+        : 'Secure invitation link queued for email delivery.',
+      sendCount: customerBeta ? 0 : 1,
       createdAt: now,
       updatedAt: now,
       expiresAt,
-      lastSentAt: now,
+      lastSentAt: customerBeta ? null : now,
       });
     } else {
       transaction.set(sourceRef, {
@@ -1198,16 +1250,19 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
       managerUserId: null,
       claimRequired: true,
       secureInviteId: inviteHash,
-      appLink: webUrl,
+      appLink,
+      ...(customerBeta ? { deliveryChannel: 'share', emailDelivery: 'not_sent_customer_beta' } : {}),
       status: 'pending',
-      statusReason: 'Waiting for the recipient to claim this secure invitation.',
+      statusReason: customerBeta
+        ? 'Share the invitation link or code with the recipient. No email was sent.'
+        : 'Waiting for the recipient to claim this secure invitation.',
       createdAt: now,
       updatedAt: now,
       expiresAt,
       });
     }
 
-    transaction.set(mailRef, {
+    if (!customerBeta) transaction.set(mailRef, {
       ...buildSecureInviteEmail({
         deliveryEmail,
         inviteKind,
@@ -1235,9 +1290,10 @@ exports.createDispatchInvite = onCall({ maxInstances: 10 }, async (request) => {
   return {
     inviteId: sourceRef.id,
     inviteCode: code,
-    appLink: webUrl,
+    appLink,
     expiresAt: expiresAt.toISOString(),
-    deliveryQueued: true,
+    deliveryQueued: !customerBetaProject,
+    deliveryChannel: customerBetaProject ? 'share' : 'email',
     reused: false,
     seatUsage: capacityResult?.seatUsage,
     memberCap: capacityResult?.memberCap,
@@ -1436,6 +1492,7 @@ exports.claimDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
     const snapshots = await transaction.getAll(...refs);
     const organizationMembers = await transaction.get(organizationMembersQuery);
     const organizationSnapshot = snapshots[0];
+    const customerBeta = await customerBetaAccessEnabled(transaction);
     const userSnapshot = snapshots[1];
     const sourceSnapshot = snapshots[2];
     const billingSnapshot = snapshots[3];
@@ -1486,17 +1543,18 @@ exports.claimDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
       organizationData,
       organizationMembers
     );
+    if (customerBeta) assertCustomerBetaOrganizationWritable(organizationData);
     const nowMs = Date.now();
     const billing = billingSnapshot.exists
       ? { ...billingSnapshot.data() }
       : defaultOrganizationBilling(nowMs);
-    if (billing.accessMode === 'read_only') {
+    if (!customerBeta && billing.accessMode === 'read_only') {
       throw new HttpsError(
         'failed-precondition',
         'This organization is read-only. Ask the Billing Manager to resolve billing before claiming this invitation.'
       );
     }
-    const usage = calculateSeatUsage({ organization, billing, nowMs });
+    const usage = calculateSeatUsage({ organization, billing, nowMs, customerBeta });
     const reservationId = seatReservationKey(invite.deliveryEmail);
     const reservation = usage.reservations[reservationId];
     const hasMatchingReservation = reservation?.inviteHash === resolved.inviteHash;
@@ -1522,11 +1580,13 @@ exports.claimDispatchInvite = onCall({ maxInstances: 20 }, async (request) => {
       || (authEmail.endsWith('@privaterelay.appleid.com') ? 'Dispatch User' : authEmail.split('@')[0])
       || 'Dispatch User';
     const now = FieldValue.serverTimestamp();
-    transaction.set(billingRef, {
-      ...nextBilling,
-      ...(billingSnapshot.exists ? {} : { createdAt: now }),
-      updatedAt: now,
-    }, { merge: true });
+    if (!customerBeta) {
+      transaction.set(billingRef, {
+        ...nextBilling,
+        ...(billingSnapshot.exists ? {} : { createdAt: now }),
+        updatedAt: now,
+      }, { merge: true });
+    }
     transaction.set(userRef, {
       uid: request.auth.uid,
       displayName,
@@ -1665,6 +1725,7 @@ exports.adoptLegacyDispatchInvites = onCall({ maxInstances: 20 }, async (request
     );
     const organizationMembers = await transaction.get(organizationMembersQuery);
     const [userSnapshot, organizationSnapshot, billingSnapshot] = snapshots;
+    const customerBeta = await customerBetaAccessEnabled(transaction);
     if (!userSnapshot.exists || !organizationSnapshot.exists) {
       throw new HttpsError('not-found', 'The invited account or organization no longer exists.');
     }
@@ -1729,13 +1790,14 @@ exports.adoptLegacyDispatchInvites = onCall({ maxInstances: 20 }, async (request
     }
 
     const organization = organizationWithAcceptedProfiles(organizationSnapshot.data(), organizationMembers);
+    if (customerBeta) assertCustomerBetaOrganizationWritable(organizationSnapshot.data());
     const billing = billingSnapshot.exists
       ? { ...defaultOrganizationBilling(), ...billingSnapshot.data() }
       : defaultOrganizationBilling();
-    if (billing.accessMode === 'read_only') {
+    if (!customerBeta && billing.accessMode === 'read_only') {
       throw new HttpsError('failed-precondition', 'This organization is read-only. Ask the Billing Manager to resolve billing or capacity before joining.');
     }
-    const usage = calculateSeatUsage({ organization, billing });
+    const usage = calculateSeatUsage({ organization, billing, customerBeta });
     const alreadyAccepted = usage.acceptedMemberIds.includes(request.auth.uid);
     if (!alreadyAccepted && usage.memberCap !== null && usage.seatUsage >= usage.memberCap) {
       throw new HttpsError('resource-exhausted', `This organization has used all ${usage.memberCap} member seats. Ask the Billing Manager to upgrade.`, {
@@ -1766,12 +1828,14 @@ exports.adoptLegacyDispatchInvites = onCall({ maxInstances: 20 }, async (request
       updatedAt: now,
     });
     const nextSeatUsage = usage.seatUsage + (alreadyAccepted ? 0 : 1);
-    transaction.set(billingRef, {
-      ...billing,
-      accessMode: billing.planId === 'free' && nextSeatUsage > 5 ? 'read_only' : billing.accessMode,
-      ...(billingSnapshot.exists ? {} : { createdAt: now }),
-      updatedAt: now,
-    }, { merge: true });
+    if (!customerBeta) {
+      transaction.set(billingRef, {
+        ...billing,
+        accessMode: billing.planId === 'free' && nextSeatUsage > 5 ? 'read_only' : billing.accessMode,
+        ...(billingSnapshot.exists ? {} : { createdAt: now }),
+        updatedAt: now,
+      }, { merge: true });
+    }
     snapshots.slice(3 + sourceRefs.length, inviterStart).forEach((teamSnapshot) => {
       if (!teamSnapshot.exists || teamSnapshot.data().organizationId !== plan.organizationId || plan.targetRole !== 'worker') return;
       transaction.update(teamSnapshot.ref, {
@@ -1806,11 +1870,12 @@ exports.adoptLegacyDispatchInvites = onCall({ maxInstances: 20 }, async (request
 
 exports.transferOrganizationBillingManager = onCall({
   maxInstances: 10,
-  secrets: [revenueCatSecretApiKey],
+  secrets: subscriptionSecrets([revenueCatSecretApiKey]),
 }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'You must be signed in to transfer billing responsibility.');
   }
+  await assertSubscriptionsAvailable();
 
   const targetManagerId = typeof request.data?.targetManagerId === 'string'
     ? request.data.targetManagerId.trim()
@@ -2011,9 +2076,10 @@ exports.transferOrganizationBillingManager = onCall({
 
 exports.removeOrganizationMember = onCall({
   maxInstances: 10,
-  secrets: [revenueCatSecretApiKey],
+  secrets: subscriptionSecrets([revenueCatSecretApiKey]),
 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before removing an organization member.');
+  const customerBeta = await customerBetaAccessEnabled();
   const targetUserId = typeof request.data?.targetUserId === 'string' ? request.data.targetUserId.trim() : '';
   if (!targetUserId) throw new HttpsError('invalid-argument', 'Choose an organization member to remove.');
 
@@ -2045,7 +2111,7 @@ exports.removeOrganizationMember = onCall({
     || null;
   let verifiedLivePaidPurchaserId = null;
   let verifiedPayerProjection = null;
-  if (verificationPayerId === targetUserId) {
+  if (!customerBeta && verificationPayerId === targetUserId) {
     try {
       const subscriber = await fetchRevenueCatSubscriber({
         appUserId: verificationPayerId,
@@ -2067,6 +2133,7 @@ exports.removeOrganizationMember = onCall({
   const result = await db.runTransaction(async (transaction) => {
     await assertAccountDeletionNotStarted(transaction, request.auth.uid);
     await assertAccountDeletionNotStarted(transaction, targetUserId);
+    await customerBetaAccessEnabled(transaction);
     if (verificationPayerId && verificationPayerId !== request.auth.uid && verificationPayerId !== targetUserId) {
       await assertAccountDeletionNotStarted(transaction, verificationPayerId);
     }
@@ -2149,7 +2216,8 @@ exports.removeOrganizationMember = onCall({
     if (!organizationSnapshot.exists || !targetSnapshot.exists) {
       throw new HttpsError('not-found', 'The organization or selected member no longer exists.');
     }
-    if (!freshCallerSnapshot.exists || freshCallerSnapshot.data().organizationId !== organizationId) {
+    if (!freshCallerSnapshot.exists || freshCallerSnapshot.data().organizationId !== organizationId
+      || normalizedRole(freshCallerSnapshot.data().role) !== 'manager') {
       throw new HttpsError('permission-denied', 'Your organization membership changed. Refresh and try again.');
     }
     const billing = billingSnapshot.exists
@@ -2168,8 +2236,11 @@ exports.removeOrganizationMember = onCall({
       targetUserId,
       targetUser: { uid: targetSnapshot.id, ...targetSnapshot.data() },
       verifiedLivePaidPurchaserId,
+      customerBeta,
     });
     if (!plan.ok) throw new HttpsError(plan.code, plan.message, { reason: plan.reason });
+    const retainedManagerId = plan.managerIds.includes(request.auth.uid)
+      ? request.auth.uid : plan.managerIds[0];
 
     const now = FieldValue.serverTimestamp();
     transaction.update(organizationRef, { ...plan.organizationUpdate, updatedAt: now });
@@ -2185,10 +2256,10 @@ exports.removeOrganizationMember = onCall({
       const reassignsPrimaryManager = team.managerId === targetUserId;
       const retainedManagerIds = uniqueStrings([
         ...nextManagerIds,
-        ...(reassignsPrimaryManager ? [request.auth.uid] : []),
+        ...(reassignsPrimaryManager ? [retainedManagerId] : []),
       ]);
       transaction.update(teamSnapshot.ref, {
-        managerId: reassignsPrimaryManager ? request.auth.uid : team.managerId,
+        managerId: reassignsPrimaryManager ? retainedManagerId : team.managerId,
         managerIds: retainedManagerIds.length ? retainedManagerIds : plan.managerIds,
         workerIds: nextWorkerIds,
         updatedAt: now,
@@ -2198,7 +2269,7 @@ exports.removeOrganizationMember = onCall({
       transaction.update(snapshot.ref, {
         roles: cleanup.roles,
         workerIds: cleanup.workerIds,
-        ...(reassignsManager ? { managerId: request.auth.uid } : {}),
+        ...(reassignsManager ? { managerId: retainedManagerId } : {}),
         revision: (event.revision ?? 0) + 1,
         updatedAt: now,
       });
@@ -2214,7 +2285,7 @@ exports.removeOrganizationMember = onCall({
           updatedAt: now,
         }, { merge: true });
       } else if (notification.managerId === targetUserId) {
-        transaction.set(snapshot.ref, { managerId: request.auth.uid, updatedAt: now }, { merge: true });
+        transaction.set(snapshot.ref, { managerId: retainedManagerId, updatedAt: now }, { merge: true });
       }
     });
     targetChatThreadDocuments.forEach((snapshot) => {
@@ -2240,7 +2311,7 @@ exports.removeOrganizationMember = onCall({
           }),
         }
       : billing;
-    const releasesTargetPayer = verificationPayerId === targetUserId
+    const releasesTargetPayer = !customerBeta && verificationPayerId === targetUserId
       && !verifiedLivePaidPurchaserId;
     const billingAfterPayerRelease = releasesTargetPayer
       ? { ...verifiedBilling, purchaserUserId: null, purchaseIntent: null }
@@ -2249,13 +2320,15 @@ exports.removeOrganizationMember = onCall({
       organization: mergeAcceptedOrganizationProfiles(plan.nextOrganization, remainingProfiles),
       billing: billingAfterPayerRelease,
     });
-    transaction.set(billingRef, {
-      ...billingAfterPayerRelease,
-      accessMode: accessModeForBillingAndSeatUsage(billingAfterPayerRelease, nextUsage.seatUsage),
-      ...(releasesTargetPayer ? { purchaseIntent: FieldValue.delete() } : {}),
-      ...(billingSnapshot.exists ? {} : { createdAt: now }),
-      updatedAt: now,
-    }, { merge: true });
+    if (!customerBeta) {
+      transaction.set(billingRef, {
+        ...billingAfterPayerRelease,
+        accessMode: accessModeForBillingAndSeatUsage(billingAfterPayerRelease, nextUsage.seatUsage),
+        ...(releasesTargetPayer ? { purchaseIntent: FieldValue.delete() } : {}),
+        ...(billingSnapshot.exists ? {} : { createdAt: now }),
+        updatedAt: now,
+      }, { merge: true });
+    }
     if (
       releasesTargetPayer
       && targetCustomerSnapshot.exists
@@ -2356,7 +2429,7 @@ exports.mutateWorkerEvent = onCall({ maxInstances: 20 }, async (request) => {
       : null;
     const eventId = requestedEventId
       || requiredDocumentId(notification?.eventId, 'Notification event ID');
-    if (requestedEventId && notification?.eventId !== requestedEventId) {
+    if (requestedEventId && notification && notification.eventId !== requestedEventId) {
       throw new HttpsError('failed-precondition', 'The notification no longer matches this event.');
     }
 
@@ -2386,10 +2459,12 @@ exports.mutateWorkerEvent = onCall({ maxInstances: 20 }, async (request) => {
     if (!organizationSnapshot.exists) {
       throw new HttpsError('failed-precondition', 'The event organization no longer exists.');
     }
-    if (!billingSnapshot.exists) {
+    const customerBeta = await customerBetaAccessEnabled(transaction);
+    if (customerBeta) assertCustomerBetaOrganizationWritable(organizationSnapshot.data());
+    if (!customerBeta && !billingSnapshot.exists) {
       throw new HttpsError('failed-precondition', 'Organization billing must be initialized before event work can continue.');
     }
-    if (billingSnapshot.data().accessMode !== 'full') {
+    if (!customerBeta && billingSnapshot.data().accessMode !== 'full') {
       throw new HttpsError('failed-precondition', 'This organization is read-only. Ask the Billing Manager to resolve billing or capacity.');
     }
 
@@ -2550,6 +2625,7 @@ function billingResponse(billing) {
 }
 
 exports.initializeOrganizationBillingOnCreate = onDocumentCreated('organizations/{organizationId}', async (event) => {
+  if (isCustomerBetaProject(runtimeProjectId())) return;
   const organizationId = event.params.organizationId;
   const organizationRef = db.collection('organizations').doc(organizationId);
   const billingRef = db.collection('organizationBilling').doc(organizationId);
@@ -2575,6 +2651,7 @@ exports.initializeOrganizationBillingOnCreate = onDocumentCreated('organizations
 
 exports.initializeOrganizationBilling = onCall({ maxInstances: 20 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before loading organization billing.');
+  await assertSubscriptionsAvailable();
   const callerSnapshot = await db.collection('users').doc(request.auth.uid).get();
   const organizationId = callerSnapshot.data()?.organizationId;
   if (!callerSnapshot.exists || !organizationId) {
@@ -2650,9 +2727,10 @@ async function assertNoPendingBrowserCheckout(transaction, organizationId) {
 
 exports.prepareOrganizationSubscriptionChange = onCall({
   maxInstances: 10,
-  secrets: [revenueCatSecretApiKey],
+  secrets: subscriptionSecrets([revenueCatSecretApiKey]),
 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before changing a subscription.');
+  await assertSubscriptionsAvailable();
   const planId = typeof request.data?.planId === 'string' ? request.data.planId.trim() : '';
   const billingPeriod = request.data?.billingPeriod === 'annual' ? 'annual' : request.data?.billingPeriod === 'monthly' ? 'monthly' : '';
   const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
@@ -2892,6 +2970,7 @@ exports.prepareOrganizationSubscriptionChange = onCall({
 
 exports.prepareOrganizationSubscriptionRestore = onCall({ maxInstances: 10 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before restoring purchases.');
+  await assertSubscriptionsAvailable();
   const purchaseStore = revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
   const callerRef = db.collection('users').doc(request.auth.uid);
   const callerSnapshot = await callerRef.get();
@@ -2980,9 +3059,10 @@ exports.prepareOrganizationSubscriptionRestore = onCall({ maxInstances: 10 }, as
 
 exports.refreshOrganizationSubscription = onCall({
   maxInstances: 10,
-  secrets: [revenueCatSecretApiKey],
+  secrets: subscriptionSecrets([revenueCatSecretApiKey]),
 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before refreshing subscription status.');
+  await assertSubscriptionsAvailable();
   revenueCatPurchaseStoreForCallable(request.data?.purchaseStore);
   const callerRef = db.collection('users').doc(request.auth.uid);
   const callerSnapshot = await callerRef.get();
@@ -3711,15 +3791,19 @@ async function processRevenueCatWebhookEvent(event) {
 exports.revenueCatWebhook = onRequest({
   maxInstances: 10,
   timeoutSeconds: 30,
-  secrets: [
+  secrets: subscriptionSecrets([
     revenueCatWebhookAuthorization,
     revenueCatWebhookSigningSecret,
     revenueCatSecretApiKey,
     revenueCatAllowedAppIds,
-  ],
+  ]),
 }, async (request, response) => {
   if (request.method !== 'POST') {
     response.status(405).send('Method Not Allowed');
+    return;
+  }
+  if (isCustomerBetaProject(runtimeProjectId())) {
+    response.status(403).send('Subscriptions are disabled for the customer beta');
     return;
   }
   const expectedAuthorization = revenueCatWebhookAuthorization.value();
@@ -3802,6 +3886,9 @@ exports.revenueCatWebhook = onRequest({
 exports.sendDispatchEmailVerification = onCall({ maxInstances: 10 }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Sign in before requesting a verification email.');
+  }
+  if (isCustomerBetaProject(runtimeProjectId())) {
+    throw new HttpsError('failed-precondition', 'Use email verification in the customer beta app. Invitation email delivery is not configured for this environment.');
   }
 
   const authUser = await adminAuth.getUser(request.auth.uid);
@@ -3924,7 +4011,7 @@ exports.deleteDispatchAccount = onCall({
   maxInstances: 5,
   timeoutSeconds: 540,
   memory: '1GiB',
-  secrets: [revenueCatV2SecretApiKey],
+  secrets: subscriptionSecrets([revenueCatV2SecretApiKey]),
 }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'You must be signed in to delete your Dispatch account.');
@@ -3943,6 +4030,9 @@ exports.deleteDispatchAccount = onCall({
 
   const authUser = await adminAuth.getUser(request.auth.uid);
   const deletingProfileSnapshot = await db.collection('users').doc(request.auth.uid).get();
+  // Account deletion must remain available if the beta access policy is paused
+  // or missing. This project never creates RevenueCat customer identities.
+  const customerBeta = isCustomerBetaProject(runtimeProjectId());
   const deletingOrganizationId = deletingProfileSnapshot.data()?.organizationId;
   let deletingBilling = defaultOrganizationBilling();
   let deletingBillingSnapshotExists = false;
@@ -3959,7 +4049,7 @@ exports.deleteDispatchAccount = onCall({
   const confirmedSubscriptionDeletion = request.data?.confirmActiveSubscriptionDeletion === true;
   let revenueCatStatusVerified = false;
   let activeSubscriberDeletedImmediately = false;
-  if (activeRevenueCatPayerMustResolveSubscription(deletingBilling, request.auth.uid)) {
+  if (!customerBeta && activeRevenueCatPayerMustResolveSubscription(deletingBilling, request.auth.uid)) {
     if (!confirmedSubscriptionDeletion) {
       throw new HttpsError(
         'failed-precondition',
@@ -3995,7 +4085,7 @@ exports.deleteDispatchAccount = onCall({
       ? { ...defaultOrganizationBilling(), ...lockedBillingSnapshot.data() }
       : defaultOrganizationBilling();
   }
-  if (activeRevenueCatStoreIntentForUser(deletingBilling, request.auth.uid)) {
+  if (!customerBeta && activeRevenueCatStoreIntentForUser(deletingBilling, request.auth.uid)) {
     throw new HttpsError(
       'failed-precondition',
       'An Apple or Google purchase or restore is still in progress. Finish that store action, refresh billing, and then delete the account.'
@@ -4004,19 +4094,21 @@ exports.deleteDispatchAccount = onCall({
 
   let lockedRevenueCatProjectId = null;
   let lockedRevenueCatAliasEvidence = { status: 'unavailable', aliases: [] };
-  try {
-    lockedRevenueCatProjectId = configuredRevenueCatProjectId();
-    lockedRevenueCatAliasEvidence = await fetchRevenueCatCustomerAliases({
-      customerId: request.auth.uid,
-      projectId: lockedRevenueCatProjectId,
-      secretApiKey: revenueCatV2SecretApiKey.value(),
-    });
-    revenueCatStatusVerified = true;
-  } catch (error) {
-    logger.warn('RevenueCat API v2 alias verification is unavailable; customer deletion requires manual review.', {
-      uid: request.auth.uid,
-      message: error instanceof Error ? error.message : String(error),
-    });
+  if (!customerBeta) {
+    try {
+      lockedRevenueCatProjectId = configuredRevenueCatProjectId();
+      lockedRevenueCatAliasEvidence = await fetchRevenueCatCustomerAliases({
+        customerId: request.auth.uid,
+        projectId: lockedRevenueCatProjectId,
+        secretApiKey: revenueCatV2SecretApiKey.value(),
+      });
+      revenueCatStatusVerified = true;
+    } catch (error) {
+      logger.warn('RevenueCat API v2 alias verification is unavailable; customer deletion requires manual review.', {
+        uid: request.auth.uid,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   const lockedRevenueCatCustomerRef = db.collection('revenueCatCustomers')
     .doc(hashedDocumentId(request.auth.uid));
@@ -4024,7 +4116,9 @@ exports.deleteDispatchAccount = onCall({
   const lockedRevenueCatMapping = lockedRevenueCatCustomerSnapshot.exists
     ? lockedRevenueCatCustomerSnapshot.data()
     : null;
-  const remoteDeletionDecision = revenueCatCustomerDeletionDecision({
+  const remoteDeletionDecision = customerBeta ? {
+    policy: 'not_applicable_customer_beta', basis: 'isolated_customer_project_has_no_billing',
+  } : revenueCatCustomerDeletionDecision({
     aliasStatus: lockedRevenueCatAliasEvidence.status,
     aliases: lockedRevenueCatAliasEvidence.aliases,
     userId: request.auth.uid,
@@ -4099,7 +4193,7 @@ exports.deleteDispatchAccount = onCall({
           active: lockedRevenueCatMapping.active === true,
           state: lockedRevenueCatMapping.state || null,
         } : null,
-        revenueCatManualReviewRequired: remoteDeletionDecision.policy !== 'automatic',
+        revenueCatManualReviewRequired: !customerBeta && remoteDeletionDecision.policy !== 'automatic',
         revenueCatDeletionAttemptToken: FieldValue.delete(),
         revenueCatDeletionAttemptStartedAt: FieldValue.delete(),
         completedAt: FieldValue.delete(),
@@ -4218,6 +4312,7 @@ exports.deleteDispatchAccount = onCall({
 async function recoverDispatchAccountAfterAuthDeletion(authUser) {
   const tombstoneRef = db.collection('accountDeletionTombstones').doc(authUser.uid);
   const cleanupAuthUser = accountDeletionAuthSnapshot(authUser);
+  const customerBeta = isCustomerBetaProject(runtimeProjectId());
   const initialFence = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(tombstoneRef);
     const existing = snapshot.exists ? snapshot.data() : {};
@@ -4241,11 +4336,11 @@ async function recoverDispatchAccountAfterAuthDeletion(authUser) {
         0,
         Math.floor(Number(existing.revenueCatDeletionGeneration) || 0)
       ),
-      revenueCatDeletionPolicy: 'manual_alias_review',
-      revenueCatDeletionBasis: 'auth_deleted_outside_dispatch_workflow',
+      revenueCatDeletionPolicy: customerBeta ? 'not_applicable_customer_beta' : 'manual_alias_review',
+      revenueCatDeletionBasis: customerBeta ? 'isolated_customer_project_has_no_billing' : 'auth_deleted_outside_dispatch_workflow',
       revenueCatDeletionOwnershipVerified: false,
       revenueCatDeletionPending: false,
-      revenueCatManualReviewRequired: true,
+      revenueCatManualReviewRequired: !customerBeta,
       authUserDeleted: true,
       authDeletionPending: false,
       authDeletionObservedAt: FieldValue.serverTimestamp(),
@@ -4325,7 +4420,7 @@ async function recoverDispatchAccountAfterAuthDeletion(authUser) {
 
 exports.recoverDispatchAccountAfterAuthDeletion = functionsV1
   .runWith({ failurePolicy: true })
-  .region('us-central1')
+  .region(getFunctionsRegion(runtimeProjectId()))
   .auth.user()
   .onDelete(recoverDispatchAccountAfterAuthDeletion);
 
@@ -4538,7 +4633,18 @@ exports.reapOrphanedDispatchStorageObject = onObjectFinalized({ retry: true }, a
     && threadSnapshot?.exists
     && ownerSnapshot.exists
     && ownerSnapshot.data().organizationId !== threadSnapshot.data().organizationId;
-  if (!ownerDeletionFenced && !orphanedChatObject && !mismatchedChatOrganization) return;
+  let orphanedCustomerOrganization = false;
+  if (isCustomerBetaProject(runtimeProjectId())) {
+    const organizationId = context.kind === 'chat'
+      ? threadSnapshot?.data()?.organizationId
+      : ownerSnapshot.data()?.organizationId;
+    const organizationSnapshot = typeof organizationId === 'string' && organizationId
+      ? await db.collection('organizations').doc(organizationId).get()
+      : null;
+    orphanedCustomerOrganization = !organizationSnapshot?.exists
+      || !organizationHasManagerAuthority(organizationSnapshot.data());
+  }
+  if (!ownerDeletionFenced && !orphanedChatObject && !mismatchedChatOrganization && !orphanedCustomerOrganization) return;
   await storageBucket.file(objectName).delete({ ignoreNotFound: true });
   logger.info('Removed a finalized Dispatch upload whose owner or chat source no longer exists.', {
     kind: context.kind,

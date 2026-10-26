@@ -3,6 +3,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession, type SocialAuthResult } from '@/context/session';
 import { getAuthErrorMessage } from '@/lib/auth-error-messages';
+import { optionalGoogleClientId } from '@/lib/optional-google-config';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
 type CryptoModule = typeof import('expo-crypto');
@@ -71,8 +72,8 @@ function GoogleProviderButton(props: ProviderButtonProps) {
       props.onLoadingChange(true);
       const { GoogleSignin, isSuccessResponse } = require('@react-native-google-signin/google-signin') as typeof import('@react-native-google-signin/google-signin');
       GoogleSignin.configure({
-        webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-        iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+        webClientId: optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID),
+        iosClientId: optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID),
         offlineAccess: false,
       });
       if (Platform.OS === 'android') {
@@ -192,12 +193,12 @@ function isAppleCancellation(error: unknown) {
 
 function getGoogleClientId() {
   if (Platform.OS === 'ios') {
-    return process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID;
+    return optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) || optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID);
   }
   if (Platform.OS === 'android') {
-    return process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID;
+    return optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) || optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID);
   }
-  return process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID;
+  return optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) || optionalGoogleClientId(process.env.EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID);
 }
 
 const styles = StyleSheet.create({

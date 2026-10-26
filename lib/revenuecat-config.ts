@@ -18,7 +18,7 @@ export type RevenueCatConfiguration =
       configured: false;
       runtime: RevenueCatRuntime;
       preview: boolean;
-      reason: 'missing_key' | 'invalid_key' | 'unsupported_platform' | 'test_key_in_release' | 'test_store_requires_emulators';
+      reason: 'missing_key' | 'invalid_key' | 'unsupported_platform' | 'test_key_in_release' | 'test_store_requires_emulators' | 'customer_beta_disabled';
       message: string;
     };
 

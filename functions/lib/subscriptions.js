@@ -105,11 +105,11 @@ function defaultOrganizationBilling(nowMs = Date.now()) {
   };
 }
 
-function calculateSeatUsage({ organization, billing, nowMs = Date.now() }) {
+function calculateSeatUsage({ organization, billing, nowMs = Date.now(), customerBeta = false }) {
   const acceptedIds = acceptedMemberIds(organization);
   const reservations = activeSeatReservations(billing?.seatReservations, nowMs);
   const reservedSeats = Object.keys(reservations).length;
-  const memberCap = memberCapForBilling(billing);
+  const memberCap = customerBeta ? null : memberCapForBilling(billing);
   const seatUsage = acceptedIds.length + reservedSeats;
   return {
     acceptedMemberIds: acceptedIds,
@@ -133,11 +133,12 @@ function reserveInvitationSeat({
   sourceInviteId,
   expiresAtMs,
   nowMs = Date.now(),
+  customerBeta = false,
 }) {
   const baseBilling = billing && typeof billing === 'object'
     ? { ...defaultOrganizationBilling(nowMs), ...billing }
     : defaultOrganizationBilling(nowMs);
-  const usage = calculateSeatUsage({ organization, billing: baseBilling, nowMs });
+  const usage = calculateSeatUsage({ organization, billing: baseBilling, nowMs, customerBeta });
   const reservationId = seatReservationKey(deliveryEmail);
   const replacesExistingReservation = Boolean(usage.reservations[reservationId]);
 
@@ -169,7 +170,7 @@ function reserveInvitationSeat({
     reservationId,
     replacesExistingReservation,
     billing: nextBilling,
-    ...calculateSeatUsage({ organization, billing: nextBilling, nowMs }),
+    ...calculateSeatUsage({ organization, billing: nextBilling, nowMs, customerBeta }),
   };
 }
 

@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 const read = (path: string) => readFileSync(join(root, path), 'utf8');
+const { accountDeletionCleanupStatus } = createRequire(join(root, 'functions/package.json'))('./lib/account-deletion-lifecycle');
 
 describe('organization billing workflow wiring', () => {
   it('exposes one organization Billing screen from Profile', () => {
@@ -113,7 +115,8 @@ describe('organization billing workflow wiring', () => {
     const functions = read('functions/index.js');
     const tabs = read('app/(tabs)/_layout.tsx');
     expect(rules).toContain('return isOrganizationMember(organizationId)');
-    expect(rules).toContain('&& exists(/databases/$(database)/documents/organizationBilling/$(organizationId))');
+    expect(rules).toContain('exists(/databases/$(database)/documents/organizationBilling/$(organizationId))');
+    expect(rules).toContain('isCustomerBetaProject() ? customerBetaOrganizationWritable(organizationId) : (');
     expect(rules).not.toContain('!exists(/databases/$(database)/documents/organizationBilling/$(organizationId))');
     expect(rules).toContain('request.resource.data.organizationId == resource.data.organizationId');
     expect(rules).toContain('organizationIdFromData(request.resource.data) == organizationIdFromData(resource.data)');
@@ -175,10 +178,15 @@ describe('organization billing workflow wiring', () => {
     expect(revenueCatServer).not.toContain("method: 'DELETE'");
     expect(revenueCatServer).toContain("basis: 'authoritative_alias_set_unavailable'");
     expect(revenueCatServer).toContain("basis: 'post_auth_device_drain_required'");
-    expect(functions).toContain("const status = 'manual_revenuecat_review'");
+    expect(accountDeletionCleanupStatus({
+      revenueCatDeletionPolicy: 'manual_alias_review', revenueCatCustomerDeleted: false, authUserDeleted: true,
+    })).toBe('manual_revenuecat_review');
+    expect(accountDeletionCleanupStatus({
+      revenueCatDeletionPolicy: 'not_applicable_customer_beta', customerBeta: false, authUserDeleted: true,
+    })).toBe('manual_revenuecat_review');
     expect(functions).toContain(".where('status', '==', 'ready_for_revenuecat_deletion')");
     expect(functions).toContain('quarantinedLegacyRevenueCatDeletions');
-    expect(functions).toContain('secrets: [revenueCatSecretApiKey]');
+    expect(functions).toContain('secrets: subscriptionSecrets([revenueCatSecretApiKey])');
     expect(functions).toContain("db.collection('maintenanceLocks').doc('accountDeletion')");
     expect(functions).toContain('await acquireAccountDeletionLock(request.auth.uid);');
     expect(functions).toContain('confirmActiveSubscriptionDeletion');
@@ -238,7 +246,7 @@ describe('organization billing workflow wiring', () => {
     expect(profile).toContain('Deleting Dispatch does not cancel an Apple or Google subscription.');
     expect(profile).toContain('RevenueCat customer data is never deleted automatically');
     expect(profile).toContain('Firebase sign-in deletion is still retrying in the background.');
-    expect(profile).toContain('confirmActiveSubscriptionDeletion: true');
+    expect(profile).toContain('confirmActiveSubscriptionDeletion: !customerBeta');
     expect(functions).toContain('preloadedCustomerMappings');
     expect(functions).toContain("requesterMappingState === 'released'");
     expect(functions).toContain('requesterLivePaid');

@@ -4,6 +4,7 @@ import {
   FlatList,
   Image,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -13,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { isCustomerBeta } from '@/config/beta-mode';
 import { headerLogoSource } from '@/constants/branding';
 import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
 import {
@@ -31,7 +33,7 @@ import {
   watchWorkerTeams,
 } from '@/services/dispatch';
 import { getWorkerInviteErrorMessage } from '@/lib/worker-invite-validation';
-import { createSecureDispatchInvite, secureInviteErrorMessage } from '@/lib/secure-invites';
+import { createSecureDispatchInvite, secureInviteErrorMessage, type CreateSecureInviteResult } from '@/lib/secure-invites';
 import { getInviteBillingAlert } from '@/lib/invite-billing-alert';
 import { resolveBillingManagerId } from '@/lib/billing-manager';
 import { billingErrorMessage, transferOrganizationBillingManager, watchOrganizationBilling } from '@/services/billing';
@@ -68,6 +70,7 @@ export default function TeamsScreen() {
   const insets = useSafeAreaInsets();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
+  const customerBeta = isCustomerBeta();
   const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
 
   const [teams, setTeams] = useState<Team[]>([]);
@@ -95,6 +98,7 @@ export default function TeamsScreen() {
   const [inviteTeamId, setInviteTeamId] = useState<'solo' | string>('solo');
   const [saving, setSaving] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
+  const [shareableInvite, setShareableInvite] = useState<CreateSecureInviteResult | null>(null);
   const [drawerMessageTone, setDrawerMessageTone] = useState<'success' | 'error'>('success');
 
   useEffect(() => {
@@ -147,16 +151,21 @@ export default function TeamsScreen() {
   }, [profile, teams]);
 
   useEffect(() => {
-    if (!profile?.organizationId) {
-      setOrganizationBilling(defaultOrganizationBilling());
+    setOrganizationBilling(defaultOrganizationBilling());
+    setBillingTransferOpen(false);
+    setSelectedBillingManagerId(null);
+    setBillingTransferError(null);
+    if (customerBeta || !profile?.organizationId) {
       return;
     }
-    return watchOrganizationBilling(
+    let active = true;
+    const unsubscribe = watchOrganizationBilling(
       profile.organizationId,
-      setOrganizationBilling,
-      () => setLoadError('Unable to load subscription capacity. Please try again.')
+      (billing) => { if (active) setOrganizationBilling(billing); },
+      () => { if (active) setLoadError('Unable to load subscription capacity. Please try again.'); }
     );
-  }, [profile?.organizationId]);
+    return () => { active = false; unsubscribe(); };
+  }, [customerBeta, profile?.organizationId]);
 
   useEffect(() => {
     if (!profile?.uid || !profile.organizationId) return;
@@ -201,6 +210,7 @@ export default function TeamsScreen() {
     .filter((member) => !livePaidPayerId || member.uid === livePaidPayerId)
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
   const canTransferBilling = Boolean(
+    !customerBeta &&
     profile?.uid &&
     organization?.billingManagerId === profile.uid &&
     billingManagerCandidates.length
@@ -371,6 +381,7 @@ export default function TeamsScreen() {
     setTeamName('');
     setInviteEmail('');
     setDrawerMessage(null);
+    setShareableInvite(null);
     setDrawerOpen(true);
   };
 
@@ -379,6 +390,7 @@ export default function TeamsScreen() {
     try {
       setSaving(true);
       setDrawerMessage(null);
+      setShareableInvite(null);
       if (drawerMode === 'add-team') {
         await createTeam(profile.uid, teamName);
         setTeamName('');
@@ -390,19 +402,25 @@ export default function TeamsScreen() {
           teamId: inviteTeamId === 'solo' ? undefined : inviteTeamId,
         });
         setInviteEmail('');
-        setDrawerMessage(`Worker invitation sent. They may continue with Apple, Google, or email. Backup code: ${result.inviteCode}`);
+        if (!result.deliveryQueued) setShareableInvite(result);
+        setDrawerMessage(result.deliveryQueued
+          ? `Worker invitation queued for email. They may continue with Apple, Google, or email. Backup code: ${result.inviteCode}`
+          : `Worker invitation created. Share the link or code with your teammate. No email was sent. Code: ${result.inviteCode}`);
       } else {
         const result = await createSecureDispatchInvite({
           inviteKind: 'manager',
           deliveryEmail: inviteEmail,
         });
         setInviteEmail('');
-        setDrawerMessage(`Manager invitation sent. They may continue with Apple, Google, or email. Backup code: ${result.inviteCode}`);
+        if (!result.deliveryQueued) setShareableInvite(result);
+        setDrawerMessage(result.deliveryQueued
+          ? `Manager invitation queued for email. They may continue with Apple, Google, or email. Backup code: ${result.inviteCode}`
+          : `Manager invitation created. Share the link or code with your teammate. No email was sent. Code: ${result.inviteCode}`);
       }
       setDrawerMessageTone('success');
     } catch (error) {
       setDrawerMessageTone('error');
-      const billingAlert = drawerMode !== 'add-team' ? getInviteBillingAlert(error, {
+      const billingAlert = !customerBeta && drawerMode !== 'add-team' ? getInviteBillingAlert(error, {
         currentUserId: profile.uid,
         billingManagerId: organization ? resolveBillingManagerId(organization) : null,
       }) : null;
@@ -438,7 +456,7 @@ export default function TeamsScreen() {
   };
 
   const performBillingTransfer = async () => {
-    if (!selectedBillingManagerId || transferringBillingManager) return;
+    if (customerBeta || !selectedBillingManagerId || transferringBillingManager) return;
     try {
       setTransferringBillingManager(true);
       setBillingTransferError(null);
@@ -458,6 +476,7 @@ export default function TeamsScreen() {
   };
 
   const confirmBillingTransfer = () => {
+    if (customerBeta) return;
     const target = billingManagerCandidates.find((member) => member.uid === selectedBillingManagerId);
     if (!target) return;
     Alert.alert(
@@ -492,7 +511,7 @@ export default function TeamsScreen() {
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={(
           <>
-            {organization?.billingManagerId ? (
+            {!customerBeta && organization?.billingManagerId ? (
               <Pressable
                 accessibilityRole={canTransferBilling ? 'button' : undefined}
                 accessibilityLabel={canTransferBilling ? 'Transfer Billing Manager role' : undefined}
@@ -527,7 +546,7 @@ export default function TeamsScreen() {
         ListEmptyComponent={(
           <Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
             {profile?.role === 'worker'
-              ? 'No team invite yet. Please check email for an invitation link.'
+              ? customerBeta ? 'No team invite yet. Ask your Manager to share an invitation link or code.' : 'No team invite yet. Please check email for an invitation link.'
               : 'No conversations yet.'}
           </Text>
         )}
@@ -614,7 +633,7 @@ export default function TeamsScreen() {
                 <Text style={[styles.drawerTitle, isDarkMode ? styles.textDark : styles.textLight]}>Team Actions</Text>
                 <View style={styles.modeRow}>
                   {(['add-team', 'invite-worker', 'invite-manager'] as DrawerMode[]).map((mode) => (
-                    <Pressable key={mode} style={[styles.modeButton, drawerMode === mode && styles.modeButtonActive]} onPress={() => { setDrawerMode(mode); setDrawerMessage(null); }}>
+                    <Pressable key={mode} style={[styles.modeButton, drawerMode === mode && styles.modeButtonActive]} onPress={() => { setDrawerMode(mode); setDrawerMessage(null); setShareableInvite(null); }}>
                       <Text style={[styles.modeText, drawerMode === mode && styles.modeTextActive]}>{mode === 'add-team' ? 'Add Team' : mode === 'invite-worker' ? 'Invite Worker' : 'Invite Manager'}</Text>
                     </Pressable>
                   ))}
@@ -626,11 +645,11 @@ export default function TeamsScreen() {
                   </>
                 ) : (
                   <>
-                    <Text style={[styles.capacityHint, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
+                    {!customerBeta ? <Text style={[styles.capacityHint, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
                       {organizationSeatUsage.remainingSeats === null
                         ? 'Custom member capacity'
                         : `${organizationSeatUsage.remainingSeats} member seat${organizationSeatUsage.remainingSeats === 1 ? '' : 's'} available`}
-                    </Text>
+                    </Text> : null}
                     {drawerMode === 'invite-worker' ? (
                       <>
                         <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Team</Text>
@@ -643,11 +662,24 @@ export default function TeamsScreen() {
                     <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Delivery email</Text>
                     <KeyboardAwareDrawerTextInput value={inviteEmail} onChangeText={setInviteEmail} autoCapitalize="none" keyboardType="email-address" style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="name@example.com" placeholderTextColor="#64748b" />
                     <Text style={[styles.inviteEmailHint, isDarkMode ? styles.textDark : styles.textLight]}>
-                      This address only receives the invitation. The recipient can join with Apple, Google, or a different Dispatch email.
+                      {customerBeta
+                        ? 'Enter your teammate’s email to identify the invitation. Then share the link or code yourself; beta invitation emails are not sent. They can join using their Dispatch email account.'
+                        : 'This address only receives the invitation. The recipient can join with Apple, Google, or a different Dispatch email.'}
                     </Text>
                   </>
                 )}
                 {drawerMessage ? <Text selectable style={drawerMessageTone === 'error' ? styles.errorText : styles.successText}>{drawerMessage}</Text> : null}
+                {shareableInvite ? (
+                  <Pressable accessibilityRole="button" style={styles.chatButton} onPress={async () => {
+                    try {
+                      await Share.share({ message: `Join our organization in Dispatch Customer Beta. Open this link on your Android phone with the beta installed: ${shareableInvite.appLink}\nOr enter invitation code: ${shareableInvite.inviteCode}` });
+                    } catch {
+                      Alert.alert('Unable to open sharing', 'You can select and copy the invitation code above instead.');
+                    }
+                  }}>
+                    <Text style={styles.chatButtonText}>Share invitation</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   style={[styles.chatButton, saving && styles.disabled]}
                   disabled={saving}
@@ -658,7 +690,7 @@ export default function TeamsScreen() {
               </KeyboardAwareDrawerScrollView>
       </KeyboardAwareDrawer>
 
-      <KeyboardAwareDrawer
+      {!customerBeta ? <KeyboardAwareDrawer
         visible={billingTransferOpen}
         onClose={() => setBillingTransferOpen(false)}
         backgroundColor={drawerSurfaceColor}
@@ -699,7 +731,7 @@ export default function TeamsScreen() {
             <Text style={[styles.closeText, isDarkMode ? styles.textDark : styles.textLight]}>Cancel</Text>
           </Pressable>
         </KeyboardAwareDrawerScrollView>
-      </KeyboardAwareDrawer>
+      </KeyboardAwareDrawer> : null}
     </View>
   );
 }

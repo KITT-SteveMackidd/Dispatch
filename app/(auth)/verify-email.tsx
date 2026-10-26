@@ -14,6 +14,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { isCustomerBeta } from '@/config/beta-mode';
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
@@ -98,8 +99,12 @@ export default function VerifyEmailScreen() {
   const onResend = async () => {
     setResendLoading(true);
     try {
-      await sendVerificationEmail(inviteToken);
-      Alert.alert('Verification email sent', 'Check your inbox (and spam folder) for a new verification link.');
+      const delivery = await sendVerificationEmail(inviteToken);
+      if (delivery.alreadyVerified) {
+        Alert.alert('Email already verified', 'Your email is verified. Tap “I’ve verified, continue” to refresh your account.');
+      } else {
+        Alert.alert('Verification email sent', 'Check your inbox (and spam folder) for a new verification link.');
+      }
     } catch (error) {
       Alert.alert('Unable to send email', error instanceof Error ? error.message : 'Please try again.');
     } finally {
@@ -130,6 +135,9 @@ export default function VerifyEmailScreen() {
             <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
               You must verify {authUser?.email || 'your account email'} before accessing manager or worker workflows.
             </Text>
+            {isCustomerBeta() ? <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
+              After opening the verification link, return to Dispatch and tap “I’ve verified, continue”.
+            </Text> : null}
 
             <Pressable style={[styles.btn, resendLoading && styles.disabled]} onPress={onResend} disabled={resendLoading}>
               <Text style={styles.btnText}>{resendLoading ? 'Sending...' : 'Resend verification email'}</Text>

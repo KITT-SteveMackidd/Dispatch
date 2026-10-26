@@ -85,14 +85,42 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(userId)).data.role in ['worker', 'Worker'];
     }
 
+    function isCustomerBetaProject() {
+      return request.auth != null
+        && request.auth.token.aud == 'dispatch-customer-beta';
+    }
+
+    function customerBetaAccessEnabled() {
+      return isCustomerBetaProject()
+        && exists(/databases/$(database)/documents/dispatchConfig/billing)
+        && get(/databases/$(database)/documents/dispatchConfig/billing).data.mode == 'customer_beta'
+        && get(/databases/$(database)/documents/dispatchConfig/billing).data.projectId == request.auth.token.aud;
+    }
+
+    function customerBetaOrganizationWritable(organizationId) {
+      return customerBetaAccessEnabled()
+        && exists(/databases/$(database)/documents/organizations/$(organizationId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)).data.managerIds is list
+        && get(/databases/$(database)/documents/organizations/$(organizationId)).data.managerIds.size() > 0
+        && (!('recoveryState' in get(/databases/$(database)/documents/organizations/$(organizationId)).data)
+          || get(/databases/$(database)/documents/organizations/$(organizationId)).data.recoveryState != 'orphaned_no_manager');
+    }
+
     function organizationWriteEnabled(organizationId) {
       return isOrganizationMember(organizationId)
         && !activeGlobalAccountDeletionLock()
-        && exists(/databases/$(database)/documents/organizationBilling/$(organizationId))
-        && (
+        && (isCustomerBetaProject() ? customerBetaOrganizationWritable(organizationId) : (
+          exists(/databases/$(database)/documents/organizationBilling/$(organizationId))
+          && (
           !('accessMode' in get(/databases/$(database)/documents/organizationBilling/$(organizationId)).data)
           || get(/databases/$(database)/documents/organizationBilling/$(organizationId)).data.accessMode != 'read_only'
-        );
+          )
+        ));
+    }
+
+    // Only trusted provisioning with Admin SDK may activate complimentary access.
+    match /dispatchConfig/{documentId} {
+      allow read, write: if false;
     }
 
     function activeGlobalAccountDeletionLock() {

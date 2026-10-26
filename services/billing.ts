@@ -2,6 +2,13 @@ import { httpsCallable } from 'firebase/functions';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, firebaseEmulatorConfiguration, functions } from '@/lib/firebase';
 import { defaultOrganizationBilling, type OrganizationBilling } from '@/lib/subscriptions';
+import { isCustomerBeta } from '@/config/beta-mode';
+
+export const CUSTOMER_BETA_BILLING_DISABLED_MESSAGE = 'Subscriptions are disabled during the complimentary customer beta.';
+
+function assertBillingLifecycleEnabled() {
+  if (isCustomerBeta()) throw new Error(CUSTOMER_BETA_BILLING_DISABLED_MESSAGE);
+}
 
 export type TransferBillingManagerResult = {
   organizationId: string;
@@ -40,12 +47,14 @@ export type RefreshedOrganizationBilling = {
 export type SubscriptionPurchaseStore = 'app_store' | 'play_store' | 'test_store';
 
 function assertRevenueCatStoreIsolation(purchaseStore: SubscriptionPurchaseStore) {
+  assertBillingLifecycleEnabled();
   if (purchaseStore === 'test_store' && !firebaseEmulatorConfiguration.enabled) {
     throw new Error('RevenueCat Test Store billing is restricted to the isolated local Firebase emulator environment.');
   }
 }
 
 export async function transferOrganizationBillingManager(targetManagerId: string) {
+  assertBillingLifecycleEnabled();
   const callable = httpsCallable<
     { targetManagerId: string },
     TransferBillingManagerResult
@@ -89,6 +98,7 @@ export async function prepareOrganizationSubscriptionRestore(purchaseStore: Subs
 }
 
 export async function initializeOrganizationBilling() {
+  assertBillingLifecycleEnabled();
   const callable = httpsCallable<Record<string, never>, RefreshedOrganizationBilling>(
     functions,
     'initializeOrganizationBilling'
@@ -111,6 +121,7 @@ export function watchOrganizationBilling(
   onChange: (billing: OrganizationBilling) => void,
   onError?: (error: Error) => void
 ) {
+  assertBillingLifecycleEnabled();
   return onSnapshot(
     doc(db, 'organizationBilling', organizationId),
     (snapshot) => {

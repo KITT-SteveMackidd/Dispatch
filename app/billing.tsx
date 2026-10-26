@@ -1,6 +1,6 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { isCustomerBeta } from '@/config/beta-mode';
 import { firebaseEmulatorConfiguration } from '@/lib/firebase';
 import {
   billingErrorMessage,
@@ -70,6 +71,113 @@ type BusyAction =
   | null;
 
 export default function BillingScreen() {
+  // A separate component prevents any billing hooks or SDK actions from mounting.
+  return isCustomerBeta() ? <CustomerBetaBillingNotice /> : <OrganizationBillingScreen />;
+}
+
+function CustomerBetaBillingNotice() {
+  const { resolvedThemeMode } = useThemeMode();
+  const insets = useSafeAreaInsets();
+  const colors = resolvedThemeMode === 'dark' ? darkColors : lightColors;
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ padding: 24, paddingBottom: insets.bottom + 24 }}>
+      <Stack.Screen options={{ title: 'Complimentary Beta' }} />
+      <View style={{ backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 18, padding: 24, gap: 14 }}>
+        <MaterialIcons name="science" size={32} color={colors.accent} />
+        <Text accessibilityRole="header" style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>Complimentary customer beta</Text>
+        <Text style={{ color: colors.text, fontSize: 16, lineHeight: 24 }}>Your organization can try Dispatch during the beta without purchasing a subscription.</Text>
+        <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Purchases, renewals, and subscription changes are disabled in this beta. Your normal Manager and team permissions still apply.</Text>
+        <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Use email and password to sign in. Managers share invitation links or codes from Teams. Invitation emails and email reminders are unavailable during this beta.</Text>
+      </View>
+      <CustomerBetaMemberManagement />
+    </ScrollView>
+  );
+}
+
+function CustomerBetaMemberManagement() {
+  const { profile } = useSession();
+  const { resolvedThemeMode } = useThemeMode();
+  const colors = resolvedThemeMode === 'dark' ? darkColors : lightColors;
+  const organizationId = profile?.organizationId || null;
+  const managerId = profile?.role === 'manager' ? profile.uid : null;
+  const [roster, setRoster] = useState<{ organization: Organisation; members: UserProfile[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const requestVersion = useRef(0);
+
+  useEffect(() => {
+    const version = ++requestVersion.current;
+    setRoster(null);
+    setError(null);
+    setNotice(null);
+    if (!organizationId || !managerId) { setLoading(false); return; }
+    setLoading(true);
+    loadOrganizationMembers(organizationId)
+      .then((result) => { if (version === requestVersion.current) setRoster(result); })
+      .catch((failure) => { if (version === requestVersion.current) setError(billingErrorMessage(failure)); })
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
+    return () => { requestVersion.current += 1; };
+  }, [managerId, organizationId]);
+
+  if (!managerId || !organizationId) return null;
+  const isCurrentManager = roster?.organization.id === organizationId && roster.organization.managerIds.includes(managerId);
+  const currentManagers = roster?.members.filter(member => member.role === 'manager' && roster.organization.managerIds.includes(member.uid)) || [];
+  const canRemove = (member: UserProfile) => Boolean(isCurrentManager && member.uid !== managerId
+    && (member.role !== 'manager' || currentManagers.length > 1));
+  const confirmRemoval = (member: UserProfile) => {
+    if (!canRemove(member) || busyRef.current) return;
+    const version = requestVersion.current;
+    Alert.alert(`Remove ${member.displayName}?`, `${member.displayName} will lose access to this organization and its teams.`, [
+      { text: 'Keep member', style: 'cancel' },
+      { text: 'Remove member', style: 'destructive', onPress: () => {
+        if (busyRef.current || version !== requestVersion.current) return;
+        busyRef.current = true;
+        setRemovingId(member.uid);
+        setError(null);
+        void (async () => {
+          try {
+            await removeOrganizationMember(member.uid);
+            const result = await loadOrganizationMembers(organizationId);
+            if (version !== requestVersion.current) return;
+            setRoster(result);
+            setNotice(`${member.displayName} was removed from the organization.`);
+          } catch (failure) {
+            if (version === requestVersion.current) setError(billingErrorMessage(failure));
+          } finally {
+            busyRef.current = false;
+            setRemovingId(null);
+          }
+        })();
+      } },
+    ]);
+  };
+
+  return (
+    <View style={[styles.capacityManagementCard, { marginTop: 18, backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>Organization members</Text>
+      <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>Managers can remove other members. Your organization must keep at least one Manager.</Text>
+      {loading ? <ActivityIndicator accessibilityLabel="Loading organization members" color={colors.accent} /> : null}
+      {error ? <Text accessibilityRole="alert" style={{ color: colors.dangerText, marginTop: 12 }}>{error}</Text> : null}
+      {notice ? <Text style={{ color: colors.successText, marginTop: 12 }}>{notice}</Text> : null}
+      {roster?.members.map(member => (
+        <View key={member.uid} style={[styles.capacityRow, { borderTopColor: colors.border }]}>
+          <View style={styles.flex}>
+            <Text style={[styles.capacityRowTitle, { color: colors.text }]}>{member.displayName}{member.uid === managerId ? ' (You)' : ''}</Text>
+            <Text style={[styles.capacityRowDetail, { color: colors.muted }]}>{member.role === 'manager' ? 'Manager' : 'Crew member'}</Text>
+          </View>
+          {canRemove(member) ? <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${member.displayName}`} disabled={Boolean(removingId)} onPress={() => confirmRemoval(member)} style={[styles.capacityAction, { borderColor: colors.danger }, Boolean(removingId) && styles.disabled]}>
+            <Text style={[styles.capacityActionText, { color: colors.dangerText }]}>{removingId === member.uid ? 'Removing…' : 'Remove'}</Text>
+          </Pressable> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function OrganizationBillingScreen() {
   const { authUser, profile } = useSession();
   const { resolvedThemeMode } = useThemeMode();
   const router = useRouter();

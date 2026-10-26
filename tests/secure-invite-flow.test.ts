@@ -59,7 +59,7 @@ describe('secure invitation flow wiring', () => {
     expect(verifyEmail).toContain("inviteResume: '1'");
   });
 
-  it('always sends account verification through the Dispatch-hosted result page', () => {
+  it('preserves Dispatch verification and invite handoff outside the customer beta transport', () => {
     const session = read('context/session.tsx');
     const signUp = read('app/(auth)/signup.tsx');
     const verifyEmail = read('app/(auth)/verify-email.tsx');
@@ -69,7 +69,9 @@ describe('secure invitation flow wiring', () => {
 
     expect(session).toContain('requestDispatchEmailVerification(inviteToken)');
     expect(session).not.toContain('sendEmailVerification');
-    expect(session).not.toContain("'firebase-auth'");
+    expect(session).toContain("'firebase-auth'");
+    expect(verificationClient).toContain('if (isCustomerBeta())');
+    expect(verificationClient).toContain('await sendEmailVerification(user);');
     expect(verificationClient).toContain("'sendDispatchEmailVerification'");
     expect(verificationFunction).toContain('generateEmailVerificationLink');
     expect(verificationEmail).toContain('https://dispatchcrewmanager.com/verify-email');
