@@ -3,14 +3,14 @@ const { assertStoreBetaConfiguration, getStoreBetaMode } = require('./config/sto
 const buildProfile = process.env.EAS_BUILD_PROFILE || process.env.EXPO_PUBLIC_EAS_BUILD_PROFILE;
 const dispatchBetaMode = getStoreBetaMode(buildProfile);
 const projectId = dispatchBetaMode === 'customer_beta'
-  ? '8ecbfda3-7884-434d-815a-90c8ca5dc253'
+  ? '7d0f7257-64f9-443f-ba27-a75af5fbafaa'
   :
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
   process.env.EAS_PROJECT_ID ||
   '7d0f7257-64f9-443f-ba27-a75af5fbafaa';
 const owner = process.env.EXPO_PUBLIC_EXPO_OWNER || process.env.EXPO_OWNER || 'smackidd';
 const betaGoogleServicesFile = dispatchBetaMode === 'customer_beta'
-  ? process.env.CUSTOMER_BETA_GOOGLE_SERVICES_JSON
+  ? process.env.GOOGLE_SERVICES_JSON || './google-services.json'
   : dispatchBetaMode === 'billing_qa' ? process.env.BILLING_QA_GOOGLE_SERVICES_JSON : undefined;
 const updatesEnabled = buildProfile === 'production' || buildProfile === 'preview';
 const googleIosClientId = /^\d+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '')
@@ -24,7 +24,7 @@ module.exports = ({ config: baseConfig }) => {
 
   if (dispatchBetaMode === 'customer_beta') {
     config.name = 'Dispatch Customer Beta';
-    config.slug = 'dispatch-customer-beta';
+    config.slug = 'dispatch';
   }
 
   if (owner) {
@@ -56,7 +56,7 @@ module.exports = ({ config: baseConfig }) => {
     googleServicesFile: dispatchBetaMode !== 'standard'
       ? betaGoogleServicesFile
       : process.env.GOOGLE_SERVICES_JSON || config.android?.googleServicesFile || './google-services.json',
-    intentFilters: dispatchBetaMode === 'customer_beta' ? [] : [
+    intentFilters: [
       ...(config.android?.intentFilters || []),
       {
         action: 'VIEW',
@@ -193,6 +193,7 @@ module.exports = ({ config: baseConfig }) => {
   config.extra = {
     ...(config.extra || {}),
     dispatchBetaMode,
+    ...(dispatchBetaMode === 'customer_beta' ? { dispatchBetaBackend: 'existing_dispatch' } : {}),
     privacyPolicyUrl: 'https://dispatchcrewmanager.com/privacy',
     supportUrl: 'https://dispatchcrewmanager.com/support',
     eas: {

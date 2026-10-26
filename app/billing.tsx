@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { isCustomerBeta } from '@/config/beta-mode';
+import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import { firebaseEmulatorConfiguration } from '@/lib/firebase';
 import {
   billingErrorMessage,
@@ -76,6 +76,7 @@ export default function BillingScreen() {
 }
 
 function CustomerBetaBillingNotice() {
+  const existingBackend = isExistingDispatchCustomerBeta();
   const { resolvedThemeMode } = useThemeMode();
   const insets = useSafeAreaInsets();
   const colors = resolvedThemeMode === 'dark' ? darkColors : lightColors;
@@ -87,9 +88,12 @@ function CustomerBetaBillingNotice() {
         <Text accessibilityRole="header" style={{ color: colors.text, fontSize: 24, fontWeight: '800' }}>Complimentary customer beta</Text>
         <Text style={{ color: colors.text, fontSize: 16, lineHeight: 24 }}>Your organization can try Dispatch during the beta without purchasing a subscription.</Text>
         <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Purchases, renewals, and subscription changes are disabled in this beta. Your normal Manager and team permissions still apply.</Text>
-        <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Use email and password to sign in. Managers share invitation links or codes from Teams. Invitation emails and email reminders are unavailable during this beta.</Text>
+        <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{existingBackend
+          ? 'Use your existing Dispatch account or create an account with email and password. Managers can email invitation links and codes from Teams.'
+          : 'Use email and password to sign in. Managers share invitation links or codes from Teams. Invitation emails and email reminders are unavailable during this beta.'}</Text>
+        {existingBackend ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Organization member removal and pending invitation management are not available in this beta build.</Text> : null}
       </View>
-      <CustomerBetaMemberManagement />
+      {!existingBackend ? <CustomerBetaMemberManagement /> : null}
     </ScrollView>
   );
 }

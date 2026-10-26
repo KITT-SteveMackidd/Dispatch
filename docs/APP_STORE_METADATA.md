@@ -10,7 +10,7 @@ These URLs are also linked from the in-app Profile screen and exposed in the Exp
 
 ## Subscription beta candidate — October 24, 2026
 
-For the two Android tracks requested October 26, use [ANDROID_BETA_BUILDS.md](./ANDROID_BETA_BUILDS.md): `android-customer-beta` is complimentary Closed testing, and `android-billing-qa` is Internal subscription testing. These profiles supersede the older shared `beta` profile for this Android rollout. Hosted provisioning and signed AABs remain pending; local synthetic bundle exports are not store builds.
+For the Android rollout requested October 26, use [ANDROID_BETA_BUILDS.md](./ANDROID_BETA_BUILDS.md). The owner's latest direction is for `android-customer-beta` to use existing Firebase `dispatch-eb63a` and Expo `@smackidd/dispatch`, with payments hidden and compatibility with the currently deployed backend. Subscription QA stays local; `android-billing-qa` is preparation only. The earlier separate-project build was cancelled. No Google Play upload has occurred.
 
 The user confirmed the local web-to-mobile subscription cross-test works. The candidate includes fetched `origin/master` at `606ca7f55275170a4216056692c0398a850573d9`, Expo SDK 58, shared organization entitlements, duplicate-purchase protection and stable expiry-to-Free handling.
 
@@ -34,6 +34,8 @@ Apple subscription-group reference name: `dispatch_organization_access`. Rank Or
 The USD prices match the web catalog; mobile uses RevenueCat's localized `priceString` when loaded. Its older CAD fallback references and tests still require a consistency review before final store acceptance. The three-day trial request applied to Test Store testing; do not silently replace the documented one-month native trial policy with that test-only duration. No native products or introductory offers were created in this preparation pass.
 
 ### Remaining store release gates
+
+The native subscription prerequisites below apply to a future payment-testing release. They are not required for the current customer Android beta with subscriptions disabled. Do not deploy new billing rules or Functions to the existing project as part of that customer build.
 
 - EAS preview currently points to production Firebase `dispatch-eb63a`. Select a dedicated hosted Dispatch beta backend and deploy the matching Functions, rules and indexes there. Set `REVENUECAT_EXPECTED_ENVIRONMENT=sandbox` on that backend, with server verification and sandbox webhook credentials. Do not change the receipt environment on the shared production backend. The separate project `dispatch-landing-beta` exists but was not verified or repurposed for this use.
 - The RevenueCat project currently has Test Store and Web Billing products, with no Apple/Google app connections. Connect the native apps, configure their six subscriptions/base plans, attach them to `organization_access`, and map the packages in `dispatch_organization_plans_v1`. Store betas require `appl_` / `goog_` public SDK keys; Test Store keys must not be used in release builds. Both native keys are absent from the inspected EAS preview and production environments.

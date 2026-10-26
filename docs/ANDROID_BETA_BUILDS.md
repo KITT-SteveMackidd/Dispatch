@@ -1,83 +1,63 @@
-# Android customer beta and subscription QA
+# Android customer beta using existing Dispatch
 
-Current approved scope: build the customer Android beta against its new hosted Firebase project. **Subscription QA stays local in Expo Go with Test Store and isolated emulators.** The future Android QA profile is prepared but is not provisioned, built or uploaded. Both Android profiles use package `com.smackidd.dispatch`, current SDK 58 source and disabled OTA updates.
+Current owner direction (October 26, 2026): **use the existing Firebase project `dispatch-eb63a` and existing Expo project `@smackidd/dispatch`**. Customer beta users share accounts and organizations with the web app. Subscription QA stays local in Expo Go with RevenueCat Test Store and `demo-dispatch-billing` emulators.
 
-| Purpose | EAS build/submit profile | Firebase project | Play track | Payment behavior |
-| --- | --- | --- | --- | --- |
-| Prospective customers | `android-customer-beta` | `dispatch-customer-beta` | Closed testing (`alpha`), initially draft | Complimentary access; no RevenueCat initialization, checkout, restore, billing transfers or subscription seat limits |
-| Internal payment QA now | Local Expo Go billing harness | `demo-dispatch-billing` emulators | None | RevenueCat Test Store; no Apple/Google billing |
-| Future native payment QA (deferred) | `android-billing-qa` | `dispatch-billing-qa` (not created) | Internal testing, initially draft | Native Google Play sandbox purchases through RevenueCat; every tester must be a license tester |
+| Build | Backend | Payments | Distribution |
+| --- | --- | --- | --- |
+| `android-customer-beta` | Existing `dispatch-eb63a`; Functions in `us-central1` | Checkout, restore and billing controls disabled | Google Play Closed testing (`alpha`), initially draft |
+| Local subscription QA | Existing isolated emulators | RevenueCat Test Store | Expo Go only |
+| `android-billing-qa` | Future dedicated backend, not provisioned | Native sandbox prerequisites still missing | Prepared profile only; do not build/upload now |
 
-`dispatch-customer-beta` (project number `1092767164671`) was created October 26, 2026 with the user's approval and linked to the existing Dispatch billing account ending AF9103. Firestore, Storage and Functions use Montréal (`northamerica-northeast1`). Email/password authentication is enabled. Do not substitute the existing `dispatch-landing-beta`: it contains the landing-site waitlist. Do not overwrite the shared EAS preview environment's existing production Firebase variables.
+The customer profile uses `com.smackidd.dispatch`, SDK58, the existing Android signing key and FCM credentials. OTA updates are disabled. No new service-account key or push credential upload is needed. The profile explicitly supplies the verified Firebase Web configuration; the shared EAS preview environment has an outdated Web App ID and must not be relied upon for that value.
 
-Customer verification emails use Firebase Authentication's default project-hosted action handler, not the production website. Managers create invitations and use **Share invitation** or copy the code; no invitation emails are sent. Customer email reminders are disabled until a dedicated sender is configured. These limitations are explicit in the app. Push notifications need a matching FCM credential before device delivery can be verified.
+## Existing backend compatibility
 
-The customer profile uses a separate Expo project, `@smackidd/dispatch-customer-beta` (`8ecbfda3-7884-434d-815a-90c8ca5dc253`), with the existing Android upload signing key. This isolates FCM credentials from production's `@smackidd/dispatch`. The first customer version code starts at least at 4, above the existing package's code 3; later releases must keep codes increasing across both Expo projects. The Android display name is **Dispatch Customer Beta**. Production website app links are excluded; beta invitations use the native `dispatch://invite/…` link or a pasted code.
+Read-only inspection on October 26 confirmed the existing backend predates subscription enforcement. Its Firestore rules match `origin/master` at `606ca7f`; no billing/seat restrictions or RevenueCat endpoints are deployed. Do not deploy the subscription branch's Functions or rules wholesale to this project: doing so would change access for existing organizations.
 
-## Customer access authority
+The customer app sets `dispatchBetaMode=customer_beta` and `dispatchBetaBackend=existing_dispatch`. These select compatible client behavior and hide payments; they do not grant server permissions. Ordinary organization and role rules remain authoritative.
 
-Only trusted provisioning may write `dispatchConfig/billing` in `dispatch-customer-beta`:
+- Worker actions use the retained Firestore transaction workflows supported by the existing rules, with caller, organization and role checks.
+- Verification emails and secure invitation create/get/claim use existing Dispatch endpoints and email delivery.
+- Organization member removal, pending-invitation list/cancel, and automatic legacy invitation adoption are unavailable in this build because those endpoints are not deployed. Unsupported controls are not mounted and helper calls fail locally. Secure invitation links and codes remain supported.
+- Account deletion uses the existing endpoint and its existing behavior. Do not promise the newer orphaned-organization recovery behavior without a separately reviewed backend rollout.
+- Google sign-in and Places remain explicitly disabled in this candidate pending native certificate/configuration validation; email/password and manual venue entry remain available.
 
-```json
-{ "mode": "customer_beta", "projectId": "dispatch-customer-beta" }
-```
+Local emulator/Test Store QA keeps the newer subscription workflows. The shared Firebase project must never receive Test Store keys, emulator hosts, or a sandbox receipt environment.
 
-Clients cannot read or change this policy. Functions validate the runtime project and policy. Firestore and Storage validate the authenticated token audience and trusted policy. Missing or mismatched policy fails closed. The customer UI flag controls presentation only; it cannot grant backend access. Organization membership, manager permissions, deletion locks and tenant boundaries remain enforced.
+## Validate and build
 
-The customer environment creates no paid entitlements. Its payment endpoints and RevenueCat webhook reject calls. Native payment secrets are unnecessary there. No subscription seat cap applies during this complimentary beta. Billing QA uses normal subscription capacity and sandbox receipt verification, with no customer policy document.
-
-If the last Manager deletes their account, the organization remains read-only, including uploads. Account deletion writes trusted recovery markers to the organization, surviving profiles and chat threads. Support-led recovery must assign a valid Manager and clear those markers together; clients cannot clear them. Existing history and attachments remain readable.
-
-## Hosted prerequisites
-
-1. Customer provisioning is complete. A future hosted billing QA project requires renewed authorization; do not create it under the current scope. Never copy production users or customer data.
-2. Register a Web Firebase app for the JavaScript SDK and an Android app with package `com.smackidd.dispatch` in each project. Configure the intended authentication providers. Register the Play App Signing certificate SHA fingerprints for Google sign-in; EAS upload-key fingerprints alone are not sufficient for a Play-installed app.
-3. Deploy the matching Functions, Firestore/Storage rules and indexes only to the customer project. Do not deploy the production email extension configuration. Activate the trusted complimentary policy only in the customer project. Verify auth, invitation creation/acceptance, events, teams, attachments and account deletion against the hosted backend.
-4. Replace `CONFIGURE_AFTER_PROVISIONING` placeholders in each `eas.json` profile with that project's authoritative **public** Firebase Web app configuration. Placeholders intentionally block builds; EAS does not accept empty environment strings. Optional Google sign-in and Places variables explicitly use `disabled` to prevent inheriting production credentials. Configure both Web and Android OAuth client IDs from the corresponding project to enable Google sign-in. Email/password sign-in and manual venue entry remain available while these integrations are disabled. Do not put server secrets into `eas.json` or `EXPO_PUBLIC_*`.
-5. Add separate EAS file variables `CUSTOMER_BETA_GOOGLE_SERVICES_JSON` and `BILLING_QA_GOOGLE_SERVICES_JSON` to the preview environment. Secret file variables are unavailable during local app-config evaluation: also save the corresponding files under ignored `.local-data/android-beta/` and set the same named process variables to their absolute local paths before running the checks or `eas build`. On the worker, EAS supplies its own downloaded-file paths. The build must read the profile's named file; it never falls back to the production services file. Check project ID, project number and Android package.
-6. For billing QA only, connect the Google Play app to RevenueCat, configure the six products/base plans from `APP_STORE_METADATA.md`, and fill its `goog_` public key in the QA profile. Set server `REVENUECAT_EXPECTED_ENVIRONMENT=sandbox`, the correct RevenueCat project, native app allowlist, required server API secrets and authenticated sandbox webhook. Verify webhook delivery. Do not use the local Test Store key in either store build.
-
-The profile-level public variables override shared EAS values. The build policy independently rejects production/demo projects, mismatched services files, local emulator connections, missing Firebase configuration and payment credentials in the customer profile. A valid local configuration does not prove the hosted backend is ready.
-
-## Local checks
-
-Run from this exact subscription checkout, not the stale OneDrive mobile copy:
+Run from the subscription worktree:
 
 ```powershell
 Set-Location 'C:\Users\steve\OneDrive\Documents\My Projects\Codex Projects\Dispatch\worktrees\organization-subscriptions-revenuecat'
 npm run check
 npm --prefix functions run check
-npm run test:android-beta-rules
 npm run android:customer:check
-npm run android:billing:check
+npm run test:existing-customer-workers
 ```
 
-The customer check passes with its provisioned values and local services-file variable. The future QA check intentionally fails while hosted configuration is deferred. The rule tests use isolated ports 18180, 19299, 14500 and 14501, leaving the existing Expo Go billing harness untouched. The dedicated suite exercises both customer and ordinary subscription authorization; it is separate from the older pre-subscription Firestore suite. Set `GCLOUD_PROJECT` to the exact target during Firebase deployment discovery so customer deployments omit RevenueCat parameter declarations as well as endpoint secret bindings; manifest tests verify that QA and production retain their parameters.
-
-`firebase.json` explicitly excludes `.env`, `.env.*`, `.secret*`, dependencies and backend tests from Functions archives. The backend regression suite exercises Firebase CLI's actual file enumerator. Never deploy relying only on Git ignore or EAS ignore: Firebase packaging has separate rules.
-
-Local verification on October 26: 312 mobile tests, 203 backend tests, 10 dedicated Firestore/Storage cases, TypeScript, dependency and SDK checks passed. Android Hermes export passed with actual customer Firebase/Expo configuration. The existing local Expo server served SDK58 and built its iOS bundle successfully. These checks do not replace signed-artifact installation or physical-device testing.
-
-## Build and upload after hosted verification
-
-Use a current EAS CLI. Set `EXPO_NO_DOTENV=1` so local emulator/Test Store credentials never enter an artifact. Build only the customer candidate now; record its build ID, commit, version code, Firebase project and mode. The profiles share one package and globally increasing version codes.
+The existing-backend worker integration suite uses a snapshot of the live rules and isolated local emulator ports. Physical-device checks and actual email delivery remain separate from automated tests. Preserve the installed physical-iPhone Expo Go SDK58 check for local QA.
 
 ```powershell
 $env:EXPO_NO_DOTENV = '1'
-$env:CUSTOMER_BETA_GOOGLE_SERVICES_JSON = (Resolve-Path '.local-data/android-beta/customer-google-services.json').Path
+$env:EAS_BUILD_PROFILE = 'android-customer-beta'
+$customerProfile = (Get-Content eas.json -Raw | ConvertFrom-Json).build.'android-customer-beta'.env
+$customerProfile.PSObject.Properties | ForEach-Object { [Environment]::SetEnvironmentVariable($_.Name, $_.Value, 'Process') }
 npx eas-cli@latest build --platform android --profile android-customer-beta
 ```
 
-Before uploading, complete Play developer verification, create the Dispatch app and its closed track, configure Play App Signing, and complete the required listing/policy declarations. Verify that the closed-track API identifier is `alpha`; update the submit profile if the created closed track uses another identifier. A manual Console upload is also possible. EAS Submit requires a scoped Google service-account credential authorized for this app.
+Use the existing `GOOGLE_SERVICES_JSON` EAS file variable. Local config evaluation can use the repository's matching `google-services.json`. Build guards check Firebase project number, Android package, no RevenueCat keys, disabled emulators, and disabled dotenv loading. Record the exact commit, build ID, version code and signing certificate.
 
-Submit each **specific verified build ID**, never `--latest` across these two modes:
+Before upload, the Account Holder must finish Google Play app creation and declarations. Verify the closed-track API identifier is `alpha`; change the submit profile if needed. Upload only the specific verified build, not `--latest`. EAS Submit requires an app-authorized service account, or use a manual Console upload.
 
 ```powershell
-npx eas-cli@latest submit --platform android --profile android-customer-beta --id CUSTOMER_BUILD_ID
+npx eas-cli@latest submit --platform android --profile android-customer-beta --id VERIFIED_BUILD_ID
 ```
 
-Both submissions remain drafts. Validate installed artifacts on a physical Android device before rolling out to the intended groups. Confirm the customer artifact shows complimentary access and no purchase UI; test creating an organization, accepting more than five members, event/team edits, chat/template uploads, member removal and account deletion. Verify unauthorized users/other organizations remain denied. For QA, verify the Google purchase sheet indicates a test payment method and check purchase, expiry, restore, upgrade and webhook behavior.
+Keep the release as a draft until installation, sign-in, invitations, worker actions, chat/attachments and push notifications are checked on an Android device. Do not merge to master for release: master pushes automatically publish production OTA updates.
 
-Use separate Google tester accounts/groups and separate Dispatch accounts for the two backends. Internal-track opt-in takes precedence over closed/open testing; anyone moving to the customer track must opt out of internal testing first. Do not promote the QA artifact to closed or production. No automatic payment or subscription conversion is promised to customer beta testers.
+## Superseded setup
 
-References: [EAS profiles](https://docs.expo.dev/build/eas-json/), [Android submission](https://docs.expo.dev/submit/android/), [Google test tracks](https://support.google.com/googleplay/android-developer/answer/9845334), [Google license testing](https://developer.android.com/google/play/billing/test), [RevenueCat Test Store restrictions](https://www.revenuecat.com/docs/getting-started/configuring-sdk).
+Under earlier approval, `dispatch-customer-beta` and `@smackidd/dispatch-customer-beta` were created. After the owner chose the existing project instead, build `b790c923-d2c0-4eef-a361-6a965c4602c9` was cancelled and all nine synthetic accounts and their recorded data were removed. No AAB was uploaded to Google Play. Those unused cloud projects/resources have not been deleted; cleanup requires the owner's explicit approval.
+
+Firebase source packaging has separate exclusions from Git/EAS. `firebase.json` now excludes `.env`, `.env.*`, `.secret*`, dependencies and tests; a backend regression test checks the CLI's actual file enumerator. These protections apply to any later authorized backend deployment.

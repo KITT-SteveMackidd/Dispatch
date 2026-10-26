@@ -14,7 +14,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { isCustomerBeta } from '@/config/beta-mode';
+import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
@@ -135,7 +135,7 @@ export default function VerifyEmailScreen() {
             <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
               You must verify {authUser?.email || 'your account email'} before accessing manager or worker workflows.
             </Text>
-            {isCustomerBeta() ? <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
+            {isCustomerBeta() && !isExistingDispatchCustomerBeta() ? <Text style={[styles.subtitle, isDarkMode ? styles.subtitleDark : styles.subtitleLight]}>
               After opening the verification link, return to Dispatch and tap “I’ve verified, continue”.
             </Text> : null}
 

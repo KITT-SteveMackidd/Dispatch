@@ -12,3 +12,8 @@ export function isCustomerBeta(): boolean {
   return getDispatchBetaMode() === 'customer_beta';
 }
 
+/** Existing Dispatch backend uses its deployed pre-subscription workflows. */
+export function isExistingDispatchCustomerBeta(): boolean {
+  return isCustomerBeta() && Constants.expoConfig?.extra?.dispatchBetaBackend === 'existing_dispatch';
+}
+

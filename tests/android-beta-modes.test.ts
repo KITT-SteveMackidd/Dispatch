@@ -6,7 +6,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { getStoreBetaMode, getStoreBetaPolicyErrors } from '../config/store-beta-policy';
 
 function candidate(profile: 'android-customer-beta' | 'android-billing-qa') {
-  const project = profile === 'android-customer-beta' ? 'dispatch-customer-beta' : 'dispatch-billing-qa';
+  const project = profile === 'android-customer-beta' ? 'dispatch-eb63a' : 'dispatch-billing-qa';
+  const number = profile === 'android-customer-beta' ? '94634534771' : '123456789012';
   return {
     buildProfile: profile,
     platform: 'android',
@@ -17,8 +18,8 @@ function candidate(profile: 'android-customer-beta' | 'android-billing-qa') {
       EXPO_PUBLIC_FIREBASE_API_KEY: `AIza${'B'.repeat(35)}`,
       EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: `${project}.firebaseapp.com`,
       EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: `${project}.firebasestorage.app`,
-      EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '123456789012',
-      EXPO_PUBLIC_FIREBASE_APP_ID: '1:123456789012:web:abcdef1234567890',
+      EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: number,
+      EXPO_PUBLIC_FIREBASE_APP_ID: `1:${number}:web:abcdef1234567890`,
       EXPO_PUBLIC_USE_FIREBASE_EMULATORS: 'false',
       EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY: profile === 'android-billing-qa' ? 'goog_fixture' : '',
     } as Record<string, string>,
@@ -47,10 +48,10 @@ describe('Android beta build modes', () => {
     expect(getStoreBetaPolicyErrors(qa).some(error => error.includes('goog_'))).toBe(true);
   });
 
-  it.each(['android-customer-beta', 'android-billing-qa'] as const)('%s rejects inherited production and local configuration', profile => {
+  it.each(['android-customer-beta', 'android-billing-qa'] as const)('%s rejects the wrong backend and local payment configuration', profile => {
     const value = candidate(profile);
     for (const [key, unsafe] of [
-      ['EXPO_PUBLIC_FIREBASE_PROJECT_ID', 'dispatch-eb63a'],
+      ['EXPO_PUBLIC_FIREBASE_PROJECT_ID', profile === 'android-customer-beta' ? 'dispatch-customer-beta' : 'dispatch-eb63a'],
       ['EXPO_PUBLIC_FIREBASE_PROJECT_ID', 'demo-dispatch-billing'],
       ['EXPO_PUBLIC_REVENUECAT_TEST_API_KEY', 'test_fixture'],
       ['EXPO_PUBLIC_USE_FIREBASE_EMULATORS', 'true'],
@@ -60,12 +61,12 @@ describe('Android beta build modes', () => {
       expect(getStoreBetaPolicyErrors({ ...value, env: { ...value.env, [key]: unsafe } })).not.toEqual([]);
     }
     expect(getStoreBetaPolicyErrors({ ...value, platform: 'ios' })).not.toEqual([]);
-    expect(getStoreBetaPolicyErrors({ ...value, androidGoogleServicesProjectId: 'dispatch-eb63a' })).not.toEqual([]);
+    expect(getStoreBetaPolicyErrors({ ...value, androidGoogleServicesProjectId: 'another-project' })).not.toEqual([]);
   });
 
   it('does not allow billing QA and customer beta to share a backend', () => {
     const customer = candidate('android-customer-beta');
-    expect(getStoreBetaPolicyErrors({ ...customer, env: candidate('android-billing-qa').env }).some(error => error.includes('dedicated Firebase project'))).toBe(true);
+    expect(getStoreBetaPolicyErrors({ ...customer, env: candidate('android-billing-qa').env }).some(error => error.includes('designated Firebase project'))).toBe(true);
   });
 
   it('rejects purchase keys in customer beta', () => {
@@ -99,22 +100,24 @@ describe('Android beta build modes', () => {
 
   it.each(['android-customer-beta', 'android-billing-qa'] as const)('resolves %s manifest with no OTA and the matching backend services file', profile => {
     const value = candidate(profile);
+    const projectNumber = value.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
     const file = join(fixtureRoot, `${profile}.json`);
     const services = {
-      project_info: { project_id: value.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID, project_number: '123456789012' },
-      client: [{ client_info: { mobilesdk_app_id: '1:123456789012:android:abcdef', android_client_info: { package_name: 'com.smackidd.dispatch' } } }],
+      project_info: { project_id: value.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID, project_number: projectNumber },
+      client: [{ client_info: { mobilesdk_app_id: `1:${projectNumber}:android:abcdef`, android_client_info: { package_name: 'com.smackidd.dispatch' } } }],
     };
     writeFileSync(file, JSON.stringify(services));
-    const env = { ...process.env, ...value.env, EAS_BUILD_PROFILE: profile, EAS_BUILD_PLATFORM: 'android', CUSTOMER_BETA_GOOGLE_SERVICES_JSON: file, BILLING_QA_GOOGLE_SERVICES_JSON: file, GOOGLE_SERVICES_JSON: 'production-must-not-be-used.json' };
-    const script = "const c=require('./app.config.js')({config:{android:{package:'com.smackidd.dispatch'}}});console.log(JSON.stringify({mode:c.extra.dispatchBetaMode,updates:c.updates,services:c.android.googleServicesFile,projectId:c.extra.eas.projectId,slug:c.slug,links:c.android.intentFilters}));";
+    const env = { ...process.env, ...value.env, EAS_BUILD_PROFILE: profile, EAS_BUILD_PLATFORM: 'android', BILLING_QA_GOOGLE_SERVICES_JSON: file, GOOGLE_SERVICES_JSON: profile === 'android-customer-beta' ? file : 'production-must-not-be-used.json' };
+    const script = "const c=require('./app.config.js')({config:{android:{package:'com.smackidd.dispatch'}}});console.log(JSON.stringify({mode:c.extra.dispatchBetaMode,backend:c.extra.dispatchBetaBackend,updates:c.updates,services:c.android.googleServicesFile,projectId:c.extra.eas.projectId,slug:c.slug,links:c.android.intentFilters}));";
     const result = JSON.parse(execFileSync(process.execPath, ['-e', script], { env, encoding: 'utf8' }));
     expect(result).toMatchObject({ mode: getStoreBetaMode(profile), updates: { enabled: false }, services: file });
     if (profile === 'android-customer-beta') {
-      expect(result).toMatchObject({ projectId: '8ecbfda3-7884-434d-815a-90c8ca5dc253', slug: 'dispatch-customer-beta', links: [] });
+      expect(result).toMatchObject({ projectId: '7d0f7257-64f9-443f-ba27-a75af5fbafaa', slug: 'dispatch', backend: 'existing_dispatch' });
+      expect(result.links[0].data[0].host).toBe('dispatchcrewmanager.com');
     } else {
       expect(result.projectId).not.toBe('8ecbfda3-7884-434d-815a-90c8ca5dc253');
     }
-    writeFileSync(file, JSON.stringify({ ...services, project_info: { ...services.project_info, project_number: '94634534771' } }));
+    writeFileSync(file, JSON.stringify({ ...services, project_info: { ...services.project_info, project_number: '111111111111' } }));
     expect(() => execFileSync(process.execPath, ['-e', script], { env, stdio: 'pipe' })).toThrow();
   });
 });

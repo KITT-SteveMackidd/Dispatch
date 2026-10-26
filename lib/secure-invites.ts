@@ -1,5 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/lib/firebase';
+import { isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 
 export type SecureInviteKind = 'worker' | 'manager';
 
@@ -71,6 +72,7 @@ export async function claimSecureDispatchInvite(tokenOrCode: string) {
 }
 
 export async function cancelSecureDispatchInvite(inviteId: string) {
+  if (isExistingDispatchCustomerBeta()) throw new Error('Invitation cancellation is not available in this beta build.');
   const callable = httpsCallable<{ inviteId: string }, { cancelled: true; inviteId: string }>(
     functions,
     'cancelDispatchInvite'
@@ -80,6 +82,7 @@ export async function cancelSecureDispatchInvite(inviteId: string) {
 }
 
 export async function adoptLegacyDispatchInvites() {
+  if (isExistingDispatchCustomerBeta()) return { adopted: false, unavailable: true };
   const callable = httpsCallable<Record<string, never>, {
     adopted: boolean;
     organizationId?: string;
@@ -90,6 +93,7 @@ export async function adoptLegacyDispatchInvites() {
 }
 
 export async function listOrganizationPendingInvites() {
+  if (isExistingDispatchCustomerBeta()) throw new Error('Pending invitation management is not available in this beta build.');
   const callable = httpsCallable<Record<string, never>, { invites: PendingOrganizationInvite[] }>(
     functions,
     'listOrganizationPendingInvites'

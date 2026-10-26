@@ -11,7 +11,7 @@ import { headerLogoSource } from '@/constants/branding';
 import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
 import { canResetDispatchDatabase, resetDispatchDatabase } from '@/lib/admin-database-reset';
 import { DISPATCH_PRIVACY_URL, DISPATCH_SUPPORT_URL } from '@/constants/legal';
-import { isCustomerBeta } from '@/config/beta-mode';
+import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import {
   KeyboardAwareDrawer,
   KeyboardAwareDrawerScrollView,
@@ -123,7 +123,9 @@ export default function ProfileScreen() {
     if (!profile?.uid || deletingAccount) return;
 
     const managerSoleOrgMessage = profile.role === 'manager' && profile.organizationId
-      ? ' If you are the only Manager, an organization with remaining members is preserved read-only until Manager recovery; an empty organization is deleted.'
+      ? isExistingDispatchCustomerBeta()
+        ? ' If you are the only Manager in this organization, the organization will also be deleted and workers will no longer belong to it.'
+        : ' If you are the only Manager, an organization with remaining members is preserved read-only until Manager recovery; an empty organization is deleted.'
       : '';
     const subscriptionDeletionMessage = customerBeta ? ''
       : ' Deleting Dispatch does not cancel an Apple or Google subscription. If this account pays for an organization, paid access is released immediately, Billing Manager responsibility passes to another Manager when available, and store renewal may keep charging until you cancel it with Apple or Google. RevenueCat customer data is never deleted automatically: a minimal fenced record remains for secure manual review after signed-in devices have drained.';

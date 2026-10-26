@@ -1,6 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { sendEmailVerification } from 'firebase/auth';
-import { isCustomerBeta } from '@/config/beta-mode';
+import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import { auth, functions } from '@/lib/firebase';
 
 export type DispatchEmailVerificationResult = {
@@ -12,7 +12,7 @@ export type DispatchEmailVerificationResult = {
 export async function requestDispatchEmailVerification(
   inviteToken?: string
 ): Promise<DispatchEmailVerificationResult> {
-  if (isCustomerBeta()) {
+  if (isCustomerBeta() && !isExistingDispatchCustomerBeta()) {
     const user = auth.currentUser;
     if (!user) throw new Error('Sign in before requesting a verification email.');
     if (user.emailVerified) return { queued: false, alreadyVerified: true, transport: 'firebase-auth' };

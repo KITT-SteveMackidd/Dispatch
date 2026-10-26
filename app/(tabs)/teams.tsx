@@ -14,7 +14,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
-import { isCustomerBeta } from '@/config/beta-mode';
+import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import { headerLogoSource } from '@/constants/branding';
 import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
 import {
@@ -71,6 +71,7 @@ export default function TeamsScreen() {
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const customerBeta = isCustomerBeta();
+  const shareOnlyInvitations = customerBeta && !isExistingDispatchCustomerBeta();
   const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
 
   const [teams, setTeams] = useState<Team[]>([]);
@@ -546,7 +547,7 @@ export default function TeamsScreen() {
         ListEmptyComponent={(
           <Text style={[styles.emptyText, isDarkMode ? styles.mutedDark : styles.mutedLight]}>
             {profile?.role === 'worker'
-              ? customerBeta ? 'No team invite yet. Ask your Manager to share an invitation link or code.' : 'No team invite yet. Please check email for an invitation link.'
+              ? shareOnlyInvitations ? 'No team invite yet. Ask your Manager to share an invitation link or code.' : 'No team invite yet. Please check email for an invitation link.'
               : 'No conversations yet.'}
           </Text>
         )}
@@ -662,7 +663,7 @@ export default function TeamsScreen() {
                     <Text style={[styles.fieldLabel, isDarkMode ? styles.textDark : styles.textLight]}>Delivery email</Text>
                     <KeyboardAwareDrawerTextInput value={inviteEmail} onChangeText={setInviteEmail} autoCapitalize="none" keyboardType="email-address" style={[styles.input, isDarkMode ? styles.inputDark : styles.inputLight]} placeholder="name@example.com" placeholderTextColor="#64748b" />
                     <Text style={[styles.inviteEmailHint, isDarkMode ? styles.textDark : styles.textLight]}>
-                      {customerBeta
+                      {shareOnlyInvitations
                         ? 'Enter your teammate’s email to identify the invitation. Then share the link or code yourself; beta invitation emails are not sent. They can join using their Dispatch email account.'
                         : 'This address only receives the invitation. The recipient can join with Apple, Google, or a different Dispatch email.'}
                     </Text>

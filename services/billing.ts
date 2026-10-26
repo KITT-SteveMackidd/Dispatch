@@ -2,7 +2,7 @@ import { httpsCallable } from 'firebase/functions';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, firebaseEmulatorConfiguration, functions } from '@/lib/firebase';
 import { defaultOrganizationBilling, type OrganizationBilling } from '@/lib/subscriptions';
-import { isCustomerBeta } from '@/config/beta-mode';
+import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 
 export const CUSTOMER_BETA_BILLING_DISABLED_MESSAGE = 'Subscriptions are disabled during the complimentary customer beta.';
 
@@ -108,6 +108,7 @@ export async function initializeOrganizationBilling() {
 }
 
 export async function removeOrganizationMember(targetUserId: string) {
+  if (isExistingDispatchCustomerBeta()) throw new Error('Organization member removal is not available in this beta build.');
   const callable = httpsCallable<
     { targetUserId: string },
     { removed: true; organizationId: string; targetUserId: string; targetRole: 'manager' | 'worker' }

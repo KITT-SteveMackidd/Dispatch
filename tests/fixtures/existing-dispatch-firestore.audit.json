@@ -1,0 +1,8 @@
+{
+  "project": "dispatch-eb63a",
+  "auditedAt": "2026-10-26",
+  "source": "Read-only deployed Firestore rules export; verified identical to origin/master after CRLF normalization",
+  "masterRevision": "606ca7f55275170a4216056692c0398a850573d9",
+  "normalizedSha256": "1940c9f9f342d99c2a91c3c16ca0af464b7e0b3e58973e7794d8294cea31dc82",
+  "usage": "Local emulator verification only. Do not deploy this fixture."
+}

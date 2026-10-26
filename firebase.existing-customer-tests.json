@@ -1,0 +1,10 @@
+{
+  "firestore": { "rules": "tests/fixtures/existing-dispatch-firestore.rules" },
+  "emulators": {
+    "firestore": { "host": "127.0.0.1", "port": 18180 },
+    "hub": { "host": "127.0.0.1", "port": 14500 },
+    "logging": { "host": "127.0.0.1", "port": 14501 },
+    "ui": { "enabled": false },
+    "singleProjectMode": false
+  }
+}

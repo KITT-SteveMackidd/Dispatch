@@ -70,7 +70,7 @@ describe('secure invitation flow wiring', () => {
     expect(session).toContain('requestDispatchEmailVerification(inviteToken)');
     expect(session).not.toContain('sendEmailVerification');
     expect(session).toContain("'firebase-auth'");
-    expect(verificationClient).toContain('if (isCustomerBeta())');
+    expect(verificationClient).toContain('if (isCustomerBeta() && !isExistingDispatchCustomerBeta())');
     expect(verificationClient).toContain('await sendEmailVerification(user);');
     expect(verificationClient).toContain("'sendDispatchEmailVerification'");
     expect(verificationFunction).toContain('generateEmailVerificationLink');

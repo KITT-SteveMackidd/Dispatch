@@ -28,6 +28,7 @@ import type { DeleteDispatchAccountResult } from '@/lib/account-deletion';
 import { logOutDispatchRevenueCatUser } from '@/services/revenuecat';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { requestDispatchEmailVerification } from '@/lib/email-verification';
+import { isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 
 type AppleAuthenticationModule = typeof import('expo-apple-authentication');
 type CryptoModule = typeof import('expo-crypto');
@@ -161,6 +162,9 @@ function getInviteServices() {
 }
 
 async function syncInviteLinking(userId: string, email?: string | null, role?: AppRole | null) {
+  // This endpoint is not deployed on the existing Dispatch backend. Secure
+  // invitation links and codes are claimed separately by the invite screen.
+  if (isExistingDispatchCustomerBeta()) return;
   const normalizedEmail = normalizeEmail(email);
   if (!userId || !normalizedEmail || (role && !['manager', 'worker'].includes(role))) return;
   const { adoptLegacyDispatchInvites } = getInviteServices();

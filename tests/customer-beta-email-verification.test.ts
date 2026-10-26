@@ -19,36 +19,42 @@ function loadSource(relative: string, mocks: Record<string, unknown>) {
   return module.exports;
 }
 
-function harness(customerBeta: boolean, signedIn = true) {
+function harness(customerBeta: boolean, signedIn = true, existingBackend = false) {
   const user = { uid: 'beta-user', email: 'beta@example.test', emailVerified: false };
   const auth = { currentUser: signedIn ? user : null };
   const sendEmailVerification = vi.fn().mockResolvedValue(undefined);
   const invokeCallable = vi.fn().mockResolvedValue({ data: { queued: true, alreadyVerified: false } });
   const getFunctions = vi.fn(() => ({}));
   const httpsCallable = vi.fn(() => invokeCallable);
+  const adoptLegacyDispatchInvites = vi.fn().mockResolvedValue({ adopted: false });
   const firebaseAuth = {
     sendEmailVerification,
     createUserWithEmailAndPassword: vi.fn(async () => { auth.currentUser = user; return { user }; }),
+    signInWithEmailAndPassword: vi.fn(async () => { auth.currentUser = user; return { user }; }),
     updateProfile: vi.fn().mockResolvedValue(undefined),
     signOut: vi.fn(async () => { auth.currentUser = null; }),
   };
-  const functions = { app: 'configured-dispatch-app', region: customerBeta ? 'northamerica-northeast1' : 'us-central1' };
+  const functions = { app: 'configured-dispatch-app', region: customerBeta && !existingBackend ? 'northamerica-northeast1' : 'us-central1' };
+  const betaMode = { isCustomerBeta: () => customerBeta, isExistingDispatchCustomerBeta: () => existingBackend };
   const firebase = { auth, functions, db: {}, firebaseConfigError: null };
   const verification = loadSource('lib/email-verification.ts', {
-    '@/config/beta-mode': { isCustomerBeta: () => customerBeta }, '@/lib/firebase': firebase,
+    '@/config/beta-mode': betaMode, '@/lib/firebase': firebase,
     'firebase/auth': firebaseAuth, 'firebase/functions': { getFunctions, httpsCallable },
   });
   const session = loadSource('context/session.tsx', {
+    '@/config/beta-mode': betaMode,
     react: { createContext: () => ({ Provider: 'SessionProvider' }), useEffect: () => {}, useMemo: (factory: () => unknown) => factory(), useState: (value: unknown) => [value, vi.fn()] },
-    'react-native': { Platform: { OS: 'android' } }, 'firebase/auth': firebaseAuth, 'firebase/firestore': {},
+    'react-native': { Platform: { OS: 'android' } }, 'firebase/auth': firebaseAuth,
+    'firebase/firestore': { doc: vi.fn(), getDoc: vi.fn().mockResolvedValue({ exists: () => false }) },
     '@/lib/firebase': firebase, '@/lib/sentry': {},
     '@/services/push-token-session': { unregisterCurrentDevicePushToken: async () => {}, clearDispatchNotificationState: async () => {}, forgetRegisteredDevicePushToken: () => {} },
     '@/lib/chat-list-membership': {}, '@/lib/account-deletion': {},
     '@/services/revenuecat': { logOutDispatchRevenueCatUser: async () => false },
-    '@/lib/email-identity': {}, '@/lib/email-verification': verification,
+    '@/lib/email-identity': { normalizeEmail: (email: string) => email.trim().toLowerCase() }, '@/lib/email-verification': verification,
+    '@/lib/secure-invites': { adoptLegacyDispatchInvites },
   });
   return {
-    auth, functions, user, sendEmailVerification, getFunctions, httpsCallable, invokeCallable,
+    auth, functions, user, sendEmailVerification, getFunctions, httpsCallable, invokeCallable, adoptLegacyDispatchInvites,
     request: verification.requestDispatchEmailVerification,
     session: session.SessionProvider({ children: null }).props.value,
   };
@@ -71,6 +77,26 @@ describe('customer beta email verification transport', () => {
     expect(fixture.httpsCallable).toHaveBeenCalledWith(fixture.functions, 'sendDispatchEmailVerification');
     expect(fixture.invokeCallable).toHaveBeenCalledWith({ inviteToken: 'original-invite' });
     expect(fixture.sendEmailVerification).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing-backend beta signup and invite-aware resend on Dispatch SMTP verification', async () => {
+    const fixture = harness(true, false, true);
+    await expect(fixture.session.signUp({ email: 'beta@example.test', password: 'local-test-only', displayName: 'Beta Tester', inviteToken: 'existing-invite' }))
+      .resolves.toMatchObject({ queued: true, transport: 'dispatch-mail' });
+    expect(fixture.httpsCallable).toHaveBeenCalledWith(fixture.functions, 'sendDispatchEmailVerification');
+    expect(fixture.invokeCallable).toHaveBeenCalledWith({ inviteToken: 'existing-invite' });
+    expect(fixture.sendEmailVerification).not.toHaveBeenCalled();
+    fixture.invokeCallable.mockRejectedValue(new Error('Dispatch mail unavailable'));
+    await expect(fixture.session.sendVerificationEmail('existing-invite')).rejects.toThrow('Dispatch mail unavailable');
+    expect(fixture.sendEmailVerification).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('sign-in skips unavailable legacy adoption only on the existing beta backend: %s', async (existingBackend) => {
+    const fixture = harness(true, false, existingBackend);
+    fixture.user.emailVerified = true;
+    await fixture.session.signIn('beta@example.test', 'local-test-only');
+    expect(fixture.auth.currentUser).toBe(fixture.user);
+    expect(fixture.adoptLegacyDispatchInvites).toHaveBeenCalledTimes(existingBackend ? 0 : 1);
   });
 
   it('requires the signed-in customer account and never pretends a missing user got mail', async () => {

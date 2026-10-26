@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:firestore-rules": "firebase emulators:exec --only firestore --project dispatch-rules-test \"node --test tests/firestore-rules.node.mjs\"",
     "test:android-beta-rules": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-android-beta-rules.ps1",
+    "test:existing-customer-workers": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-existing-customer-workers.ps1",
     "android:customer:check": "node scripts/check-android-beta-config.mjs android-customer-beta",
     "android:billing:check": "node scripts/check-android-beta-config.mjs android-billing-qa",
     "check": "npm run expo:compatibility && expo install --check && npm run typecheck && npm run test",

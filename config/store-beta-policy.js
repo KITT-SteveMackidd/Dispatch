@@ -34,8 +34,10 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
   const targetPlatform = clean(platform);
   const firebaseProjectId = clean(env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
   if (mode !== 'standard') {
-    const expectedProject = mode === 'customer_beta' ? 'dispatch-customer-beta' : 'dispatch-billing-qa';
-    if (firebaseProjectId !== expectedProject) errors.push(`${buildProfile} requires its dedicated Firebase project ${expectedProject}.`);
+    // Explicit user direction: complimentary customer beta uses existing Dispatch.
+    // Payment QA remains isolated and must never use this exception.
+    const expectedProject = mode === 'customer_beta' ? PRODUCTION_FIREBASE_PROJECT : 'dispatch-billing-qa';
+    if (firebaseProjectId !== expectedProject) errors.push(`${buildProfile} requires its designated Firebase project ${expectedProject}.`);
     if (targetPlatform && targetPlatform !== 'android') errors.push(`${buildProfile} supports Android only.`);
     if (clean(env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY)) errors.push('Android store builds must not contain a RevenueCat Test Store key.');
     if (clean(env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS) !== 'false') errors.push('Android store builds must explicitly set EXPO_PUBLIC_USE_FIREBASE_EMULATORS=false.');
@@ -50,7 +52,7 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
   }
   if (!firebaseProjectId || firebaseProjectId.toLowerCase().startsWith('demo-')) {
     errors.push('Store beta requires a hosted, non-demo EXPO_PUBLIC_FIREBASE_PROJECT_ID.');
-  } else if (firebaseProjectId.toLowerCase() === PRODUCTION_FIREBASE_PROJECT) {
+  } else if (mode !== 'customer_beta' && firebaseProjectId.toLowerCase() === PRODUCTION_FIREBASE_PROJECT) {
     errors.push('Store beta cannot use the production Firebase project dispatch-eb63a.');
   } else if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(firebaseProjectId)) {
     errors.push('Store beta requires a valid hosted Firebase project ID.');
@@ -75,8 +77,11 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
   if (!appIdMatch || appIdMatch[1] !== senderId) {
     errors.push('Store beta requires a Firebase Web EXPO_PUBLIC_FIREBASE_APP_ID matching EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID.');
   }
-  if (senderId === PRODUCTION_FIREBASE_PROJECT_NUMBER || appIdMatch?.[1] === PRODUCTION_FIREBASE_PROJECT_NUMBER) {
+  if (mode !== 'customer_beta' && (senderId === PRODUCTION_FIREBASE_PROJECT_NUMBER || appIdMatch?.[1] === PRODUCTION_FIREBASE_PROJECT_NUMBER)) {
     errors.push('Store beta cannot use the production Firebase app ID or messaging sender ID.');
+  }
+  if (mode === 'customer_beta' && senderId !== PRODUCTION_FIREBASE_PROJECT_NUMBER) {
+    errors.push('Customer beta must use the existing Dispatch Firebase project number.');
   }
 
   const emulatorMode = clean(env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS).toLowerCase();

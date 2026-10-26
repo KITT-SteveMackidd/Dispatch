@@ -14,6 +14,7 @@ import {
   orderBy,
   query,
   runTransaction,
+  Transaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -23,6 +24,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, functions, storage } from '@/lib/firebase';
+import { isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import { buildEventTaskFromTemplate, buildNewEventRoleForFirestore, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
 import { normalizeTeamMemberRole, validateTeamWorkerSelection } from '@/lib/team-membership';
 import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
@@ -153,6 +155,27 @@ async function mutateWorkerEvent(params: Record<string, unknown>) {
   );
   const result = await callable(params);
   return result.data;
+}
+
+function assertExistingCustomerWorkerIdentity(workerId: string) {
+  if (!workerId || auth.currentUser?.uid !== workerId) {
+    throw new Error('Worker actions can only update the signed-in account.');
+  }
+}
+
+async function assertExistingCustomerWorkerEventAccess(tx: Transaction, event: Omit<DispatchEvent, 'id'>, workerId: string) {
+  assertExistingCustomerWorkerIdentity(workerId);
+  const worker = await tx.get(doc(db, 'users', workerId));
+  const profile = worker.exists() ? worker.data() as Partial<UserProfile> : null;
+  if (!profile || normalizeTeamMemberRole(profile.role) !== 'worker'
+    || !event.organizationId || profile.organizationId !== event.organizationId
+    || !(event.workerIds || []).includes(workerId)) {
+    throw new Error('Only an active Worker in this event organization can use this action.');
+  }
+  const organization = await tx.get(doc(db, 'organizations', event.organizationId));
+  if (!organization.exists() || !((organization.data() as Partial<Organisation>).workerIds || []).includes(workerId)) {
+    throw new Error('You are no longer an active Worker in this organization.');
+  }
 }
 
 function toDateMs(value?: { toDate?: () => Date } | Date | null) {
@@ -3020,6 +3043,10 @@ export async function cancelWorkerEventRole(params: {
   roleId: string;
   workerId: string;
 }) {
+  if (isExistingDispatchCustomerBeta()) {
+    assertExistingCustomerWorkerIdentity(params.workerId);
+    return legacyCancelWorkerEventRole(params);
+  }
   await mutateWorkerEvent({
     actionType: 'cancel_worker_role',
     eventId: params.eventId,
@@ -3040,6 +3067,7 @@ async function legacyCancelWorkerEventRole(params: {
     if (!snap.exists()) throw new Error('Event not found');
 
     const event = snap.data() as Omit<DispatchEvent, 'id'>;
+    await assertExistingCustomerWorkerEventAccess(tx, event, workerId);
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === roleId);
     if (!role) throw new Error('Role not found');
@@ -3109,6 +3137,10 @@ export async function joinRoleWaitlist(params: {
   notificationId: string;
   workerId: string;
 }) {
+  if (isExistingDispatchCustomerBeta()) {
+    assertExistingCustomerWorkerIdentity(params.workerId);
+    return legacyJoinRoleWaitlist(params);
+  }
   await mutateWorkerEvent({
     actionType: 'join_event_waitlist',
     notificationId: params.notificationId,
@@ -3134,6 +3166,7 @@ async function legacyJoinRoleWaitlist(params: {
     if (!eventSnap.exists()) throw new Error('Event not found');
 
     const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+    await assertExistingCustomerWorkerEventAccess(tx, event, params.workerId);
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === notification.roleId);
     if (!role) throw new Error('Role not found');
@@ -3171,6 +3204,10 @@ export async function joinEventRoleWaitlist(params: {
   roleId: string;
   workerId: string;
 }) {
+  if (isExistingDispatchCustomerBeta()) {
+    assertExistingCustomerWorkerIdentity(params.workerId);
+    return legacyJoinEventRoleWaitlist(params);
+  }
   await mutateWorkerEvent({
     actionType: 'join_event_waitlist',
     eventId: params.eventId,
@@ -3189,6 +3226,7 @@ async function legacyJoinEventRoleWaitlist(params: {
     if (!eventSnap.exists()) throw new Error('Event not found');
 
     const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+    await assertExistingCustomerWorkerEventAccess(tx, event, params.workerId);
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === params.roleId);
     if (!role) throw new Error('Role not found');
@@ -3220,6 +3258,10 @@ export async function acceptEventRoleWaitlistInvite(params: {
   roleId: string;
   workerId: string;
 }) {
+  if (isExistingDispatchCustomerBeta()) {
+    assertExistingCustomerWorkerIdentity(params.workerId);
+    return legacyAcceptEventRoleWaitlistInvite(params);
+  }
   await mutateWorkerEvent({
     actionType: 'accept_waitlist_invite',
     eventId: params.eventId,
@@ -3238,6 +3280,7 @@ async function legacyAcceptEventRoleWaitlistInvite(params: {
     if (!eventSnap.exists()) throw new Error('Event not found');
 
     const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+    await assertExistingCustomerWorkerEventAccess(tx, event, params.workerId);
     const roles = (event.roles || []) as EventRole[];
     const role = roles.find((item) => item.id === params.roleId);
     if (!role) throw new Error('Role not found');
@@ -3326,6 +3369,10 @@ export async function respondToRoleAssignmentNotification(params: {
   workerId: string;
   response: 'accept' | 'decline';
 }) {
+  if (isExistingDispatchCustomerBeta()) {
+    assertExistingCustomerWorkerIdentity(params.workerId);
+    return legacyRespondToRoleAssignmentNotification(params);
+  }
   await mutateWorkerEvent({
     actionType: 'respond_role_notification',
     notificationId: params.notificationId,
@@ -3352,6 +3399,7 @@ async function legacyRespondToRoleAssignmentNotification(params: {
     if (!eventSnap.exists()) throw new Error('Event not found');
 
     const event = eventSnap.data() as Omit<DispatchEvent, 'id'>;
+    await assertExistingCustomerWorkerEventAccess(tx, event, params.workerId);
     const workerSnap = await tx.get(doc(db, 'users', params.workerId));
     const workerName = workerSnap.exists()
       ? ((workerSnap.data() as Partial<UserProfile>).displayName || 'Worker')
@@ -3390,12 +3438,9 @@ async function legacyRespondToRoleAssignmentNotification(params: {
         };
       });
 
-      const workerIds = [...new Set(nextRoles.flatMap((role) => [
-        ...(role.assignedWorkerIds || []),
-        ...(role.waitlistWorkerIds || []),
-        ...(role.eligibleWaitlistWorkerIds || []),
-        ...(role.waitlistInviteWorkerIds || []),
-      ]))];
+      // The existing backend permits Workers to change their role response,
+      // while event membership remains controlled by Managers.
+      const workerIds = [...new Set(event.workerIds || [])];
       tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
     }
 
@@ -3416,12 +3461,7 @@ async function legacyRespondToRoleAssignmentNotification(params: {
         };
       });
 
-      const workerIds = [...new Set(nextRoles.flatMap((role) => [
-        ...(role.assignedWorkerIds || []),
-        ...(role.waitlistWorkerIds || []),
-        ...(role.eligibleWaitlistWorkerIds || []),
-        ...(role.waitlistInviteWorkerIds || []),
-      ]))];
+      const workerIds = [...new Set(event.workerIds || [])];
       tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
     }
 
@@ -3439,7 +3479,7 @@ async function legacyRespondToRoleAssignmentNotification(params: {
         };
       });
 
-      const workerIds = [...new Set(nextRoles.flatMap((role) => role.assignedWorkerIds || []))];
+      const workerIds = [...new Set(event.workerIds || [])];
       tx.update(eventRef, { roles: nextRoles, workerIds, revision: (event.revision ?? 0) + 1, updatedAt: serverTimestamp() });
     }
 
@@ -3496,6 +3536,10 @@ export async function toggleTaskCompletion(params: {
   workerId: string;
   complete: boolean;
 }) {
+  if (isExistingDispatchCustomerBeta()) {
+    assertExistingCustomerWorkerIdentity(params.workerId);
+    return legacyToggleTaskCompletion(params);
+  }
   await mutateWorkerEvent({
     actionType: 'toggle_task_completion',
     eventId: params.eventId,
@@ -3520,7 +3564,13 @@ async function legacyToggleTaskCompletion(params: {
     if (!snap.exists()) throw new Error('Event not found');
 
     const event = snap.data() as Omit<DispatchEvent, 'id'>;
+    await assertExistingCustomerWorkerEventAccess(tx, event, workerId);
     const roles = (event.roles || []) as EventRole[];
+    const targetRole = roles.find(role => role.id === roleId);
+    if (!targetRole || !(targetRole.assignedWorkerIds || []).includes(workerId)) {
+      throw new Error('Only a Worker assigned to this role can update its tasks.');
+    }
+    if (!targetRole.tasks.some(task => task.id === taskId)) throw new Error('Task not found');
 
     const nextRoles = roles.map((role) => {
       if (role.id !== roleId) return role;

@@ -15,19 +15,20 @@ function loadSource(relative: string, mocks: ModuleMocks) {
   const module = { exports: {} as Record<string, any> };
   new Function('require', 'module', 'exports', '__DEV__', code)((name: string) => {
     if (name === 'react/jsx-runtime') return jsxRuntime;
+    if (name === '@/config/beta-mode') return { isExistingDispatchCustomerBeta: () => false, ...(mocks[name] as object) };
     if (Object.hasOwn(mocks, name)) return mocks[name];
     throw new Error(`Unexpected runtime import ${name}`);
   }, module, module.exports, false);
   return module.exports;
 }
 
-function billingHarness(customerBeta: boolean) {
+function billingHarness(customerBeta: boolean, existingBackend = false) {
   const invoke = vi.fn().mockResolvedValue({ data: { removed: true } });
   const httpsCallable = vi.fn(() => invoke);
   const onSnapshot = vi.fn(() => () => {});
   const doc = vi.fn();
   const service = loadSource('services/billing.ts', {
-    '@/config/beta-mode': { isCustomerBeta: () => customerBeta },
+    '@/config/beta-mode': { isCustomerBeta: () => customerBeta, isExistingDispatchCustomerBeta: () => existingBackend },
     '@/lib/firebase': { db: {}, functions: {}, firebaseEmulatorConfiguration: { enabled: false } },
     '@/lib/subscriptions': { defaultOrganizationBilling: () => ({}) },
     'firebase/functions': { httpsCallable },
@@ -103,7 +104,7 @@ function elements(tree: any): any[] {
   return [tree, ...Object.values(tree.props).flatMap(elements)];
 }
 
-function teamsHarness(customerBeta: boolean) {
+function teamsHarness(customerBeta: boolean, existingBackend = false) {
   const effects: Array<() => (() => void) | undefined> = [];
   const stateUpdates: Array<ReturnType<typeof vi.fn>> = [];
   const watchBilling = vi.fn(() => () => {});
@@ -111,7 +112,7 @@ function teamsHarness(customerBeta: boolean) {
   const organization = { id: 'org', name: 'Beta crew', managerIds: ['manager', 'other'], workerIds: [], billingManagerId: 'manager' };
   const members = [{ uid: 'manager', displayName: 'Manager', role: 'manager' }, { uid: 'other', displayName: 'Other Manager', role: 'manager' }];
   const screen = loadSource('app/(tabs)/teams.tsx', {
-    '@/config/beta-mode': { isCustomerBeta: () => customerBeta },
+    '@/config/beta-mode': { isCustomerBeta: () => customerBeta, isExistingDispatchCustomerBeta: () => existingBackend },
     react: {
       useEffect: (effect: () => (() => void) | undefined) => { effects.push(effect); },
       useMemo: (factory: () => unknown) => factory(),
@@ -169,6 +170,13 @@ describe('complimentary customer beta billing boundary', () => {
     expect(invoke).toHaveBeenCalledWith({ targetUserId: 'worker' });
   });
 
+  it('refuses member removal on the existing Dispatch beta backend before contacting its missing endpoint', async () => {
+    const { service, httpsCallable, invoke } = billingHarness(true, true);
+    await expect(service.removeOrganizationMember('worker')).rejects.toThrow('not available in this beta build');
+    expect(httpsCallable).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it('does not configure or contact RevenueCat even if native keys exist', async () => {
     const { service, sdk, openURL } = revenueCatHarness(true);
     expect(service.getRevenueCatPurchaseStore()).toBeNull();
@@ -217,6 +225,15 @@ describe('complimentary customer beta billing boundary', () => {
     qa.effects[2]();
     expect(qa.watchBilling).toHaveBeenCalledOnce();
     expect(JSON.stringify(qa.tree)).toContain('Pass Billing Manager role');
+  });
+
+  it('existing-backend Teams keeps email invitations without billing controls or share-only instructions', () => {
+    const teams = teamsHarness(true, true);
+    teams.effects[2]();
+    expect(teams.watchBilling).not.toHaveBeenCalled();
+    expect(JSON.stringify(teams.tree)).toContain('This address only receives the invitation');
+    expect(JSON.stringify(teams.tree)).not.toContain('beta invitation emails are not sent');
+    expect(JSON.stringify(teams.tree)).not.toContain('Billing Manager');
   });
 
   it('customer Managers can remove another Manager without a billing-role transfer', async () => {
@@ -285,10 +302,10 @@ describe('complimentary customer beta billing boundary', () => {
     expect(noOrganization.initializeOrganizationBilling).not.toHaveBeenCalled();
   });
 
-  it('direct billing navigation renders only the complimentary notice without loading billing hooks', () => {
+  it.each([false, true])('direct billing navigation renders only the complimentary notice without loading billing hooks (existing backend: %s)', (existingBackend) => {
     const forbidden = vi.fn(() => { throw new Error('Billing work must not mount'); });
     const screen = loadSource('app/billing.tsx', {
-      '@/config/beta-mode': { isCustomerBeta: () => true },
+      '@/config/beta-mode': { isCustomerBeta: () => true, isExistingDispatchCustomerBeta: () => existingBackend },
       '@expo/vector-icons': { MaterialIcons: 'Icon' },
       'expo-router': { Stack: { Screen: 'StackScreen' }, useRouter: forbidden },
       react: { useEffect: forbidden, useMemo: forbidden, useState: forbidden },
@@ -303,6 +320,14 @@ describe('complimentary customer beta billing boundary', () => {
     const notice = branch.type(branch.props);
     expect(JSON.stringify(notice)).toContain('Complimentary customer beta');
     expect(JSON.stringify(notice)).not.toContain('Choose your plan');
+    const memberRoster = elements(notice).find(element => element.type?.name === 'CustomerBetaMemberManagement');
+    if (existingBackend) {
+      expect(memberRoster).toBeUndefined();
+      expect(JSON.stringify(notice)).toContain('Managers can email invitation links');
+      expect(JSON.stringify(notice)).not.toContain('Invitation emails and email reminders are unavailable');
+    } else {
+      expect(memberRoster).toBeDefined();
+    }
     expect(forbidden).not.toHaveBeenCalled();
   });
 });
