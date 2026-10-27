@@ -6,6 +6,7 @@ const DELETE_FIELD = Symbol('delete-field');
 const FieldValue = {
   delete: () => DELETE_FIELD,
   serverTimestamp: () => ({ __serverTimestamp: true }),
+  increment: value => ({ __increment: value }),
 };
 
 function assertNoUndefined(value, path = 'update') {
@@ -47,6 +48,17 @@ class FakeDocumentReference {
 
   async delete() {
     this.db.documents.delete(this.path);
+  }
+
+  async get() { return new FakeDocumentSnapshot(this.db, this); }
+
+  async set(data, options = {}) {
+    const previous = this.db.documents.get(this.path) || {};
+    const next = options.merge ? { ...previous } : {};
+    for (const [key, value] of Object.entries(data)) {
+      next[key] = value?.__increment ? Number(previous[key] || 0) + value.__increment : value;
+    }
+    this.db.documents.set(this.path, next);
   }
 }
 
@@ -172,6 +184,101 @@ class FakeStorageBucket {
     return [files];
   }
 }
+
+test('account deletion erases secure grants, late uploads and private safety data without deleting other owners', async () => {
+  const grantId = 'a'.repeat(40);
+  const keepGrantId = 'b'.repeat(40);
+  const prefix = `chatSafetyAttachments/${grantId}/`;
+  const keepPath = `chatSafetyAttachments/${keepGrantId}/keep.pdf`;
+  const db = new FakeFirestore({
+    'users/delete': { uid: 'delete', role: 'worker', organizationId: 'org' },
+    'users/manager': { uid: 'manager', role: 'manager', organizationId: 'org' },
+    'organizations/org': { managerIds: ['manager'], workerIds: ['delete'] },
+    'users/delete/chatSafetyState/current': { version: 1 },
+    'users/delete/chatBlocks/manager': { targetUserId: 'manager' },
+    'users/manager/chatBlocks/delete': { targetUserId: 'delete', displayName: 'Deleted member' },
+    'users/manager/chatSafetyState/current': { version: 3 },
+    [`chatUploadGrants/${grantId}`]: { ownerId: 'delete', threadId: 'group', organizationId: 'org', objectPath: `${prefix}file.pdf` },
+    [`chatUploadGrants/${keepGrantId}`]: { ownerId: 'manager', threadId: 'group', organizationId: 'org', objectPath: keepPath },
+    'chatThreads/group': { organizationId: 'org', kind: 'organization', participants: ['delete', 'manager'] },
+  });
+  const bucket = new FakeStorageBucket([`${prefix}file.pdf`, keepPath]);
+  const originalList = bucket.getFiles.bind(bucket);
+  let listed = false;
+  bucket.getFiles = async options => {
+    const result = await originalList(options);
+    if (options.prefix === prefix && !listed) { listed = true; bucket.files.add(`${prefix}late.pdf`); }
+    return result;
+  };
+  await deleteDispatchUserData({ db, bucket, FieldValue, authUser: { uid: 'delete', providerData: [] } });
+  assert.equal([...db.documents.keys()].some(path => path === 'users/delete' || path.startsWith('users/delete/')), false);
+  assert.equal(db.documents.has('users/manager/chatBlocks/delete'), false);
+  assert.equal(db.documents.get('users/manager/chatSafetyState/current').version, 4);
+  assert.equal(db.documents.has(`chatUploadGrants/${grantId}`), false);
+  assert.equal(db.documents.has(`chatUploadGrants/${keepGrantId}`), true);
+  assert.equal([...bucket.files].some(path => path.startsWith(prefix)), false);
+  assert.equal(bucket.files.has(keepPath), true);
+});
+
+test('account deletion removes involved reports and counters while redacting bystander text in retained reports', async () => {
+  const db = new FakeFirestore({
+    'users/removed-person': { uid: 'removed-person', role: 'worker', organizationId: 'org' },
+    'users/manager': { uid: 'manager', role: 'manager', organizationId: 'org' },
+    'organizations/org': { managerIds: ['manager'], workerIds: ['removed-person'] },
+    'users/removed-person/chatReportLimits/current': { hourCount: 2 },
+    'chatSafetyReports/by-removed': { reporterUserId: 'removed-person', targetUserId: 'manager', organizationId: 'org' },
+    'chatSafetyReports/about-removed': { reporterUserId: 'manager', targetUserId: 'removed-person', organizationId: 'org' },
+    'chatSafetyReports/retained': {
+      reporterUserId: 'manager', targetUserId: 'someone-else', organizationId: 'org', details: 'Contact removed-person about it',
+      evidence: { message: { senderId: 'someone-else', text: 'removed-person was mentioned', attachments: [] } },
+    },
+    'chatSafetyReports/unrelated': { reporterUserId: 'other-manager', targetUserId: 'other-worker', organizationId: 'other', details: 'Unrelated' },
+  });
+  await deleteDispatchUserData({ db, bucket: new FakeStorageBucket([]), FieldValue, authUser: { uid: 'removed-person', providerData: [] } });
+  assert.equal(db.documents.has('chatSafetyReports/by-removed'), false);
+  assert.equal(db.documents.has('chatSafetyReports/about-removed'), false);
+  assert.equal(db.documents.has('users/removed-person/chatReportLimits/current'), false);
+  assert.equal(db.documents.get('chatSafetyReports/unrelated').details, 'Unrelated');
+  const retained = db.documents.get('chatSafetyReports/retained');
+  assert.equal(retained.details.includes('removed-person'), false);
+  assert.equal(retained.evidence.message.text.includes('removed-person'), false);
+  assert.equal(retained.evidence.message.senderId, 'someone-else');
+  assert.ok(db.documents.has('users/manager/chatSafetyState/current'));
+});
+
+test('deletion removes private review sources and linked alerts while retaining anonymized enforcement deduplication', async () => {
+  const db = new FakeFirestore({
+    'users/removed-person': { uid: 'removed-person', role: 'worker', organizationId: 'org' },
+    'users/manager': { uid: 'manager', role: 'manager', organizationId: 'org' },
+    'users/worker': { uid: 'worker', role: 'worker', organizationId: 'org' },
+    'organizations/org': { managerIds: ['manager'], workerIds: ['removed-person', 'worker'] },
+    'chatSafetyReports/reporter': { reporterUserId: 'removed-person', targetUserId: 'worker', organizationId: 'org' },
+    'chatSafetyReports/target': { reporterUserId: 'worker', targetUserId: 'removed-person', organizationId: 'org' },
+    'chatSafetyReports/enforcement': { reporterUserId: 'removed-person', targetUserId: 'worker', organizationId: 'org' },
+    'chatUserModerationState/worker': { active: true, sourceReportId: 'enforcement' },
+    ...Object.fromEntries(['recipient', 'reporter', 'target', 'enforcement', 'unrelated'].map(id => [`chatReviewNotificationSources/${id}`, {
+      reportId: id, organizationId: 'org', recipientUserId: id === 'recipient' ? 'removed-person' : 'manager',
+      reporterUserId: ['reporter', 'enforcement'].includes(id) ? 'removed-person' : 'worker',
+      targetUserId: id === 'target' ? 'removed-person' : 'worker',
+    }])),
+    ...Object.fromEntries(['recipient', 'reporter', 'target', 'enforcement', 'unrelated'].map(id => [`userNotifications/${id}`, {
+      userId: id === 'recipient' ? 'removed-person' : 'manager', kind: 'chat_safety_report', body: 'A chat safety report is ready for review.',
+    }])),
+    'pushDeliveries/reporter-delivery': { deliveryId: 'reporter-delivery', sourcePath: 'userNotifications/reporter', userId: 'manager' },
+    'pushTickets/reporter-ticket': { deliveryId: 'reporter-delivery', userId: 'manager' },
+  });
+  await deleteDispatchUserData({ db, bucket: new FakeStorageBucket([]), FieldValue, authUser: { uid: 'removed-person', providerData: [] } });
+  for (const id of ['recipient', 'reporter', 'target']) {
+    assert.equal(db.documents.has(`chatReviewNotificationSources/${id}`), false, id);
+    assert.equal(db.documents.has(`userNotifications/${id}`), false, id);
+  }
+  assert.equal(db.documents.has('pushDeliveries/reporter-delivery'), false);
+  assert.equal(db.documents.has('pushTickets/reporter-ticket'), false);
+  assert.equal(db.documents.get('chatReviewNotificationSources/enforcement').reporterUserId, null);
+  assert.equal(db.documents.has('userNotifications/enforcement'), true);
+  assert.equal(db.documents.has('chatReviewNotificationSources/unrelated'), true);
+  assert.equal(db.documents.has('userNotifications/unrelated'), true);
+});
 
 test('deleteDispatchUserData cleans personal records and preserves shared work under the correct manager', async () => {
   const deletingUid = 'manager-delete';

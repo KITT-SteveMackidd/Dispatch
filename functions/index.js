@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const functionsV1 = require('firebase-functions/v1');
 const { logger, setGlobalOptions } = require('firebase-functions/v2');
 const { onInit } = require('firebase-functions/v2/core');
-const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { HttpsError, onCall, onRequest } = require('firebase-functions/v2/https');
 const { defineSecret, defineString } = require('firebase-functions/params');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
@@ -95,6 +95,10 @@ const { lateTaskNotificationDocuments } = require('./lib/late-task-notifications
 const { eventAccessForRoleInvitation } = require('./lib/event-role-access');
 const { buildEventRoleResponse } = require('./lib/event-role-response');
 const { MAX_CHAT_PARTICIPANTS, buildChatMessageMutation } = require('./lib/chat-message');
+const { createChatSafetyService, CHAT_TERMS_VERSION, suspended: chatSuspended } = require('./lib/chat-safety');
+const { createChatReportService } = require('./lib/chat-safety-reports');
+const { createChatModerationService } = require('./lib/chat-safety-moderation');
+const { createChatReviewNotificationService, REVIEW_NOTIFICATION_KIND, REVIEW_NOTIFICATION_TITLE, REVIEW_NOTIFICATION_BODY } = require('./lib/chat-review-notifications');
 const {
   INVITE_TTL_MS,
   buildInviteUrls,
@@ -144,13 +148,47 @@ onInit(() => {
   const app = initializeApp();
   adminAuth = getAuth(app);
   db = firestore.getFirestore(app);
-  storageBucket = getStorage(app).bucket();
+  // The local mobile fixture uses the modern Firebase bucket suffix; the CLI
+  // supplies a legacy appspot default for demo projects. Keep hosted defaults.
+  storageBucket = getStorage(app).bucket(process.env.FUNCTIONS_EMULATOR === 'true'
+    && runtimeProjectId() === 'demo-dispatch-billing' ? 'demo-dispatch-billing.firebasestorage.app' : undefined);
   FieldValue = firestore.FieldValue;
 });
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const PROCESSING_LEASE_MS = 5 * 60 * 1000;
 const MAX_PUSH_TOKEN_OWNERS = 450;
+
+const chatReviewNotifications = createChatReviewNotificationService({
+  getDb: () => db, getFieldValue: () => FieldValue, projectId: runtimeProjectId,
+  assertMutationAllowed: assertAccountDeletionMutationLeaseAvailable,
+});
+const chatSafety = createChatSafetyService({
+  getDb: () => db, getFieldValue: () => FieldValue, getBucket: () => storageBucket,
+  projectId: runtimeProjectId,
+  emulatorOrigin: localChatStorageOrigins,
+  assertAccountAllowed: assertAccountDeletionNotStarted,
+  assertOrganizationWritable: assertOrganizationMutationAllowed,
+  getPendingReviewCount: chatReviewNotifications.pendingReviewCount,
+});
+const chatReports = createChatReportService({
+  getDb: () => db, getFieldValue: () => FieldValue,
+  getActorContext: chatSafety.getActorContext, assertAccountAllowed: assertAccountDeletionNotStarted,
+});
+const chatModeration = createChatModerationService({
+  getDb: () => db, getFieldValue: () => FieldValue, getBucket: () => storageBucket,
+  assertAccountAllowed: assertAccountDeletionNotStarted, projectId: runtimeProjectId, emulatorOrigins: localChatStorageOrigins,
+});
+
+function localChatStorageOrigins() {
+  const host = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
+  if (process.env.FUNCTIONS_EMULATOR !== 'true' || !runtimeProjectId().startsWith('demo-') || !host) return null;
+  const port = new URL(`http://${host}`).port;
+  const localAddresses = Object.values(require('node:os').networkInterfaces()).flat()
+    .filter(value => value?.family === 'IPv4' && /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(value.address))
+    .map(value => `http://${value.address}:${port}`);
+  return [`http://${host}`, ...localAddresses];
+}
 
 function runtimeProjectId() {
   return process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || '';
@@ -794,6 +832,26 @@ exports.respondToEventRoleInvite = onCall(async (request) => {
   };
 });
 
+exports.getChatSafetyState = onCall({ maxInstances: 10 }, request => chatSafety.getState(request));
+exports.acceptChatRules = onCall({ maxInstances: 10 }, request => chatSafety.acceptRules(request));
+exports.setChatUserBlock = onCall({ maxInstances: 10 }, request => chatSafety.setBlock(request));
+exports.createChatUpload = onCall({ maxInstances: 10 }, request => chatSafety.createUpload(request));
+exports.submitChatReport = onCall({ maxInstances: 10 }, request => chatReports.submit(request));
+exports.listMyChatReports = onCall({ maxInstances: 10 }, request => chatReports.listMine(request));
+exports.listModerationReports = onCall({ maxInstances: 10 }, request => chatModeration.list(request));
+exports.moderateChatReport = onCall({ maxInstances: 10, timeoutSeconds: 120 }, request => chatModeration.moderate(request));
+exports.getChatReportAttachmentPreview = onCall({ maxInstances: 10 }, request => chatModeration.preview(request));
+
+exports.notifyChatReportReviewers = onDocumentWritten({ document: 'chatSafetyReports/{reportId}', retry: true }, event =>
+  chatReviewNotifications.handleReportWrite({ reportId: event.params.reportId,
+    before: event.data?.before.exists ? event.data.before.data() : null,
+    after: event.data?.after.exists ? event.data.after.data() : null }));
+exports.refreshChatReviewUserAuthority = onDocumentUpdated('users/{userId}', event =>
+  chatReviewNotifications.handleUserAuthorityChange({ uid: event.params.userId, before: event.data?.before.data(), after: event.data?.after.data() }));
+exports.refreshChatReviewOrganizationAuthority = onDocumentWritten('organizations/{organizationId}', event =>
+  chatReviewNotifications.handleOrganizationAuthorityChange({ before: event.data?.before.exists ? event.data.before.data() : null,
+    after: event.data?.after.exists ? event.data.after.data() : null }));
+
 exports.sendChatMessage = onCall({ maxInstances: 10 }, async (request) => {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in before sending a message.');
   const threadId = callableDocumentId(request.data?.threadId, 'chat');
@@ -815,6 +873,7 @@ exports.sendChatMessage = onCall({ maxInstances: 10 }, async (request) => {
     const senderName = senderSnapshot.exists
       ? senderSnapshot.data().displayName
       : request.auth.token.name;
+    const safety = await chatSafety.prepareSend(transaction, thread, request.auth.uid, request.data?.attachments);
     let mutation;
     try {
       mutation = buildChatMessageMutation({
@@ -823,6 +882,7 @@ exports.sendChatMessage = onCall({ maxInstances: 10 }, async (request) => {
         senderName,
         text: request.data?.text,
         attachments: request.data?.attachments,
+        allowHttpAttachments: safety.enabled && safety.allowHttpAttachments,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to send this message.';
@@ -830,6 +890,12 @@ exports.sendChatMessage = onCall({ maxInstances: 10 }, async (request) => {
       throw new HttpsError(code, message);
     }
 
+    if (safety.enabled) {
+      mutation.recipientIds = safety.recipientIds;
+      mutation.message.recipientIds = safety.recipientIds;
+      mutation.message.chatSafetyVersion = CHAT_TERMS_VERSION;
+      safety.grantRefs.forEach(ref => transaction.update(ref, { usedAt: FieldValue.serverTimestamp(), messageId: messageRef.id }));
+    }
     transaction.create(messageRef, {
       ...mutation.message,
       createdAt: FieldValue.serverTimestamp(),
@@ -888,6 +954,9 @@ exports.addCustomChatParticipants = onCall({ maxInstances: 10 }, async (request)
     if (nextParticipants.length > MAX_CHAT_PARTICIPANTS) {
       throw new HttpsError('resource-exhausted', 'This chat has too many participants.');
     }
+    // Enabled chats use the same current consent/suspension and two-person
+    // block checks when expanding a conversation, not a legacy client write.
+    await chatSafety.prepareSend(transaction, thread, request.auth.uid, []);
     transaction.update(threadRef, {
       participants: nextParticipants,
       updatedAt: FieldValue.serverTimestamp(),
@@ -4616,7 +4685,21 @@ function dispatchStorageObjectContext(name) {
 
 exports.reapOrphanedDispatchStorageObject = onObjectFinalized({ retry: true }, async (event) => {
   const objectName = event.data?.name;
-  const context = dispatchStorageObjectContext(objectName);
+  let context = dispatchStorageObjectContext(objectName);
+  let secureGrant;
+  if (typeof objectName === 'string' && objectName.startsWith('chatSafetyAttachments/')) {
+    const grantId = objectName.split('/')[1];
+    const grantSnapshot = /^[a-f0-9]{40}$/.test(grantId || '')
+      ? await db.collection('chatUploadGrants').doc(grantId).get() : null;
+    secureGrant = grantSnapshot?.data();
+    if (!secureGrant || secureGrant.objectPath !== objectName
+      || Number(event.data.size) !== secureGrant.size || event.data.contentType !== secureGrant.mimeType
+      || (!secureGrant.usedAt && secureGrant.expiresAt.toMillis() <= Date.now())) {
+      await storageBucket.file(objectName).delete({ ignoreNotFound: true });
+      return;
+    }
+    context = { kind: 'chat', ownerId: secureGrant.ownerId, threadId: secureGrant.threadId };
+  }
   if (!context) return;
   const ownerRef = db.collection('users').doc(context.ownerId);
   const tombstoneRef = db.collection('accountDeletionTombstones').doc(context.ownerId);
@@ -4633,6 +4716,9 @@ exports.reapOrphanedDispatchStorageObject = onObjectFinalized({ retry: true }, a
     && threadSnapshot?.exists
     && ownerSnapshot.exists
     && ownerSnapshot.data().organizationId !== threadSnapshot.data().organizationId;
+  const invalidSecureUpload = secureGrant && (!ownerSnapshot.exists
+    || secureGrant.organizationId !== ownerSnapshot.data().organizationId
+    || (!secureGrant.usedAt && (chatSuspended(ownerSnapshot.data()) || ownerSnapshot.data().chatRulesVersion !== CHAT_TERMS_VERSION)));
   let orphanedCustomerOrganization = false;
   if (isCustomerBetaProject(runtimeProjectId())) {
     const organizationId = context.kind === 'chat'
@@ -4644,7 +4730,7 @@ exports.reapOrphanedDispatchStorageObject = onObjectFinalized({ retry: true }, a
     orphanedCustomerOrganization = !organizationSnapshot?.exists
       || !organizationHasManagerAuthority(organizationSnapshot.data());
   }
-  if (!ownerDeletionFenced && !orphanedChatObject && !mismatchedChatOrganization && !orphanedCustomerOrganization) return;
+  if (!ownerDeletionFenced && !orphanedChatObject && !mismatchedChatOrganization && !orphanedCustomerOrganization && !invalidSecureUpload) return;
   await storageBucket.file(objectName).delete({ ignoreNotFound: true });
   logger.info('Removed a finalized Dispatch upload whose owner or chat source no longer exists.', {
     kind: context.kind,
@@ -4756,6 +4842,11 @@ exports.unregisterDevicePushToken = onCall({ maxInstances: 20 }, async (request)
 });
 
 async function expoRequest(url, body) {
+  // Synthetic emulator users and copied tokens must never reach Expo's network.
+  if (process.env.FUNCTIONS_EMULATOR === 'true') {
+    logger.info('Expo network request suppressed in the Functions emulator.');
+    return { data: [] };
+  }
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -4933,6 +5024,11 @@ async function sendPushToUser({
   expectedOrganizationId = null,
 }) {
   if (!userId) return false;
+  const chatDeliveryAllowed = () => data?.kind !== 'chat'
+    || chatSafety.canDeliver({ threadId: data.threadId, senderId: data.senderId, recipientId: userId, messageId: data.messageId });
+  const reviewDeliveryAllowed = () => data?.kind !== REVIEW_NOTIFICATION_KIND
+    || chatReviewNotifications.canDeliver({ notificationId: data.userNotificationId, recipientId: userId });
+  if (!await chatDeliveryAllowed() || !await reviewDeliveryAllowed()) return false;
   const tokens = await loadPushTokens(userId, expectedOrganizationId);
   if (!tokens.length) {
     logger.info('Push skipped because the user has no registered Expo token.', { deliveryId, userId });
@@ -4949,6 +5045,11 @@ async function sendPushToUser({
   try {
     let successfulTickets = 0;
     for (const tokenChunk of chunks(tokens, 100)) {
+      if (!await chatDeliveryAllowed() || !await reviewDeliveryAllowed()) {
+        await finalizePushDelivery({ deliveryRef: claim.ref, userId,
+          updates: { status: 'suppressed_chat_safety', updatedAt: FieldValue.serverTimestamp() } });
+        return false;
+      }
       const messages = tokenChunk.map((token) => pushMessageForUser(userId, {
         to: token,
         title,
@@ -5005,6 +5106,7 @@ exports.pushChatMessage = onDocumentCreated('chatThreads/{threadId}/messages/{me
   const [messageSnapshot, threadSnapshot] = await db.getAll(snapshot.ref, threadRef);
   if (!messageSnapshot.exists || !threadSnapshot.exists) return;
   const message = { ...messageSnapshot.data(), id: messageSnapshot.id, threadId: event.params.threadId };
+  if (message.moderationStatus === 'removed') return;
   const thread = { ...threadSnapshot.data(), id: threadSnapshot.id };
   const organizationId = typeof thread.organizationId === 'string' && thread.organizationId
     ? thread.organizationId
@@ -5042,12 +5144,16 @@ exports.pushUserNotification = onDocumentCreated('userNotifications/{notificatio
   if (!currentSnapshot.exists) return;
   const notification = currentSnapshot.data();
   if (notification.pushAuthorized !== true) return;
+  const isReview = notification.kind === REVIEW_NOTIFICATION_KIND;
   await sendPushToUser({
     deliveryId: `user-notification:${event.params.notificationId}:${notification.userId}`,
     userId: notification.userId,
-    title: notification.title || 'Dispatch notification',
-    body: notification.body || 'You have an update.',
-    data: {
+    title: isReview ? REVIEW_NOTIFICATION_TITLE : notification.title || 'Dispatch notification',
+    body: isReview ? REVIEW_NOTIFICATION_BODY : notification.body || 'You have an update.',
+    data: isReview ? {
+      kind: REVIEW_NOTIFICATION_KIND, organizationId: notification.organizationId,
+      userNotificationId: event.params.notificationId,
+    } : {
       kind: 'user_notification',
       relatedEventId: notification.relatedEventId,
       userNotificationId: event.params.notificationId,

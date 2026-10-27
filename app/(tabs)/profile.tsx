@@ -11,6 +11,8 @@ import { headerLogoSource } from '@/constants/branding';
 import { buildWorkerRoleExport, shareWorkerRoleSpreadsheet } from '@/lib/worker-role-export';
 import { canResetDispatchDatabase, resetDispatchDatabase } from '@/lib/admin-database-reset';
 import { DISPATCH_PRIVACY_URL, DISPATCH_SUPPORT_URL } from '@/constants/legal';
+import { useChatSafety } from '@/hooks/useChatSafety';
+import { canOpenChatReviewNotification, chatReviewBadgeText, pendingChatReviewCount } from '@/lib/chat-review-notifications';
 import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import {
   KeyboardAwareDrawer,
@@ -24,6 +26,7 @@ const darkEventsLogoSource = headerLogoSource;
 export default function ProfileScreen() {
   const { profile, authUser, deleteAccount, refreshProfile, signOut } = useSession();
   const { resolvedThemeMode } = useThemeMode();
+  const chatSafety = useChatSafety();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isDarkMode = resolvedThemeMode === 'dark';
@@ -31,7 +34,19 @@ export default function ProfileScreen() {
   const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
   const canManageTemplates = profile?.role === 'manager';
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const notificationScope = `${authUser?.uid || ''}|${profile?.uid || ''}|${profile?.organizationId || ''}|${profile?.role || ''}`;
+  const currentNotificationScope = useRef(notificationScope);
+  currentNotificationScope.current = notificationScope;
+  const [notificationState, setNotificationState] = useState<{ scope: string; items: UserNotification[] }>({ scope: '', items: [] });
+  const hasCurrentSession = Boolean(authUser?.uid && authUser.uid === profile?.uid);
+  const reviewCount = hasCurrentSession ? pendingChatReviewCount(chatSafety) : 0;
+  const reviewBadge = chatReviewBadgeText(reviewCount);
+  const canOpenReviewNotification = (notification: UserNotification) => hasCurrentSession && canOpenChatReviewNotification({
+    kind: notification.kind === 'chat_safety_report' ? 'chat_safety_report' : undefined,
+    recipientUserId: notification.userId, organizationId: notification.organizationId,
+  }, { userId: profile?.uid, organizationId: profile?.organizationId, safety: chatSafety });
+  const notifications = notificationState.scope === notificationScope && hasCurrentSession
+    ? notificationState.items.filter((item) => item.kind !== 'chat_safety_report' || canOpenReviewNotification(item)) : [];
   const [organisationModalOpen, setOrganisationModalOpen] = useState(false);
   const [organisationName, setOrganisationName] = useState('');
   const [creatingOrganisation, setCreatingOrganisation] = useState(false);
@@ -52,13 +67,13 @@ export default function ProfileScreen() {
   const canResetDatabase = canResetDispatchDatabase(authUser?.email);
 
   useEffect(() => {
-    if (!profile?.uid) {
-      setNotifications([]);
-      return;
-    }
-
-    return watchUserNotifications(profile.uid, setNotifications);
-  }, [profile?.uid]);
+    if (!profile?.uid || !hasCurrentSession) return;
+    let active = true;
+    const stop = watchUserNotifications(profile.uid, (items) => {
+      if (active && currentNotificationScope.current === notificationScope) setNotificationState({ scope: notificationScope, items });
+    });
+    return () => { active = false; stop(); };
+  }, [profile?.uid, hasCurrentSession, notificationScope]);
 
   useEffect(() => {
     if (!profile?.uid || !isManagerWithoutOrganisation) return;
@@ -82,12 +97,13 @@ export default function ProfileScreen() {
     if (!profile?.uid || !unreadIds.length) return;
 
     const idsToMark = [...unreadIds];
-    setNotifications((prev) => prev.map((item) => (idsToMark.includes(item.id) ? { ...item, read: true } : item)));
+    setNotificationState((prev) => prev.scope === notificationScope ? { ...prev, items: prev.items.map((item) => (idsToMark.includes(item.id) ? { ...item, read: true } : item)) } : prev);
 
     try {
       await markUserNotificationsRead({ userId: profile.uid, notificationIds: idsToMark });
     } catch {
-      setNotifications((prev) => prev.map((item) => (idsToMark.includes(item.id) ? { ...item, read: false } : item)));
+      if (currentNotificationScope.current !== notificationScope) return;
+      setNotificationState((prev) => prev.scope === notificationScope ? { ...prev, items: prev.items.map((item) => (idsToMark.includes(item.id) ? { ...item, read: false } : item)) } : prev);
     }
   };
 
@@ -311,6 +327,13 @@ export default function ProfileScreen() {
       <Pressable style={[styles.row, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/account-settings')}>
         <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Account Settings</Text>
       </Pressable>
+      {chatSafety.enabled ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={reviewCount ? `Chat safety, ${reviewCount} pending ${reviewCount === 1 ? 'report' : 'reports'} to review` : 'Chat safety'} style={[styles.row, styles.iconRow, isDarkMode ? styles.rowDark : styles.rowLight]} onPress={() => router.push('/chat-safety')}>
+          <MaterialIcons name="shield" size={22} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
+          <Text style={[styles.rowText, styles.grow, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Chat safety</Text>
+          {reviewBadge ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.reviewBadge}><Text style={styles.reviewBadgeText}>{reviewBadge}</Text></View> : null}
+        </Pressable>
+      ) : null}
       {profile?.organizationId ? (
         <Pressable
           accessibilityRole="button"
@@ -380,7 +403,17 @@ export default function ProfileScreen() {
         surfaceStyle={[styles.modalCard, isDarkMode ? styles.cardDark : styles.cardLight]}>
             <Text style={[styles.name, isDarkMode ? styles.nameDark : styles.nameLight]}>Notifications</Text>
             <KeyboardAwareDrawerScrollView style={styles.modalScroll}>
-              {notifications.length ? notifications.map((notification) => (
+              {notifications.length ? notifications.map((notification) => notification.kind === 'chat_safety_report' ? (
+                <Pressable key={notification.id} accessibilityRole="button" accessibilityLabel="Chat report needs review. Open report queue" style={styles.notificationRow} onPress={() => {
+                  if (!canOpenReviewNotification(notification)) return;
+                  setNotificationsOpen(false);
+                  router.push('/chat-moderation');
+                }}>
+                  <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>Chat report needs review</Text>
+                  <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>Open the report queue to review a chat concern.</Text>
+                  <Text style={[styles.reviewLink, { color: isDarkMode ? '#0EC3C9' : '#0B7D82' }]}>Open report queue</Text>
+                </Pressable>
+              ) : (
                 <View key={notification.id} style={styles.notificationRow}>
                   <Text style={[styles.rowText, isDarkMode ? styles.rowTextDark : styles.rowTextLight]}>{notification.title}</Text>
                   <Text style={[styles.email, isDarkMode ? styles.emailDark : styles.emailLight]}>{notification.body}</Text>
@@ -511,6 +544,10 @@ const styles = StyleSheet.create({
   rowLight: { backgroundColor: '#F7F7F7', borderColor: '#F7F7F7' },
   rowDark: { backgroundColor: '#12274D', borderColor: '#12274D' },
   iconRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  grow: { flex: 1 },
+  reviewBadge: { minWidth: 27, minHeight: 27, paddingHorizontal: 8, borderRadius: 14, backgroundColor: '#B91C1C', alignItems: 'center', justifyContent: 'center' },
+  reviewBadgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+  reviewLink: { color: '#0B7D82', fontWeight: '700', marginTop: 8 },
   rowText: { fontWeight: '600' },
   rowTextLight: { color: '#1e293b' },
   rowTextDark: { color: '#F4F8FF' },

@@ -186,6 +186,43 @@ service cloud.firestore {
         );
     }
 
+    function chatSafetyEnabled(organizationId) {
+      // Either projection closes the legacy write path during a misconfiguration.
+      return organizationId is string && (
+        (exists(/databases/$(database)/documents/organizations/$(organizationId))
+          && get(/databases/$(database)/documents/organizations/$(organizationId)).data.get('chatSafetyEnabled', false) == true)
+        || (exists(/databases/$(database)/documents/organizationBilling/$(organizationId))
+          && get(/databases/$(database)/documents/organizationBilling/$(organizationId)).data.get('chatSafetyEnabled', false) == true)
+      );
+    }
+
+    function safeChatReadReceipt() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pushSeenBy', 'updatedAt'])
+        && request.resource.data.get('pushSeenBy', []) is list
+        && request.resource.data.get('pushSeenBy', []).hasAll(resource.data.get('pushSeenBy', []))
+        && request.resource.data.get('pushSeenBy', []).hasOnly(resource.data.get('pushSeenBy', []).concat([request.auth.uid]));
+    }
+
+    function mayAuthorChatContent() {
+      let profile = userDoc().data;
+      let legacy = profile.get('chatSuspension', {});
+      let restriction = legacy.get('active', false) == true && legacy.get('organizationId', null) == null
+        ? legacy : profile.get('chatOrganizationSuspensions', {}).get(profile.get('organizationId', ''), legacy);
+      return profile.get('chatRulesVersion', '') == '2026-10-27'
+        && (restriction.get('active', false) != true
+          || (restriction.get('organizationId', null) != null && restriction.organizationId != profile.organizationId)
+          || (restriction.get('expiresAt', null) is timestamp && restriction.expiresAt <= request.time));
+    }
+
+    function safeChatClientUpdate() {
+      return safeChatReadReceipt() || (resource.data.kind == 'custom' && (
+        (mayAuthorChatContent() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'updatedAt'])
+          && request.resource.data.title is string && request.resource.data.title.size() <= 160)
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'updatedAt'])
+          && request.resource.data.participants == resource.data.participants.removeAll([request.auth.uid]))
+      ));
+    }
+
     function participantsAreActiveOrganizationMembers(data) {
       let organizationId = organizationIdFromData(data);
       return organizationId is string
@@ -278,6 +315,7 @@ service cloud.firestore {
       allow read: if isSelf(userId) || isSameOrganizationProfile();
       allow create: if mutationAllowed()
         && isSelf(userId)
+        && !request.resource.data.keys().hasAny(['chatRulesVersion', 'chatRulesAcceptedAt', 'chatSuspension', 'chatOrganizationSuspensions'])
         && request.resource.data.uid == userId
         && request.resource.data.role in ['manager', 'worker']
         && missingOrNull('organizationId')
@@ -324,6 +362,14 @@ service cloud.firestore {
         )
       );
       allow delete: if false;
+      match /chatBlocks/{targetUserId} {
+        allow read: if isSelf(userId);
+        allow write: if false;
+      }
+      match /chatSafetyState/{stateId} {
+        allow read: if isSelf(userId);
+        allow write: if false;
+      }
     }
 
     match /accountDeletionTombstones/{userId} {
@@ -412,6 +458,7 @@ service cloud.firestore {
         );
 
       allow create: if mutationAllowed()
+        && !request.resource.data.keys().hasAny(['chatSafetyEnabled'])
         && (
           isManager()
           && request.auth.uid in request.resource.data.managerIds
@@ -443,6 +490,23 @@ service cloud.firestore {
       allow read: if isOrganizationMember(organizationId);
       allow write: if false;
     }
+
+    match /chatUploadGrants/{grantId} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Report evidence and rate counters are available only through trusted
+    // callables; reporter history is an explicit redacted API projection.
+    match /chatSafetyReports/{reportId} {
+      allow read, write: if false;
+      match /{privatePaths=**} { allow read, write: if false; }
+    }
+
+    match /chatModerationOperations/{operationId} { allow read, write: if false; }
+    match /chatModerationCursors/{cursorId} { allow read, write: if false; }
+    match /chatUserModerationState/{userId} { allow read, write: if false; }
+    match /chatReviewNotificationSources/{notificationId} { allow read, write: if false; }
 
     match /revenueCatCustomers/{customerId} {
       allow read, write: if false;
@@ -630,13 +694,21 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/chatThreads/$(threadId))
           && canReadThreadData(resource.data)
         );
-      allow list: if canReadThreadData(resource.data);
+      // Keep the query predicate explicit: Firestore cannot prove the legacy
+      // team-organization fallback for an organizationId equality query.
+      allow list: if signedIn() && userOrganizationId() is string
+        && resource.data.organizationId == userOrganizationId()
+        && request.auth.uid in resource.data.participants;
       allow create: if signedIn()
         && organizationWriteEnabled(organizationIdFromData(request.resource.data))
+        && (!chatSafetyEnabled(organizationIdFromData(request.resource.data))
+          || (mayAuthorChatContent() && !request.resource.data.keys().hasAny(['lastMessageText', 'lastMessageSenderId', 'chatSafetyVersion'])
+            && request.resource.data.get('pushSeenBy', []).hasOnly([request.auth.uid])))
         && participantsAreActiveOrganizationMembers(request.resource.data)
         && request.auth.uid in request.resource.data.participants;
       allow update: if signedIn()
         && canWriteThread(threadId)
+        && (!chatSafetyEnabled(organizationIdFromData(resource.data)) || safeChatClientUpdate())
         && organizationIdFromData(request.resource.data) == organizationIdFromData(resource.data)
         && (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -688,6 +760,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if canReadThread(threadId);
         allow create: if canWriteThread(threadId)
+          && !chatSafetyEnabled(threadOrganizationId(threadId))
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.recipientIds is list
           && request.resource.data.recipientIds.hasOnly(
@@ -710,6 +783,8 @@ service cloud.firestore {
       allow create: if mutationAllowed()
         && request.resource.data.userId is string
         && request.resource.data.threadId is string
+        && (!chatSafetyEnabled(threadOrganizationId(request.resource.data.threadId))
+          || (request.resource.data.userId == request.auth.uid && request.resource.data.unreadCount == 0))
         && canWriteThread(request.resource.data.threadId)
         && request.resource.data.userId in get(
           /databases/$(database)/documents/chatThreads/$(request.resource.data.threadId)
@@ -717,11 +792,15 @@ service cloud.firestore {
       allow update: if mutationAllowed()
         && request.resource.data.userId == resource.data.userId
         && request.resource.data.threadId == resource.data.threadId
+        && (!chatSafetyEnabled(threadOrganizationId(resource.data.threadId))
+          || (resource.data.userId == request.auth.uid && request.resource.data.unreadCount == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadCount', 'updatedAt'])))
         && (
           request.auth.uid == resource.data.userId
           || canWriteThread(resource.data.threadId)
         );
       allow delete: if mutationAllowed()
+        && (!chatSafetyEnabled(threadOrganizationId(resource.data.threadId)) || resource.data.userId == request.auth.uid)
         && (
           request.auth.uid == resource.data.userId
           || canWriteThread(resource.data.threadId)
@@ -740,7 +819,7 @@ service cloud.firestore {
     }
 
     match /events/{eventId} {
-      allow read: if signedIn() && (
+      allow get: if signedIn() && (
         isOrganizationMember(organizationIdFromData(resource.data))
         || (
           organizationIdFromData(resource.data) == null
@@ -750,6 +829,10 @@ service cloud.firestore {
           )
         )
       );
+      // Query authorization must match the current organization explicitly;
+      // legacy per-document fallbacks cannot authorize a broad owner query.
+      allow list: if signedIn() && userOrganizationId() is string
+        && resource.data.organizationId == userOrganizationId();
       allow create: if signedIn()
         && organizationWriteEnabled(organizationIdFromData(request.resource.data))
         && isOrganizationManager(organizationIdFromData(request.resource.data))

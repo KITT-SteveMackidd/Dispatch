@@ -10,13 +10,20 @@ function clean(value) {
 }
 
 function isBetaProfile(buildProfile) {
-  return ['beta', 'android-customer-beta', 'android-billing-qa'].includes(clean(buildProfile));
+  return ['beta', 'android-customer-beta', 'ios-customer-beta', 'android-billing-qa'].includes(clean(buildProfile));
 }
 
 function getStoreBetaMode(buildProfile) {
-  if (clean(buildProfile) === 'android-customer-beta') return 'customer_beta';
+  if (['android-customer-beta', 'ios-customer-beta'].includes(clean(buildProfile))) return 'customer_beta';
   if (clean(buildProfile) === 'android-billing-qa') return 'billing_qa';
   return 'standard';
+}
+
+// EAS also resolves configuration before EAS_BUILD_PLATFORM is populated.
+function profilePlatform(buildProfile) {
+  if (clean(buildProfile) === 'ios-customer-beta') return 'ios';
+  if (['android-customer-beta', 'android-billing-qa'].includes(clean(buildProfile))) return 'android';
+  return '';
 }
 
 /**
@@ -31,23 +38,26 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
 
   const errors = [];
   const mode = getStoreBetaMode(buildProfile);
-  const targetPlatform = clean(platform);
+  const expectedPlatform = profilePlatform(buildProfile);
+  const targetPlatform = clean(platform) || expectedPlatform;
   const firebaseProjectId = clean(env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
   if (mode !== 'standard') {
     // Explicit user direction: complimentary customer beta uses existing Dispatch.
     // Payment QA remains isolated and must never use this exception.
     const expectedProject = mode === 'customer_beta' ? PRODUCTION_FIREBASE_PROJECT : 'dispatch-billing-qa';
     if (firebaseProjectId !== expectedProject) errors.push(`${buildProfile} requires its designated Firebase project ${expectedProject}.`);
-    if (targetPlatform && targetPlatform !== 'android') errors.push(`${buildProfile} supports Android only.`);
-    if (clean(env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY)) errors.push('Android store builds must not contain a RevenueCat Test Store key.');
-    if (clean(env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS) !== 'false') errors.push('Android store builds must explicitly set EXPO_PUBLIC_USE_FIREBASE_EMULATORS=false.');
-    if (clean(env.EXPO_NO_DOTENV) !== '1') errors.push('Android store builds must set EXPO_NO_DOTENV=1 to exclude local sandbox credentials.');
+    if (targetPlatform !== expectedPlatform) errors.push(`${buildProfile} supports ${expectedPlatform} only.`);
+    if (clean(env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY)) errors.push('Store builds must not contain a RevenueCat Test Store key.');
+    if (clean(env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS) !== 'false') errors.push('Store builds must explicitly set EXPO_PUBLIC_USE_FIREBASE_EMULATORS=false.');
+    if (clean(env.EXPO_NO_DOTENV) !== '1') errors.push('Store builds must set EXPO_NO_DOTENV=1 to exclude local sandbox credentials.');
     if (mode === 'customer_beta' && (clean(env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY) || clean(env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY))) {
       errors.push('Customer beta must not configure native RevenueCat purchase keys.');
     }
-    const googleIds = [env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID].map(clean);
+    const googlePlatformName = expectedPlatform === 'ios' ? 'iOS' : 'Android';
+    const googleNativeId = expectedPlatform === 'ios' ? env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID : env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
+    const googleIds = [env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, googleNativeId].map(clean);
     if (googleIds.some(id => id && id !== 'disabled') && !googleIds.every(id => /^\d+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(id))) {
-      errors.push('Android Google sign-in requires both matching-project Web and Android OAuth client IDs, or disabled for both.');
+      errors.push(`${googlePlatformName} Google sign-in requires both matching-project Web and ${googlePlatformName} OAuth client IDs, or disabled for both.`);
     }
   }
   if (!firebaseProjectId || firebaseProjectId.toLowerCase().startsWith('demo-')) {
@@ -133,7 +143,8 @@ function assertStoreBetaConfiguration({
   if (!isBetaProfile(buildProfile)) return;
 
   let androidGoogleServicesProjectId;
-  const needsAndroid = !clean(platform) || clean(platform) === 'android';
+  const targetPlatform = clean(platform) || profilePlatform(buildProfile);
+  const needsAndroid = !targetPlatform || targetPlatform === 'android';
   if (needsAndroid && clean(androidGoogleServicesFile)) {
     try {
       const googleServices = JSON.parse(readFileSync(path.resolve(projectRoot, androidGoogleServicesFile), 'utf8'));

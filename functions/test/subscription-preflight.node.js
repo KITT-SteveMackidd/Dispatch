@@ -74,7 +74,7 @@ function preflightHarness({ environment = 'sandbox', subscriber = {} } = {}) {
     'firebase-functions/v1': legacyFunctions,
     'firebase-functions/v2': { setGlobalOptions() {}, logger: { info() {}, error() {}, warn() {} } },
     'firebase-functions/v2/core': { onInit() {} },
-    'firebase-functions/v2/firestore': { onDocumentCreated: register, onDocumentUpdated: register },
+    'firebase-functions/v2/firestore': { onDocumentCreated: register, onDocumentUpdated: register, onDocumentWritten: register },
     'firebase-functions/v2/https': { HttpsError, onCall: register, onRequest: register },
     'firebase-functions/v2/scheduler': { onSchedule: register },
     'firebase-functions/v2/storage': { onObjectFinalized: register },

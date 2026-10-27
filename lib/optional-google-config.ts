@@ -8,3 +8,17 @@ export function optionalGoogleApiKey(value?: string): string | undefined {
   const key = value?.trim();
   return key && /^AIza[A-Za-z0-9_-]{35}$/.test(key) ? key : undefined;
 }
+
+/** This SDK uses a Web client ID for Firebase ID tokens, including on Android. */
+export function nativeGoogleSignInBlocker(config: {
+  platform: string;
+  isExpoGo: boolean;
+  webClientId?: string;
+  iosClientId?: string;
+}): 'expo-go' | 'configuration' | 'unsupported-platform' | null {
+  if (config.platform !== 'android' && config.platform !== 'ios') return 'unsupported-platform';
+  if (config.isExpoGo) return 'expo-go';
+  if (!optionalGoogleClientId(config.webClientId)) return 'configuration';
+  if (config.platform === 'ios' && !optionalGoogleClientId(config.iosClientId)) return 'configuration';
+  return null;
+}

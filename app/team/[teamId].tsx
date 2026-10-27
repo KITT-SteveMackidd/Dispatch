@@ -6,6 +6,8 @@ import { buildChatThreadId, ChatThreadHead, loadUserProfilesByIds, watchIncoming
 import { useSession } from '@/context/session';
 import { UserProfile } from '@/types/dispatch';
 import { useThemeMode } from '@/context/theme';
+import { useChatSafety } from '@/hooks/useChatSafety';
+import { canShowChatSenderContent } from '@/lib/chat-safety-visibility';
 import { MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
 import {
   KeyboardAwareDrawer,
@@ -18,6 +20,7 @@ type MemberInfo = Pick<UserProfile, 'uid' | 'displayName' | 'phoneNumber'>;
 export default function TeamMemberListScreen() {
   const router = useRouter();
   const { profile } = useSession();
+  const chatSafety = useChatSafety();
   const { resolvedThemeMode } = useThemeMode();
   const isDarkMode = resolvedThemeMode === 'dark';
   const drawerSurfaceColor = isDarkMode ? '#101A2F' : '#FFFFFF';
@@ -113,6 +116,10 @@ export default function TeamMemberListScreen() {
         meta: 'No latest message yet',
         message: isAll ? 'Start the team chat' : 'Start the conversation',
       };
+    }
+
+    if (!canShowChatSenderContent(threadHead.lastMessageSenderId, chatSafety)) {
+      return { meta: 'Conversation', message: 'Open chat' };
     }
 
     const senderName = threadHead.lastMessageSenderId === profile.uid

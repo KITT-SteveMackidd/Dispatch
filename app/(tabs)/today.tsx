@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { SwipeActionButton } from '@/components/SwipeActionButton';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
@@ -99,6 +100,8 @@ export default function TodayScreen() {
   const insets = useSafeAreaInsets();
   const isDarkMode = resolvedThemeMode === 'dark';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
+  const [eventLoadError, setEventLoadError] = useState<string | null>(null);
+  const [eventReload, setEventReload] = useState(0);
   const [expandedEventIds, setExpandedEventIds] = useState<Record<string, boolean>>({});
   const [managerInfoById, setManagerInfoById] = useState<Record<string, ManagerInfo>>({});
   const [userInfoById, setUserInfoById] = useState<Record<string, UserInfo>>({});
@@ -111,9 +114,14 @@ export default function TodayScreen() {
   const behindScheduleNotificationCache = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
+    setEvents([]);
+    setEventLoadError(null);
     if (!profile) return;
-    return profile.role === 'manager' ? watchManagerEvents(profile.uid, setEvents, profile.organizationId) : watchWorkerEvents(profile.uid, setEvents);
-  }, [profile]);
+    const handleEventError = () => setEventLoadError(profile.organizationId ? 'Events could not be loaded. Check your connection and try again.' : 'Join an organization to view events. Ask your Manager for an invitation.');
+    return profile.role === 'manager'
+      ? watchManagerEvents(profile.uid, setEvents, profile.organizationId, handleEventError)
+      : watchWorkerEvents(profile.uid, setEvents, profile.organizationId, handleEventError);
+  }, [profile, eventReload]);
 
   useEffect(() => {
     if (!profile) {
@@ -983,6 +991,7 @@ export default function TodayScreen() {
       ) : (
         <Text style={[styles.subhead, isDarkMode ? styles.subheadDark : styles.subheadLight]}>You have {today.length} dispatches for today.</Text>
       )}
+      {eventLoadError ? <View style={styles.eventLoadError}><Text accessibilityRole="alert" style={styles.eventLoadErrorText}>{eventLoadError}</Text><Pressable accessibilityRole="button" style={styles.eventRetry} onPress={() => setEventReload((value) => value + 1)}><Text style={styles.eventLoadErrorText}>Retry</Text></Pressable></View> : null}
       <FlatList
         data={today}
         keyExtractor={(i) => i.id}
@@ -1141,10 +1150,10 @@ export default function TodayScreen() {
           return (
             <Swipeable
               ref={(ref) => { swipeableRefs.current[item.id] = ref; }}
-              renderRightActions={() => (
-                <Pressable style={styles.swipeDeleteAction} onPress={() => handleDeleteEvent(item)}>
+              renderRightActions={(progress) => (
+                <SwipeActionButton progress={progress} accessibilityLabel={`Delete ${item.name}`} style={styles.swipeDeleteAction} onPress={() => handleDeleteEvent(item)}>
                   <Text style={styles.swipeDeleteActionText}>Delete</Text>
-                </Pressable>
+                </SwipeActionButton>
               )}
               rightThreshold={40}
               overshootRight={false}>
@@ -1158,6 +1167,9 @@ export default function TodayScreen() {
 }
 
 const styles = StyleSheet.create({
+  eventLoadError: { padding: 14, marginHorizontal: 16, borderRadius: 10, backgroundColor: '#FFF1F2', gap: 4 },
+  eventLoadErrorText: { color: '#991B1B', fontSize: 14, lineHeight: 20 },
+  eventRetry: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 8 },
   container: { flex: 1, padding: 16 },
   containerLightFigma: { flex: 1, padding: 16, backgroundColor: '#DBE2F9' },
   containerDarkFigma: { flex: 1, padding: 16, backgroundColor: '#061229' },

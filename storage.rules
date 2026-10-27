@@ -56,6 +56,11 @@ service firebase.storage {
           == firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationId;
     }
 
+    function legacyChatUploadsEnabled(organizationId) {
+      return isCustomerBetaProject()
+        || firestore.get(/databases/(default)/documents/organizationBilling/$(organizationId)).data.get('chatSafetyEnabled', false) != true;
+    }
+
     function canMutateChat(threadId) {
       // Storage Rules may access at most two Firestore documents. Mutations use
       // the explicit thread (participation) plus authoritative billing state;
@@ -63,6 +68,7 @@ service firebase.storage {
       // the finalizer reaps any race or legacy organization mismatch.
       return authenticated()
         && participatesInExplicitOrganizationChat(threadId)
+        && legacyChatUploadsEnabled(firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationId)
         && (!isCustomerBetaProject()
           || !('organizationRecoveryState' in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data)
           || firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.organizationRecoveryState != 'orphaned_no_manager')
@@ -92,6 +98,40 @@ service firebase.storage {
       allow create, update, delete: if canMutateChat(threadId)
         && request.auth.uid == ownerId
         && request.auth.uid in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.participants;
+    }
+
+    function chatUploadGrant(grantId) {
+      return firestore.get(/databases/(default)/documents/chatUploadGrants/$(grantId)).data;
+    }
+
+    function canCreateSecureChatUpload(grantId, filename) {
+      let grant = chatUploadGrant(grantId);
+      let profile = userProfile().data;
+      let legacy = profile.get('chatSuspension', {});
+      let restriction = legacy.get('active', false) == true && legacy.get('organizationId', null) == null
+        ? legacy : profile.get('chatOrganizationSuspensions', {}).get(profile.get('organizationId', ''), legacy);
+      // Exactly two Firestore documents: server grant and current owner profile.
+      return authenticated() && grant.ownerId == request.auth.uid
+        && grant.objectPath == 'chatSafetyAttachments/' + grantId + '/' + filename
+        && grant.expiresAt > request.time && !('usedAt' in grant)
+        && profile.organizationId == grant.organizationId
+        && !('accountDeletionStartedAt' in profile)
+        && profile.get('chatRulesVersion', '') == '2026-10-27'
+        && (restriction.get('active', false) != true
+          || (restriction.get('organizationId', null) != null && restriction.organizationId != profile.organizationId)
+          || (restriction.get('expiresAt', null) is timestamp && restriction.expiresAt <= request.time))
+        && request.resource.size == grant.size && request.resource.size <= 20 * 1024 * 1024
+        && request.resource.contentType == grant.mimeType;
+    }
+
+    match /chatSafetyAttachments/{grantId}/{filename} {
+      allow create: if canCreateSecureChatUpload(grantId, filename);
+      allow update, delete, list: if false;
+      allow get: if authenticated() && (
+        chatUploadGrant(grantId).ownerId == request.auth.uid
+        || ('usedAt' in chatUploadGrant(grantId)
+          && participatesInExplicitOrganizationChat(chatUploadGrant(grantId).threadId))
+      );
     }
 
     match /{allPaths=**} {

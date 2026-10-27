@@ -20,6 +20,12 @@ const ACCOUNT_DELETION_COLLECTIONS = [
   'userNotifications',
   'chatThreads',
   'chatUnread',
+  'chatUploadGrants',
+  'chatSafetyReports',
+  'chatModerationOperations',
+  'chatModerationCursors',
+  'chatUserModerationState',
+  'chatReviewNotificationSources',
   'dispatchBetaChecklistRuns',
   '_emailVerificationRequests',
   'mail',
@@ -359,7 +365,7 @@ async function commitOperations(db, operations) {
   }
 }
 
-async function collectOwnedStorageFiles(bucket, uid, deletedThreadIds, explicitPaths) {
+async function collectOwnedStorageFiles(bucket, uid, deletedThreadIds, explicitPaths, securePrefixes = []) {
   const filesByName = new Map();
   for (const path of explicitPaths) {
     if (storagePathBelongsToUser(path, uid)) filesByName.set(path, bucket.file(path));
@@ -375,6 +381,13 @@ async function collectOwnedStorageFiles(bucket, uid, deletedThreadIds, explicitP
     const senderId = parts[2];
     if (senderId === uid || deletedThreadIds.has(threadId)) filesByName.set(file.name, file);
   });
+
+  // Hashed secure upload paths carry no UID. Only trusted grant ownership or a
+  // deleted parent thread authorizes including their exact grant prefix.
+  for (const prefix of securePrefixes) {
+    const [files] = await bucket.getFiles({ prefix });
+    files.forEach(file => filesByName.set(file.name, file));
+  }
 
   return [...filesByName.values()];
 }
@@ -1144,7 +1157,147 @@ async function deleteDispatchUserData(params) {
 
   const avatarPath = storagePathFromAttachment({ id: userData.avatarStoragePath, url: userData.avatarUrl });
   if (avatarPath && storagePathBelongsToUser(avatarPath, uid)) storagePaths.add(avatarPath);
-  const storageFiles = await collectOwnedStorageFiles(bucket, uid, deletedThreadIds, storagePaths);
+  const securePrefixes = [];
+  const removedSecureGrantIds = new Set();
+  records.chatUploadGrants.forEach(record => {
+    if (record.data.ownerId === uid || deletedThreadIds.has(record.data.threadId) || deletedOrgIds.has(record.data.organizationId)) {
+      if (/^[a-f0-9]{40}$/.test(record.id)) securePrefixes.push(`chatSafetyAttachments/${record.id}/`);
+      removedSecureGrantIds.add(record.id);
+      queue.delete(record.ref);
+    }
+  });
+  const reportOwnerSignals = new Set();
+  const removedReportIds = new Set();
+  const anonymizedReportIds = new Set();
+  records.chatSafetyReports.forEach(record => {
+    const data = record.data;
+    const carriesEnforcement = data.moderationAction?.status === 'cleanup_pending'
+      || records.chatUserModerationState.some(state => [state.data, ...Object.values(state.data.organizations || {})]
+        .some(scope => scope.active === true && scope.sourceReportId === record.id));
+    if (data.targetUserId === uid || deletedThreadIds.has(data.threadId) || deletedOrgIds.has(data.organizationId)
+      || (data.reporterUserId === uid && !carriesEnforcement)) {
+      queue.recursiveDelete(record.ref);
+      removedReportIds.add(record.id);
+      if (data.reporterUserId !== uid) reportOwnerSignals.add(data.reporterUserId);
+      return;
+    }
+    const updates = redactStringFields(data, ['details', 'resolutionSummary', 'reporterDisplayName', 'targetDisplayName'], identity);
+    if (data.reporterUserId === uid) {
+      anonymizedReportIds.add(record.id);
+      Object.assign(updates, { reporterUserId: null, reporterDisplayName: 'Former member', details: '', reporterDeleted: true });
+    }
+    if (data.evidence) {
+      const evidence = { ...data.evidence };
+      if (evidence.thread) evidence.thread = { ...evidence.thread, ...redactStringFields(evidence.thread, ['title'], identity) };
+      if (evidence.message) {
+        evidence.message = { ...evidence.message, ...redactStringFields(evidence.message, ['text'], identity) };
+        if (Array.isArray(evidence.message.attachments)) evidence.message.attachments = evidence.message.attachments
+          .filter(attachment => {
+            const path = storagePathFromAttachment(attachment);
+            return !storagePathBelongsToUser(path, uid)
+              && !(path?.startsWith('chatSafetyAttachments/') && removedSecureGrantIds.has(path.split('/')[1]));
+          })
+          .map(attachment => ({ ...attachment, ...redactStringFields(attachment, ['name'], identity) }));
+      }
+      if (data.reporterUserId === uid) {
+        if (evidence.thread) evidence.thread = { ...evidence.thread, title: 'Chat' };
+        if (evidence.message) evidence.message = { ...evidence.message, text: '', attachments: [] };
+      }
+      if (JSON.stringify(evidence) !== JSON.stringify(data.evidence)) updates.evidence = evidence;
+    }
+    if (Object.keys(updates).length) {
+      queue.update(record.ref, { ...updates, updatedAt: FieldValue.serverTimestamp() });
+      reportOwnerSignals.add(data.reporterUserId);
+    }
+  });
+  // Generic review notices carry no report identity. Their private deduplication
+  // marker supplies the link needed to remove associated delivery records.
+  records.chatReviewNotificationSources.forEach(record => {
+    const data = record.data;
+    if (data.recipientUserId === uid || data.targetUserId === uid
+      || removedReportIds.has(data.reportId) || deletedOrgIds.has(data.organizationId)) {
+      queue.delete(record.ref);
+      const noticeRef = db.collection('userNotifications').doc(record.id);
+      queue.delete(noticeRef);
+      deletedUserNotificationIds.add(record.id);
+      deletedSourcePaths.add(noticeRef.path);
+      return;
+    }
+    // Retained anonymous enforcement must retain its deduplication marker;
+    // otherwise a delayed report trigger could recreate a dismissed notice.
+    if (data.reporterUserId === uid) queue.update(record.ref, { reporterUserId: null });
+  });
+  records.pushDeliveries.forEach(record => {
+    if (!deletedSourcePaths.has(record.data.sourcePath)) return;
+    queue.delete(record.ref);
+    if (typeof record.data.deliveryId === 'string') deletedDeliveryIds.add(record.data.deliveryId);
+  });
+  records.pushTickets.forEach(record => {
+    if (deletedDeliveryIds.has(record.data.deliveryId)) queue.delete(record.ref);
+  });
+  // Privacy cleanup is the only exception to append-only moderation history.
+  // Active enforcement survives without the deleted reporter/reviewer's identity.
+  for (const report of records.chatSafetyReports) {
+    if (removedReportIds.has(report.id)) continue;
+    const audits = await listCollectionDocuments(report.ref.collection('moderationAudit'));
+    audits.forEach(audit => {
+      if (audit.data.actorUserId === uid) {
+        queue.update(audit.ref, { actorUserId: FieldValue.delete(), actorDeleted: true, note: 'Removed with moderator account.' });
+      } else if (anonymizedReportIds.has(report.id)) {
+        if (audit.data.note) queue.update(audit.ref, { note: 'Removed with reporter account.' });
+      } else {
+        queue.update(audit.ref, redactStringFields(audit.data, ['note'], identity));
+      }
+    });
+  }
+  records.chatModerationOperations.forEach(record => {
+    const data = record.data;
+    if (data.targetUserId === uid || removedReportIds.has(data.reportId) || deletedOrgIds.has(data.organizationId)) {
+      queue.delete(record.ref);
+      return;
+    }
+    const updates = {};
+    if (data.reporterUserId === uid) updates.reporterUserId = null;
+    if (data.actorUserId === uid) Object.assign(updates, { actorUserId: null, actorDeleted: true });
+    if (Object.keys(updates).length) queue.update(record.ref, updates);
+  });
+  records.chatModerationCursors.forEach(record => {
+    if (record.data.ownerId === uid || removedReportIds.has(record.data.reportId)) queue.delete(record.ref);
+  });
+  records.chatUserModerationState.forEach(record => {
+    if (record.id === uid) { queue.delete(record.ref); return; }
+    const scoped = Object.fromEntries(Object.entries(record.data.organizations || {})
+      .filter(([organizationId]) => !deletedOrgIds.has(organizationId))
+      .map(([organizationId, state]) => [organizationId, removedReportIds.has(state.sourceReportId)
+        ? { ...state, sourceReportId: null, sourceOperationId: null } : state]));
+    const updates = {};
+    if (JSON.stringify(scoped) !== JSON.stringify(record.data.organizations || {})) updates.organizations = scoped;
+    if (deletedOrgIds.has(record.data.organizationId)) {
+      const survivor = Object.values(scoped)[0];
+      if (!survivor) { queue.delete(record.ref); return; }
+      Object.assign(updates, survivor, { organizations: scoped });
+    } else if (removedReportIds.has(record.data.sourceReportId)) Object.assign(updates, { sourceReportId: null, sourceOperationId: null });
+    queue.update(record.ref, updates);
+  });
+  for (const reporterId of reportOwnerSignals) {
+    if (!records.users.some(record => record.id === reporterId)) continue;
+    await db.collection('users').doc(reporterId).collection('chatSafetyState').doc('current').set({
+      version: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+  // Remove incoming blocks so a deleted profile name/UID is not retained in a
+  // different person's private block list. Notify their open safety screens.
+  for (const user of records.users.filter(record => record.id !== uid)) {
+    const blockRef = user.ref.collection('chatBlocks').doc(uid);
+    const block = await blockRef.get();
+    if (block.exists) {
+      queue.delete(blockRef);
+      await user.ref.collection('chatSafetyState').doc('current').set({
+        version: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+  }
+  const storageFiles = await collectOwnedStorageFiles(bucket, uid, deletedThreadIds, storagePaths, securePrefixes);
   const initialStorageObjectsDeleted = await deleteStorageFiles(storageFiles);
 
   const recursiveDeletes = queue.recursiveValues();
@@ -1163,6 +1316,7 @@ async function deleteDispatchUserData(params) {
       'roleAssignmentNotifications',
       'userNotifications',
       'chatUnread',
+      'chatReviewNotificationSources',
       '_emailVerificationRequests',
       'mail',
       'pushDeliveries',
@@ -1170,12 +1324,12 @@ async function deleteDispatchUserData(params) {
     ],
     deletedSourcePaths,
   });
-  await db.collection('users').doc(uid).delete();
+  await db.recursiveDelete(db.collection('users').doc(uid));
   // A chat participant can begin an upload before the deletion fence removes the
   // thread. Re-list after every Firestore source document is gone so that any
   // object finalized during that window is removed before the caller releases
   // the global deletion lease.
-  const residualStorageFiles = await collectOwnedStorageFiles(bucket, uid, deletedThreadIds, new Set());
+  const residualStorageFiles = await collectOwnedStorageFiles(bucket, uid, deletedThreadIds, new Set(), securePrefixes);
   const residualStorageObjectsDeleted = await deleteStorageFiles(residualStorageFiles);
   const storageObjectsDeleted = initialStorageObjectsDeleted + residualStorageObjectsDeleted;
 

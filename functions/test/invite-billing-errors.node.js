@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { defaultOrganizationBilling } = require('../lib/subscriptions');
 
-function inviteHarness({ accepted = 5, billing = {}, pending = [], projectId = '', policy, callerRole = 'manager', stubAccountCleanup = false } = {}) {
+function inviteHarness({ accepted = 5, billing = {}, pending = [], projectId = '', policy, callerRole = 'manager', stubAccountCleanup = false, functionsEmulator = false } = {}) {
   const userId = 'billing-manager';
   const organizationId = 'test-organization';
   const documents = new Map([
@@ -26,6 +26,7 @@ function inviteHarness({ accepted = 5, billing = {}, pending = [], projectId = '
   const providerRequests = [];
   const cleanupRequests = [];
   const storageDeletions = [];
+  const pushNetworkCalls = [];
   let serial = 0;
   const collection = (name, conditions = []) => ({
     doc(id = `generated-${++serial}`) {
@@ -87,7 +88,7 @@ function inviteHarness({ accepted = 5, billing = {}, pending = [], projectId = '
     'firebase-functions/v1': legacyFunctions,
     'firebase-functions/v2': { setGlobalOptions() {}, logger: { info() {}, error() {}, warn() {} } },
     'firebase-functions/v2/core': { onInit() {} },
-    'firebase-functions/v2/firestore': { onDocumentCreated: register, onDocumentUpdated: register },
+    'firebase-functions/v2/firestore': { onDocumentCreated: register, onDocumentUpdated: register, onDocumentWritten: register },
     'firebase-functions/v2/https': { HttpsError, onCall: register, onRequest: register },
     'firebase-functions/v2/scheduler': { onSchedule: register },
     'firebase-functions/v2/storage': { onObjectFinalized: register },
@@ -106,7 +107,8 @@ function inviteHarness({ accepted = 5, billing = {}, pending = [], projectId = '
   const context = {
     exports: {},
     require: (name) => mocks[name] || requireEntry(name),
-    process: { env: { GCLOUD_PROJECT: projectId } },
+    process: { env: { GCLOUD_PROJECT: projectId, FUNCTIONS_EMULATOR: String(functionsEmulator) } },
+    fetch: async (...args) => { pushNetworkCalls.push(args); throw Error('Unexpected network call'); },
     Buffer, Error, URL, Date,
     __db: db,
     __fieldValue: {
@@ -129,9 +131,19 @@ function inviteHarness({ accepted = 5, billing = {}, pending = [], projectId = '
     claim: (tokenOrCode, uid = 'new-worker') => context.exports.claimDispatchInvite({ auth: { uid }, data: { tokenOrCode } }),
     handlers: context.exports,
     reminderMail: context.workerEventReminderMail,
-    authDeletions, providerRequests, cleanupRequests, storageDeletions,
+    authDeletions, providerRequests, cleanupRequests, storageDeletions, pushNetworkCalls,
+    expoRequest: context.expoRequest,
   };
 }
+
+test('Functions emulator never contacts real Expo push or receipt endpoints', async () => {
+  const harness = inviteHarness({ functionsEmulator: true });
+  for (const url of ['https://exp.host/--/api/v2/push/send', 'https://exp.host/--/api/v2/push/getReceipts']) {
+    const result = await harness.expoRequest(url, { token: 'synthetic' });
+    assert.deepEqual(Array.from(result.data), []);
+  }
+  assert.equal(harness.pushNetworkCalls.length, 0);
+});
 
 for (const kind of ['worker', 'manager']) {
   test(`full organization rejects ${kind} invitation with authoritative upgrade details and no writes`, async () => {

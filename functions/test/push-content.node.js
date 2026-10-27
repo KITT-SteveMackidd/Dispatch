@@ -11,6 +11,11 @@ const {
   rolePushRecipientId,
 } = require('../lib/push-content');
 
+test('explicitly empty chat recipients never fall back to all participants', () => {
+  assert.deepEqual(chatPushRecipientIds({ senderId: 'a', recipientIds: [] }, { participants: ['a', 'b'] }), []);
+  assert.deepEqual(chatPushRecipientIds({ senderId: 'a' }, { participants: ['a', 'b'] }), ['b']);
+});
+
 test('creates stable Firestore-safe delivery keys', () => {
   const key = documentKey('user-notification:late-task:manager-1');
   assert.equal(key, documentKey('user-notification:late-task:manager-1'));

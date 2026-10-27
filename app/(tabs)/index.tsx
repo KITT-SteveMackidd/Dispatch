@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { SwipeActionButton } from '@/components/SwipeActionButton';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSession } from '@/context/session';
@@ -327,6 +328,8 @@ export default function EventsScreen() {
   const isDarkMode = resolvedThemeMode === 'dark';
   const drawerSurfaceColor = isDarkMode ? '#12274D' : '#F7F7F7';
   const [events, setEvents] = useState<DispatchEvent[]>([]);
+  const [eventLoadError, setEventLoadError] = useState<string | null>(null);
+  const [eventReload, setEventReload] = useState(0);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [expandedRoleTaskIds, setExpandedRoleTaskIds] = useState<Record<string, boolean>>({});
   const [managerNames, setManagerNames] = useState<ManagerNamesMap>({});
@@ -727,21 +730,24 @@ export default function EventsScreen() {
   };
 
   useEffect(() => {
+    setEvents([]);
+    setEventLoadError(null);
     if (!profile) return;
     knownEventIdsRef.current = new Set();
     eventListInitializedRef.current = false;
     calendarPromptedEventIdsRef.current = new Set();
+    const handleEventError = () => setEventLoadError(profile.organizationId ? 'Events could not be loaded. Check your connection and try again.' : 'Join an organization to view events. Ask your Manager for an invitation.');
 
     return profile.role === 'manager'
       ? watchManagerEvents(profile.uid, (items) => {
           updateWatchedEvents(items);
           setOptimisticCreatedEvents((prev) => prev.filter((pending) => !items.some((item) => item.id === pending.id)));
-        }, profile.organizationId)
+        }, profile.organizationId, handleEventError)
       : watchWorkerEvents(profile.uid, (items) => {
           updateWatchedEvents(items);
           setOptimisticCreatedEvents((prev) => prev.filter((pending) => !items.some((item) => item.id === pending.id)));
-        });
-  }, [profile]);
+        }, profile.organizationId, handleEventError);
+  }, [profile, eventReload]);
 
   useEffect(() => {
     if (profile?.role !== 'manager') {
@@ -3289,6 +3295,7 @@ export default function EventsScreen() {
         </View>
       ) : null}
 
+      {eventLoadError ? <View style={styles.eventLoadError}><Text accessibilityRole="alert" style={styles.eventLoadErrorText}>{eventLoadError}</Text><Pressable accessibilityRole="button" style={styles.eventRetry} onPress={() => setEventReload((value) => value + 1)}><Text style={styles.eventLoadErrorText}>Retry</Text></Pressable></View> : null}
       <FlatList
         data={eventsWeekRows}
         keyExtractor={(item) => item.key}
@@ -3392,15 +3399,15 @@ export default function EventsScreen() {
           return (
             <Swipeable
               ref={(ref) => { swipeableRefs.current[item.id] = ref; }}
-              renderLeftActions={() => (
-                <Pressable style={styles.swipeEditAction} onPress={() => openEventEditDrawer(item)}>
+              renderLeftActions={(progress) => (
+                <SwipeActionButton progress={progress} accessibilityLabel={`Edit ${item.name}`} style={styles.swipeEditAction} onPress={() => openEventEditDrawer(item)}>
                   <Text style={styles.swipeEditActionText}>Edit</Text>
-                </Pressable>
+                </SwipeActionButton>
               )}
-              renderRightActions={() => (
-                <Pressable style={styles.swipeDeleteAction} onPress={() => handleDeleteEvent(item)}>
+              renderRightActions={(progress) => (
+                <SwipeActionButton progress={progress} accessibilityLabel={`Delete ${item.name}`} style={styles.swipeDeleteAction} onPress={() => handleDeleteEvent(item)}>
                   <Text style={styles.swipeDeleteActionText}>Delete</Text>
-                </Pressable>
+                </SwipeActionButton>
               )}
               leftThreshold={40}
               rightThreshold={40}
@@ -4779,6 +4786,9 @@ export default function EventsScreen() {
 }
 
 const styles = StyleSheet.create({
+  eventLoadError: { padding: 14, marginHorizontal: 16, borderRadius: 10, backgroundColor: '#FFF1F2', gap: 4 },
+  eventLoadErrorText: { color: '#991B1B', fontSize: 14, lineHeight: 20 },
+  eventRetry: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 8 },
   container: { flex: 1, padding: 16 },
   containerLight: { backgroundColor: '#DBE2F9' },
   containerDark: { backgroundColor: '#061229' },

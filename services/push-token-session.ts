@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
+import { firebaseEmulatorConfiguration } from '../lib/firebase';
 import { setActiveNotificationUser } from '../lib/foreground-chat-notifications';
 import { removeUserPushToken, saveUserPushToken } from './dispatch';
 
@@ -73,7 +74,7 @@ export async function registerCurrentDevicePushToken(params: {
   platform: 'ios' | 'android' | 'web' | 'unknown';
   permissionStatus: 'granted' | 'denied' | 'undetermined';
 }) {
-  if (!isPushTokenSessionActive(params.userId, params.generation)) return false;
+  if (firebaseEmulatorConfiguration.enabled || !isPushTokenSessionActive(params.userId, params.generation)) return false;
   currentDeviceToken = params.token;
 
   const operation = (async () => {
@@ -122,6 +123,11 @@ export async function registerCurrentDevicePushToken(params: {
 
 export async function unregisterCurrentDevicePushToken(userId: string) {
   invalidatePushTokenSession(userId);
+  if (firebaseEmulatorConfiguration.enabled) {
+    // Local accounts never own a real Expo token. Do not discover one at logout.
+    forgetRegisteredDevicePushToken();
+    return;
+  }
 
   const pendingForUser = [...pendingRegistrations]
     .filter((registration) => registration.userId === userId)

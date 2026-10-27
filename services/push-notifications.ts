@@ -4,9 +4,15 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useSession } from '@/context/session';
+import { firebaseEmulatorConfiguration } from '@/lib/firebase';
+import { subscribeToChatSafety } from '@/services/chat-safety';
 import { NotificationRouteData, resolveChatRouteFromNotification } from '@/services/notification-routing';
 import {
   isNotificationForUser,
+  isChatNotificationAllowed,
+  isChatNotificationSafetyReady,
+  setChatNotificationSafety,
+  watchChatNotificationSafety,
   setActiveNotificationUser,
   shouldPresentForegroundNotification,
 } from '@/lib/foreground-chat-notifications';
@@ -47,16 +53,35 @@ function ensureNotificationHandler() {
   notificationHandlerConfigured = true;
 }
 
-function useNotificationRouting(currentUserId?: string) {
+function useNotificationRouting(currentUserId?: string, currentOrganizationId?: string | null, currentRole?: string) {
   const router = useRouter();
 
   useEffect(() => {
     if (!currentUserId) return;
+    let active = true;
+    let pendingChat: NotificationRouteData | undefined;
 
     const go = (data?: NotificationRouteData) => {
-      if (!data || !isNotificationForUser(data, currentUserId)) return;
+      if (!active || !data || !isNotificationForUser(data, currentUserId)) return;
+
+      if (data.kind === 'chat_safety_report') {
+        if (!currentOrganizationId || data.organizationId !== currentOrganizationId) return;
+        if (!isChatNotificationSafetyReady(currentUserId)) {
+          pendingChat = data;
+          return;
+        }
+        pendingChat = undefined;
+        if (isChatNotificationAllowed(data, currentUserId)) router.push('/chat-moderation');
+        return;
+      }
 
       if (data.kind === 'chat') {
+        if (!isChatNotificationSafetyReady(currentUserId)) {
+          pendingChat = data;
+          return;
+        }
+        pendingChat = undefined;
+        if (!isChatNotificationAllowed(data, currentUserId)) return;
         const route = resolveChatRouteFromNotification(data, currentUserId);
         if (!route) return;
         router.push({
@@ -78,30 +103,46 @@ function useNotificationRouting(currentUserId?: string) {
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
       go(response.notification.request.content.data as NotificationRouteData);
     });
+    const stopSafetyWatch = watchChatNotificationSafety(() => {
+      if (pendingChat) go(pendingChat);
+    });
 
     Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) go(response.notification.request.content.data as NotificationRouteData);
     }).catch(() => undefined);
 
     return () => {
+      active = false;
+      pendingChat = undefined;
+      stopSafetyWatch();
       responseSub.remove();
     };
-  }, [currentUserId, router]);
+  }, [currentUserId, currentOrganizationId, currentRole, router]);
 }
 
 export function usePushNotificationBridge() {
-  const { profile } = useSession();
+  const { profile, authUser } = useSession();
+  const currentUserId = authUser?.uid === profile?.uid ? profile?.uid : undefined;
 
-  useNotificationRouting(profile?.uid);
+  useNotificationRouting(currentUserId, profile?.organizationId, profile?.role);
 
   useEffect(() => {
     ensureNotificationHandler();
-    setActiveNotificationUser(profile?.uid || null);
-    return () => setActiveNotificationUser(null);
-  }, [profile?.uid]);
+    setActiveNotificationUser(currentUserId || null);
+    const userId = currentUserId;
+    const organizationId = profile?.organizationId;
+    const safety = userId && organizationId
+      ? subscribeToChatSafety({ userId, organizationId }, (state) => setChatNotificationSafety(userId, state, organizationId))
+      : null;
+    return () => {
+      safety?.unsubscribe();
+      setActiveNotificationUser(null);
+    };
+  }, [currentUserId, profile?.organizationId, profile?.role]);
 
   useEffect(() => {
-    if (!profile?.uid) return;
+    // Synthetic local accounts must never request or register real Expo tokens.
+    if (!profile?.uid || firebaseEmulatorConfiguration.enabled) return;
     const userId = profile.uid;
     const pushTokenSessionGeneration = beginPushTokenSession(userId);
 

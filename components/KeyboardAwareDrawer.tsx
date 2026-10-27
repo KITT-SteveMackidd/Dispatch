@@ -115,7 +115,8 @@ export const KeyboardAwareDrawerScrollView = forwardRef<ScrollViewInstance, Keyb
 
       input.measureInWindow((_inputX, inputY, _inputWidth, inputHeight) => {
         scrollView.getNativeScrollRef()?.measureInWindow((_scrollX, scrollY, _scrollWidth, scrollHeight) => {
-          const keyboardTop = Keyboard.metrics()?.screenY;
+          // React Native Web does not expose the native keyboard metrics API.
+          const keyboardTop = Keyboard.metrics?.()?.screenY;
           const nextOffset = getKeyboardAwareDrawerScrollOffset({
             currentOffset: scrollOffsetRef.current,
             inputTop: inputY,
@@ -168,7 +169,7 @@ export const KeyboardAwareDrawerScrollView = forwardRef<ScrollViewInstance, Keyb
 
     const handleContentSizeChange = (width: number, height: number) => {
       onContentSizeChange?.(width, height);
-      if (activeInputRef.current && Keyboard.isVisible()) scheduleReveal(activeInputRef.current);
+      if (activeInputRef.current && Keyboard.isVisible?.()) scheduleReveal(activeInputRef.current);
     };
 
     return (

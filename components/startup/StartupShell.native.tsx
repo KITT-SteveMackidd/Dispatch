@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { StartupModules, StartupShellProps } from './StartupShell';
+import { loadStartupFonts } from './startupFonts';
 
 type LoadedStartupModules = StartupModules & {
   SessionProvider: typeof import('@/context/session').SessionProvider;
@@ -24,7 +25,7 @@ export function StartupShell({ children }: StartupShellProps) {
     setStartupError(null);
     const timeout = setTimeout(() => {
       if (active) {
-        setStartupError('Startup modules took too long to load.');
+        setStartupError('Startup fonts or modules took too long to load.');
       }
     }, 10000);
 
@@ -32,9 +33,11 @@ export function StartupShell({ children }: StartupShellProps) {
       try {
         const sessionModule = require('@/context/session') as typeof import('@/context/session');
         const themeModule = require('@/context/theme') as typeof import('@/context/theme');
+        await loadStartupFonts();
 
         if (!active) return;
         clearTimeout(timeout);
+        setStartupError(null);
         setModules({
           SessionProvider: sessionModule.SessionProvider,
           AppThemeProvider: themeModule.ThemeProvider,
@@ -64,7 +67,7 @@ export function StartupShell({ children }: StartupShellProps) {
           <Text selectable style={styles.message}>
             {startupError}
           </Text>
-          <Pressable style={styles.button} onPress={() => setRetryKey((value) => value + 1)}>
+          <Pressable accessibilityRole="button" style={styles.button} onPress={() => setRetryKey((value) => value + 1)}>
             <Text style={styles.buttonText}>Try again</Text>
           </Pressable>
         </ScrollView>

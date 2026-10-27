@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+const emulator = vi.hoisted(() => ({ enabled: false }));
+vi.mock('../lib/firebase', () => ({ firebaseEmulatorConfiguration: emulator }));
 
 vi.mock('../services/dispatch', () => ({
   removeUserPushToken: vi.fn().mockResolvedValue(undefined),
@@ -31,6 +33,7 @@ import {
 
 describe('push token session ownership', () => {
   beforeEach(() => {
+    emulator.enabled = false;
     vi.mocked(removeUserPushToken).mockReset();
     vi.mocked(removeUserPushToken).mockResolvedValue(undefined);
     vi.mocked(saveUserPushToken).mockReset();
@@ -204,5 +207,21 @@ describe('push token session ownership', () => {
     })).rejects.toThrow('Previous owner cleanup denied');
 
     expect(saveUserPushToken).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('local logout makes no Expo or token-removal call (cached token: %s)', async (cached) => {
+    if (cached) await rememberRegisteredDeviceToken('local-user', 'ExpoPushToken[device]');
+    emulator.enabled = true;
+    await unregisterCurrentDevicePushToken('local-user');
+    expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled();
+    expect(removeUserPushToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects direct registration attempts for synthetic accounts even if the bridge is bypassed', async () => {
+    emulator.enabled = true;
+    const generation = beginPushTokenSession('local-user');
+    expect(await registerCurrentDevicePushToken({ userId: 'local-user', generation, token: 'ExpoPushToken[device]', platform: 'ios', permissionStatus: 'granted' })).toBe(false);
+    expect(saveUserPushToken).not.toHaveBeenCalled();
+    expect(removeUserPushToken).not.toHaveBeenCalled();
   });
 });

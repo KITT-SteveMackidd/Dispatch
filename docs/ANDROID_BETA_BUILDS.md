@@ -20,7 +20,9 @@ The customer app sets `dispatchBetaMode=customer_beta` and `dispatchBetaBackend=
 - Verification emails and secure invitation create/get/claim use existing Dispatch endpoints and email delivery.
 - Organization member removal, pending-invitation list/cancel, and automatic legacy invitation adoption are unavailable in this build because those endpoints are not deployed. Unsupported controls are not mounted and helper calls fail locally. Secure invitation links and codes remain supported.
 - Account deletion uses the existing endpoint and its existing behavior. Do not promise the newer orphaned-organization recovery behavior without a separately reviewed backend rollout.
-- Google sign-in and Places remain explicitly disabled in this candidate pending native certificate/configuration validation; email/password and manual venue entry remain available.
+- Google sign-in and Places remain explicitly disabled in this candidate pending native certificate/configuration validation; email/password and manual venue entry remain available. The local mobile UI restores the Google button and original four-colour SVG; pressing it explains Expo Go or missing configuration before importing the native SDK. Button visibility does not indicate OAuth readiness.
+- The October 27 local auth restoration loads bundled Inter fonts before rendering, with timeout/retry recovery. It also restores the SDK 58 script/style injection required by the Expo browser preview. The previously built version-code-4 AAB does not contain these changes; build and verify a new artifact before uploading this candidate.
+- The October 27 local event-card fix hides Edit/Delete action backgrounds at zero swipe progress on Events and Today, restoring the prior rounded-card appearance while retaining swipe actions. Expo's required SDK 58 patch versions are installed (Expo58.0.20, AuthSession58.0.15, FileSystem58.0.12, Router58.0.27, WebBrowser58.0.7); the confirmed device requirement remains SDK58.
 
 Local emulator/Test Store QA keeps the newer subscription workflows. The shared Firebase project must never receive Test Store keys, emulator hosts, or a sandbox receipt environment.
 

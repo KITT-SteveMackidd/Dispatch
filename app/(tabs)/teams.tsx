@@ -14,6 +14,8 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '@/context/session';
 import { useThemeMode } from '@/context/theme';
+import { useChatSafety } from '@/hooks/useChatSafety';
+import { canShowChatSenderContent } from '@/lib/chat-safety-visibility';
 import { isCustomerBeta, isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import { headerLogoSource } from '@/constants/branding';
 import { ACCESSIBLE_TEXT_MAX_MULTIPLIER, MINIMUM_TOUCH_TARGET } from '@/constants/accessibility';
@@ -66,6 +68,7 @@ function toDate(value: ChatThreadHead['updatedAt']) {
 
 export default function TeamsScreen() {
   const { profile } = useSession();
+  const chatSafety = useChatSafety();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { resolvedThemeMode } = useThemeMode();
@@ -91,6 +94,7 @@ export default function TeamsScreen() {
   const [memberSearch, setMemberSearch] = useState('');
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [creatingChat, setCreatingChat] = useState(false);
+  const [createChatError, setCreateChatError] = useState<string | null>(null);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('add-team');
@@ -349,10 +353,23 @@ export default function TeamsScreen() {
     setChatPickerOpen(false);
     setMemberSearch('');
     setSelectedMemberIds([]);
+    setCreateChatError(null);
   };
 
   const handleCreateChat = async () => {
     if (!profile?.organizationId || !selectedMemberIds.length || creatingChat) return;
+    if (!chatSafety.rolloutReady || chatSafety.loading || chatSafety.error) {
+      setCreateChatError('Chat safety could not be confirmed. Refresh chat safety before creating a conversation.');
+      return;
+    }
+    if (chatSafety.enabled && !chatSafety.state?.acceptedTerms) {
+      setCreateChatError('Read and accept the chat rules before creating a conversation.');
+      return;
+    }
+    if (chatSafety.enabled && !chatSafety.canSend) {
+      setCreateChatError(chatSafety.state?.sendDisabledReason || 'Creating a conversation is unavailable. Your existing chats and reporting tools remain accessible.');
+      return;
+    }
     const selected = [...new Set(selectedMemberIds)].sort();
     const participantIds = [...new Set([profile.uid, ...selected])];
     const names = selected.map((id) => memberById.get(id)?.displayName || 'Member');
@@ -360,6 +377,7 @@ export default function TeamsScreen() {
     const threadId = `organization:${profile.organizationId}:group:${participantIds.slice().sort().join('__')}`;
 
     try {
+      setCreateChatError(null);
       setCreatingChat(true);
       await createChatGroup({
         threadId,
@@ -371,7 +389,7 @@ export default function TeamsScreen() {
       closeChatPicker();
       openChat({ id: threadId, threadId, title, subtitle: `${participantIds.length} members`, participantIds, kind: 'custom' });
     } catch (error) {
-      Alert.alert('Unable to create chat', error instanceof Error ? error.message : 'Please try again.');
+      setCreateChatError(error instanceof Error ? error.message : 'Unable to create chat. Please try again.');
     } finally {
       setCreatingChat(false);
     }
@@ -562,7 +580,7 @@ export default function TeamsScreen() {
               <View style={[styles.flex, styles.chatCopy]}>
                 <Text style={[styles.itemTitle, isDarkMode ? styles.textDark : styles.textLight]} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>{item.title}</Text>
                 <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]} numberOfLines={2} maxFontSizeMultiplier={ACCESSIBLE_TEXT_MAX_MULTIPLIER}>
-                  {head?.lastMessageText || item.subtitle}
+                  {head?.lastMessageText && canShowChatSenderContent(head.lastMessageSenderId, chatSafety) ? head.lastMessageText : item.subtitle}
                 </Text>
               </View>
               <View style={styles.chatMetaColumn}>
@@ -619,7 +637,13 @@ export default function TeamsScreen() {
                 </View>
               ))}
             </View>
-            <Pressable style={[styles.chatButton, (!selectedMemberIds.length || creatingChat) && styles.disabled]} disabled={!selectedMemberIds.length || creatingChat} onPress={handleCreateChat}>
+            {createChatError ? <Text accessibilityRole="alert" style={styles.errorText}>{createChatError}</Text> : null}
+            {chatSafety.enabled && !chatSafety.state?.acceptedTerms ? <>
+              <Text style={[styles.itemSubtitle, isDarkMode ? styles.mutedDark : styles.mutedLight]}>Read and accept the chat rules before creating a conversation.</Text>
+              <Pressable accessibilityRole="button" style={styles.chatButton} onPress={() => { closeChatPicker(); router.push('/chat-safety'); }}><Text style={styles.chatButtonText}>Open Chat safety</Text></Pressable>
+            </> : null}
+            {chatSafety.error ? <Pressable accessibilityRole="button" style={styles.chatButton} onPress={() => void chatSafety.refresh()}><Text style={styles.chatButtonText}>Refresh chat safety</Text></Pressable> : null}
+            <Pressable accessibilityRole="button" style={[styles.chatButton, (!selectedMemberIds.length || creatingChat) && styles.disabled]} disabled={!selectedMemberIds.length || creatingChat} onPress={handleCreateChat}>
               <Text style={styles.chatButtonText}>{creatingChat ? 'Creating...' : 'Chat'}</Text>
             </Pressable>
         </KeyboardAwareDrawerScrollView>

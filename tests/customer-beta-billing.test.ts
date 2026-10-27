@@ -119,7 +119,7 @@ function teamsHarness(customerBeta: boolean, existingBackend = false) {
       useState: (value: any) => {
         const index = stateUpdates.length;
         const setter = vi.fn(); stateUpdates.push(setter);
-        const overrides: Record<number, unknown> = { 1: organization, 2: members, 8: true, 9: 'other', 17: 'invite-manager' };
+        const overrides: Record<number, unknown> = { 1: organization, 2: members, 8: true, 9: 'other', 18: 'invite-manager' };
         return [index in overrides ? overrides[index] : typeof value === 'function' ? value() : value, setter];
       },
     },
@@ -130,6 +130,8 @@ function teamsHarness(customerBeta: boolean, existingBackend = false) {
     '@/context/session': { useSession: () => ({ profile: { uid: 'manager', role: 'manager', organizationId: 'org' } }) },
     '@/context/theme': { useThemeMode: () => ({ resolvedThemeMode: 'light' }) },
     '@/constants/branding': { headerLogoSource: {} },
+    '@/hooks/useChatSafety': { useChatSafety: () => ({ enabled: false, rolloutReady: true, loading: false, error: null, state: null, canSend: true }) },
+    '@/lib/chat-safety-visibility': { canShowChatSenderContent: () => true },
     '@/constants/accessibility': { ACCESSIBLE_TEXT_MAX_MULTIPLIER: 2, MINIMUM_TOUCH_TARGET: 44 },
     '@/services/dispatch': {
       buildOrganizationChatThreadId: (id: string) => id, buildOrganizationManagersThreadId: (id: string) => id,

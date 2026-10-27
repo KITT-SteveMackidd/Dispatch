@@ -28,7 +28,7 @@ import { isExistingDispatchCustomerBeta } from '@/config/beta-mode';
 import { buildEventTaskFromTemplate, buildNewEventRoleForFirestore, EventTaskTemplateInput, sanitizeEventRoleForFirestore } from '@/lib/firestore-event-data';
 import { normalizeTeamMemberRole, validateTeamWorkerSelection } from '@/lib/team-membership';
 import { buildWorkerInviteEmailDocument } from '@/lib/worker-invite-email';
-import { canManagerManageEvent, hasConcurrentEventChange, mergeManagerEventScopes } from '@/lib/event-manager-access';
+import { canManagerManageEvent, hasConcurrentEventChange } from '@/lib/event-manager-access';
 import { preserveTemplateTaskOrder } from '@/lib/template-task-order';
 import { buildEventDetailsUpdate, type EventDetailsDraft } from '@/lib/event-schedule-edit';
 import { buildEventSchedule } from '@/lib/event-schedule';
@@ -40,6 +40,7 @@ import { prepareWorkerEventRoleInvitation, removeEventRoleAndRebuildWorkers, rem
 import { prepareEventRoleInviteResponse, respondToEventRoleInvite } from '@/lib/event-role-invite-access';
 import { addCustomChatParticipantsThroughServer, sendChatMessageThroughServer } from '@/lib/chat-message-access';
 import { registerDevicePushTokenThroughServer, unregisterDevicePushTokenThroughServer } from '@/lib/push-token-access';
+import { createChatUpload } from '@/services/chat-safety';
 import { getAvailableRoleSlots } from '@/lib/worker-role-action';
 import { canonicalizeEmail, normalizeEmail } from '@/lib/email-identity';
 import { resolveBillingManagerId } from '@/lib/billing-manager';
@@ -67,6 +68,7 @@ export type PersistedChatMessage = {
   senderName?: string;
   text: string;
   attachments?: ChatAttachment[];
+  moderationStatus?: 'removed';
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
@@ -110,10 +112,11 @@ export type RoleAssignmentNotification = {
 export type UserNotification = {
   id: string;
   userId: string;
-  kind: 'role_invite_response' | 'role_removed' | 'role_available' | 'task_behind_schedule' | 'worker_team_invite' | 'worker_role_cancelled' | 'manager_organisation_invite' | 'billing_manager_transfer';
+  kind: 'role_invite_response' | 'role_removed' | 'role_available' | 'task_behind_schedule' | 'worker_team_invite' | 'worker_role_cancelled' | 'manager_organisation_invite' | 'billing_manager_transfer' | 'chat_safety_report';
   title: string;
   body: string;
   relatedEventId?: string;
+  organizationId?: string;
   relatedRoleId?: string;
   relatedTaskId?: string;
   read: boolean;
@@ -365,16 +368,20 @@ export async function uploadChatAttachment(params: {
   kind: 'image' | 'file' | 'audio';
   name: string;
   mimeType?: string;
+  chatSafetyEnabled?: boolean;
 }) {
   const response = await fetch(params.uri);
   const blob = await response.blob();
   const ext = params.name.includes('.') ? params.name.split('.').pop() : 'bin';
   const safeExt = (ext || 'bin').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'bin';
-  const objectPath = `chatAttachments/${params.threadId}/${params.senderId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+  const contentType = params.mimeType || blob.type || 'application/octet-stream';
+  const objectPath = params.chatSafetyEnabled
+    ? (await createChatUpload({ threadId: params.threadId, name: params.name, mimeType: contentType, size: blob.size })).objectPath
+    : `chatAttachments/${params.threadId}/${params.senderId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
   const objectRef = ref(storage, objectPath);
 
   await uploadBytes(objectRef, blob, {
-    contentType: params.mimeType || blob.type || 'application/octet-stream',
+    contentType,
   });
 
   const url = await getDownloadURL(objectRef);
@@ -666,35 +673,14 @@ export async function ensureTeamCommunicationThreads(team: Team) {
 export function watchManagerEvents(
   managerId: string,
   cb: (items: DispatchEvent[]) => void,
-  organizationId?: string | null
+  organizationId?: string | null,
+  onError?: (error: Error) => void
 ) {
-  if (!organizationId) {
-    const ownEventsQuery = query(collection(db, 'events'), where('managerId', '==', managerId));
-    return onSnapshot(ownEventsQuery, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
-  }
-
-  let organizationEvents: DispatchEvent[] = [];
-  let legacyOwnEvents: DispatchEvent[] = [];
-  const emit = () => cb(sortDispatchEvents(mergeManagerEventScopes(organizationEvents, legacyOwnEvents)));
-  const unsubscribeOrganization = onSnapshot(
-    query(collection(db, 'events'), where('organizationId', '==', organizationId)),
-    (snap) => {
-      organizationEvents = mapEvents(snap);
-      emit();
-    }
-  );
-  const unsubscribeOwn = onSnapshot(
-    query(collection(db, 'events'), where('managerId', '==', managerId)),
-    (snap) => {
-      legacyOwnEvents = mapEvents(snap);
-      emit();
-    }
-  );
-
-  return () => {
-    unsubscribeOrganization();
-    unsubscribeOwn();
-  };
+  // Never broaden this to managerId: stale ownership can refer to another org.
+  // Legacy events need their organization recorded before appearing here.
+  if (!organizationId) { cb([]); onError?.(new Error('Join an organization to view events. Ask your Manager for an invitation.')); return () => undefined; }
+  const scope = query(collection(db, 'events'), where('organizationId', '==', organizationId));
+  return onSnapshot(scope, (snap) => cb(sortDispatchEvents(mapEvents(snap))), (error) => { cb([]); onError?.(error); });
 }
 
 export async function updateTeamWorkerMembership(params: {
@@ -867,9 +853,15 @@ function endOfLocalDay(value: Date) {
   return date;
 }
 
-export function watchWorkerEvents(workerId: string, cb: (items: DispatchEvent[]) => void) {
-  const q = query(collection(db, 'events'), where('workerIds', 'array-contains', workerId));
-  return onSnapshot(q, (snap) => cb(sortDispatchEvents(mapEvents(snap))));
+export function watchWorkerEvents(
+  workerId: string,
+  cb: (items: DispatchEvent[]) => void,
+  organizationId?: string | null,
+  onError?: (error: Error) => void
+) {
+  if (!organizationId) { cb([]); onError?.(new Error('Join an organization to view events. Ask your Manager for an invitation.')); return () => undefined; }
+  const scope = query(collection(db, 'events'), where('organizationId', '==', organizationId), where('workerIds', 'array-contains', workerId));
+  return onSnapshot(scope, (snap) => cb(sortDispatchEvents(mapEvents(snap))), (error) => { cb([]); onError?.(error); });
 }
 
 export function watchManagerTeams(

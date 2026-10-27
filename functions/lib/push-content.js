@@ -32,6 +32,7 @@ function chatPushContent(message, thread = {}) {
     body: text || (attachmentCount ? `Sent ${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}.` : 'You have a new message.'),
     data: {
       kind: 'chat',
+      ...(message.id ? { messageId: message.id } : {}),
       threadId: message.threadId || thread.id,
       senderId: message.senderId,
       teamId: message.teamId || thread.teamId || undefined,
@@ -51,7 +52,7 @@ function chatPushRecipientIds(message, thread = {}, activeViewerIds = []) {
   const participants = uniqueStrings(thread.participants);
   if (!participants.length) return [];
   const participantIds = new Set(participants);
-  return uniqueStrings(message.recipientIds?.length ? message.recipientIds : participants)
+  return uniqueStrings(Array.isArray(message.recipientIds) ? message.recipientIds : participants)
     .filter((userId) => (
       participantIds.has(userId)
       && userId !== message.senderId

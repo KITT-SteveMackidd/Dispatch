@@ -17,6 +17,9 @@ import {
   KeyboardAwareDrawerTextInput,
 } from '@/components/KeyboardAwareDrawer';
 import { isChatMemberChecked } from '@/lib/custom-chat-membership';
+import { useChatSafety } from '@/hooks/useChatSafety';
+import { canShowChatSenderContent } from '@/lib/chat-safety-visibility';
+import { ReportChatDrawer, type ReportChatTarget } from '@/components/chat/ReportChatDrawer';
 
 type ChatMessage = {
   id: string;
@@ -25,6 +28,7 @@ type ChatMessage = {
   text: string;
   at: string;
   attachments?: ChatAttachment[];
+  moderationStatus?: 'removed';
 };
 
 type PendingAttachment = {
@@ -91,6 +95,11 @@ export default function WorkerChatScreen() {
   const [chatNameDraft, setChatNameDraft] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [safetyBusy, setSafetyBusy] = useState(false);
+  const [safetyActionError, setSafetyActionError] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<ReportChatTarget | null>(null);
+  const [reportNotice, setReportNotice] = useState<string | null>(null);
 
   const organizationMemberById = useMemo(
     () => new Map(organizationMembers.map((member) => [member.uid, member])),
@@ -130,6 +139,27 @@ export default function WorkerChatScreen() {
       isTeamBroadcast,
     });
   }, [isTeamBroadcast, params.teamThreadId, profile, teamId, workerId]);
+
+  const safety = useChatSafety(threadReady ? threadId || undefined : undefined);
+  const visibleMessages = useMemo(() => {
+    return messages.filter((message) => canShowChatSenderContent(message.senderId, safety));
+  }, [messages, safety.rolloutReady, safety.enabled, safety.state, safety.loading, safety.error]);
+  const safetyParticipants = (safety.state?.participants || []).filter((person) => person.uid !== profile?.uid);
+  const changeBlock = async (userId: string, blocked: boolean) => {
+    if (safetyBusy) return;
+    setSafetyBusy(true);
+    setSafetyActionError(null);
+    try { await safety.setUserBlocked(userId, blocked); }
+    catch (error) { setSafetyActionError(error instanceof Error ? error.message : 'Unable to change this block. Please try again.'); }
+    finally { setSafetyBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!safety.canSend) {
+      setShowAttachmentPicker(false);
+      setShowEmojiPicker(false);
+    }
+  }, [safety.canSend]);
 
   useEffect(() => {
     if (!profile || !threadId) {
@@ -237,8 +267,9 @@ export default function WorkerChatScreen() {
             id: item.id,
             senderId: item.senderId,
             senderName: item.senderName,
-            text: item.text,
-            attachments: item.attachments || [],
+            text: item.moderationStatus === 'removed' ? 'Message removed by a moderator.' : item.text,
+            attachments: item.moderationStatus === 'removed' ? [] : item.attachments || [],
+            moderationStatus: item.moderationStatus,
             at: date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase(),
           };
         });
@@ -260,7 +291,7 @@ export default function WorkerChatScreen() {
 
   const emojiOptions = ['😀', '😂', '😍', '🙏', '👍', '🔥', '✅', '🎉', '📍', '⏰'];
   const attachmentOptions = [
-    { key: 'file', label: 'Document attach', icon: 'attach-file' as const },
+    { key: 'file', label: safety.enabled ? 'Attach PDF (up to 20 MB)' : 'Document attach', icon: 'attach-file' as const },
     { key: 'photo', label: 'Add photos', icon: 'photo-library' as const },
     { key: 'camera', label: 'Take photo', icon: 'photo-camera' as const },
   ];
@@ -296,13 +327,14 @@ export default function WorkerChatScreen() {
   };
 
   const pickFile = async () => {
-    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, ...(safety.enabled ? { type: 'application/pdf' } : {}) });
     if (result.canceled || !result.assets?.length) return;
     const asset = result.assets[0];
     setPendingAttachments((prev) => [...prev, { uri: asset.uri, name: asset.name || `file-${Date.now()}`, kind: 'file', mimeType: asset.mimeType }]);
   };
 
   const handleAttachmentSelect = async (key: string) => {
+    if (!safety.canSend) return;
     try {
       if (key === 'photo') await pickPhoto();
       if (key === 'file') await pickFile();
@@ -314,7 +346,7 @@ export default function WorkerChatScreen() {
     }
   };
 
-  const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
+  const canSend = safety.canSend && threadReady && (draft.trim().length > 0 || pendingAttachments.length > 0);
   const hasPendingImage = pendingAttachments.some((attachment) => attachment.kind === 'image');
 
   const goBack = () => {
@@ -433,7 +465,6 @@ export default function WorkerChatScreen() {
   };
 
   const openSettings = () => {
-    if (!isCustomChat) return;
     setChatNameDraft(headerTitle);
     setConfirmingLeave(false);
     setSettingsOpen(true);
@@ -476,7 +507,7 @@ export default function WorkerChatScreen() {
 
   const sendMessage = async () => {
     const text = draft.trim();
-    if ((!text && !pendingAttachments.length) || !profile || !threadId || !threadReady || sending) return;
+    if ((!text && !pendingAttachments.length) || !profile || !threadId || !threadReady || !safety.canSend || sending) return;
 
     setSending(true);
     try {
@@ -500,6 +531,7 @@ export default function WorkerChatScreen() {
           kind: attachment.kind,
           name: attachment.name,
           mimeType: attachment.mimeType,
+          chatSafetyEnabled: safety.enabled,
         });
         uploadedAttachments.push(uploaded);
       }
@@ -515,6 +547,8 @@ export default function WorkerChatScreen() {
       setShowAttachmentPicker(false);
       setShowEmojiPicker(false);
     } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Unable to send. Please try again.');
+      void safety.refresh();
       Alert.alert('Unable to send', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setSending(false);
@@ -559,13 +593,9 @@ export default function WorkerChatScreen() {
             </View>
           </View>
 
-          {isCustomChat ? (
-            <Pressable accessibilityLabel="Chat settings" style={styles.headerMenuButton} hitSlop={8} onPress={openSettings}>
-              <MaterialIcons name="more-vert" size={24} color={isDarkMode ? '#F7F7F7' : '#121212'} />
-            </Pressable>
-          ) : (
-            <View style={styles.headerSpacer} />
-          )}
+          <Pressable accessibilityRole="button" accessibilityLabel="Chat options" accessibilityState={{ expanded: settingsOpen }} style={styles.headerMenuButton} hitSlop={8} onPress={openSettings}>
+            <MaterialIcons name="more-vert" size={24} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+          </Pressable>
         </View>
       </View>
 
@@ -575,10 +605,22 @@ export default function WorkerChatScreen() {
           <Text style={styles.loadErrorText}>{loadError}</Text>
         </View>
       ) : null}
+      {reportNotice ? <View style={styles.safetyBanner}><Text accessibilityLiveRegion="polite" style={styles.safetyBannerText}>{reportNotice}</Text></View> : null}
+
+      {!safety.canSend ? (
+        <View style={styles.safetyBanner}>
+          <Text style={styles.safetyBannerText}>
+            {safety.error || (safety.loading ? 'Checking chat safety…' : safety.state?.sendDisabledReason || 'Review and accept the chat rules before posting or attaching files.')}
+          </Text>
+          <Pressable accessibilityRole="button" style={styles.safetyLink} onPress={() => safety.error ? void safety.refresh() : router.push('/chat-safety')}>
+            <Text style={styles.safetyLinkText}>{safety.error ? 'Refresh' : 'Open Chat safety'}</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <FlatList
         ref={listRef}
-        data={messages}
+        data={visibleMessages}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.thread, { paddingBottom: 20 }]}
         keyboardShouldPersistTaps="handled"
@@ -594,7 +636,7 @@ export default function WorkerChatScreen() {
                   </Text>
                 ) : null}
                 {message.text ? (
-                  <Text style={[styles.messageText, mine ? styles.messageTextSelf : styles.messageTextLight]}>
+                  <Text style={[styles.messageText, mine ? styles.messageTextSelf : styles.messageTextLight, message.moderationStatus === 'removed' && styles.removedMessage]}>
                     {message.text}
                   </Text>
                 ) : null}
@@ -615,11 +657,43 @@ export default function WorkerChatScreen() {
                   </View>
                 ))}
                 <Text style={[styles.time, mine ? styles.timeSelf : styles.timeLight]}>{message.at}</Text>
+                {safety.enabled && !mine && message.moderationStatus !== 'removed' ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Report message from ${message.senderName?.trim() || 'this person'}`} style={styles.reportMessageButton} onPress={() => setReportTarget({ kind: 'message', messageId: message.id, senderName: message.senderName })}>
+                    <MaterialIcons name="flag" size={16} color="#075E62" />
+                    <Text style={styles.reportMessageText}>Report</Text>
+                  </Pressable>
+                ) : null}
               </View>
             </View>
           );
         }}
       />
+
+      <KeyboardAwareDrawer visible={safetyOpen} onClose={() => setSafetyOpen(false)} backgroundColor={drawerSurfaceColor} accessibilityLabel="Close chat safety" surfaceStyle={[styles.memberPickerDrawer, { backgroundColor: drawerSurfaceColor }]}>
+        <KeyboardAwareDrawerScrollView contentContainerStyle={styles.memberPickerScrollContent}>
+          <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat safety</Text>
+          <Text style={[styles.safetyExplanation, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Blocking stops direct messages in both directions and hides that person’s messages in shared chats. Your event assignments and organization membership stay available.</Text>
+          {safetyActionError ? <Text accessibilityRole="alert" style={styles.loadErrorText}>{safetyActionError}</Text> : null}
+          {safetyParticipants.map((person) => {
+            const blocked = safety.state?.blockedUsers.some((user) => user.uid === person.uid) === true;
+            return <View key={person.uid} style={styles.memberPickerRow}>
+              <Text style={[styles.memberPickerCopy, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>{person.displayName}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={`${blocked ? 'Unblock' : 'Block'} ${person.displayName}`} disabled={safetyBusy} style={styles.safetyLink} onPress={() => void changeBlock(person.uid, !blocked)}>
+                <Text style={styles.safetyLinkText}>{blocked ? 'Unblock' : 'Block'}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Report ${person.displayName}`} style={styles.safetyLink} onPress={() => { setSafetyOpen(false); setReportTarget({ kind: 'user', targetUserId: person.uid, displayName: person.displayName }); }}>
+                <Text style={styles.safetyLinkText}>Report</Text>
+              </Pressable>
+            </View>;
+          })}
+          <Pressable accessibilityRole="button" style={styles.memberPickerButton} onPress={() => { setSafetyOpen(false); router.push('/chat-safety'); }}>
+            <Text style={styles.memberPickerButtonText}>Rules, blocks and your reports</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={styles.memberPickerCloseButton} onPress={() => setSafetyOpen(false)}><Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text></Pressable>
+        </KeyboardAwareDrawerScrollView>
+      </KeyboardAwareDrawer>
+
+      {threadId ? <ReportChatDrawer visible={reportTarget !== null} target={reportTarget} threadId={threadId} onClose={() => setReportTarget(null)} onSubmitted={() => setReportNotice('Your report was submitted. Track its status in Chat safety.')} /> : null}
 
       <KeyboardAwareDrawer
         visible={memberPickerOpen}
@@ -720,12 +794,26 @@ export default function WorkerChatScreen() {
       </KeyboardAwareDrawer>
 
       <KeyboardAwareDrawer
-        visible={isCustomChat && settingsOpen}
+        visible={settingsOpen}
         onClose={closeSettings}
+        accessibilityLabel="Close chat options"
         backgroundColor={drawerSurfaceColor}
         surfaceStyle={[styles.settingsDrawer, isDarkMode ? styles.memberPickerDrawerDark : styles.memberPickerDrawerLight]}>
         <KeyboardAwareDrawerScrollView>
-              <Text style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat Settings</Text>
+              <Text accessibilityRole="header" style={[styles.memberPickerTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat options</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Chat safety and blocking" style={styles.settingsSafetyOption} disabled={savingSettings} onPress={() => {
+                closeSettings();
+                if (safety.enabled) setSafetyOpen(true);
+                else router.push('/chat-safety');
+              }}>
+                <MaterialIcons name="shield" size={23} color={isDarkMode ? '#0EC3C9' : '#0B7D82'} />
+                <View style={styles.settingsSafetyCopy}>
+                  <Text style={[styles.settingsSafetyTitle, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat safety</Text>
+                  <Text style={[styles.safetyExplanation, isDarkMode ? styles.headerSubtitleDark : styles.headerSubtitleLight]}>Block or report someone, and review chat rules.</Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={22} color={isDarkMode ? '#F7F7F7' : '#121212'} />
+              </Pressable>
+              {isCustomChat ? <>
               <Text style={[styles.settingsLabel, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Chat name</Text>
               <KeyboardAwareDrawerTextInput
                 value={chatNameDraft}
@@ -762,7 +850,8 @@ export default function WorkerChatScreen() {
                   <Text style={styles.leaveChatText}>Leave Chat</Text>
                 </Pressable>
               )}
-              <Pressable style={styles.memberPickerCloseButton} disabled={savingSettings} onPress={closeSettings}>
+              </> : null}
+              <Pressable accessibilityRole="button" style={styles.memberPickerCloseButton} disabled={savingSettings} onPress={closeSettings}>
                 <Text style={[styles.memberPickerCloseText, isDarkMode ? styles.headerTitleDark : styles.headerTitleLight]}>Close</Text>
               </Pressable>
         </KeyboardAwareDrawerScrollView>
@@ -807,6 +896,7 @@ export default function WorkerChatScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Add an attachment"
+            disabled={!safety.canSend || sending}
             style={styles.plusButton}
             hitSlop={8}
             onPress={() => {
@@ -819,6 +909,7 @@ export default function WorkerChatScreen() {
           <View style={[styles.inputShell, isDarkMode ? styles.inputShellDark : styles.inputShellLight]}>
             <TextInput
               value={draft}
+              editable={safety.canSend && !sending}
               onChangeText={setDraft}
               placeholder={hasPendingImage ? 'Add a caption' : isTeamBroadcast ? 'Message the team' : 'Type a message'}
               placeholderTextColor={isDarkMode ? 'rgba(244,248,255,0.5)' : 'rgba(18,18,18,0.4)'}
@@ -829,6 +920,7 @@ export default function WorkerChatScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Choose an emoji"
+              disabled={!safety.canSend || sending}
               style={styles.emojiButton}
               hitSlop={8}
               onPress={() => {
@@ -849,6 +941,17 @@ export default function WorkerChatScreen() {
 }
 
 const styles = StyleSheet.create({
+  safetyBanner: { margin: 12, padding: 12, borderRadius: 10, backgroundColor: '#E0F7FA', gap: 4 },
+  safetyBannerText: { color: '#123A4A', fontSize: 14, lineHeight: 20 },
+  safetyLink: { minHeight: 44, paddingHorizontal: 10, justifyContent: 'center' },
+  safetyLinkText: { color: '#08747A', fontWeight: '700', fontSize: 14 },
+  safetyExplanation: { fontSize: 14, lineHeight: 21, marginBottom: 14 },
+  settingsSafetyOption: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  settingsSafetyCopy: { flex: 1 },
+  settingsSafetyTitle: { fontSize: 17, fontWeight: '700', marginBottom: 4 },
+  reportMessageButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-end', paddingHorizontal: 8 },
+  reportMessageText: { fontSize: 12, color: '#075E62', fontWeight: '700' },
+  removedMessage: { fontStyle: 'italic' },
   container: { flex: 1 },
   containerLight: { backgroundColor: '#EDF0FC' },
   containerDark: { backgroundColor: '#EDF0FC' },
