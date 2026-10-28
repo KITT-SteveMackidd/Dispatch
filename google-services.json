@@ -14,6 +14,74 @@
       },
       "oauth_client": [
         {
+          "client_id": "94634534771-0n2cvhu76ohjqmiodne6c4qnk72a9lor.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.smackidd.dispatch",
+            "certificate_hash": "b346a7e458d6ba3f3753ca022dee7f547fb339b3"
+          }
+        },
+        {
+          "client_id": "94634534771-ceq4rqrnpq8rsbmkfn7gf2id37ai34eh.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.smackidd.dispatch",
+            "certificate_hash": "bb6af83ac23b303286c70be757e9c07f92501275"
+          }
+        },
+        {
+          "client_id": "94634534771-kai7gsqtdlk1o7u59r2binjhvtchchul.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.smackidd.dispatch",
+            "certificate_hash": "4df08c2435e9f114319438e3d767148e07ef1866"
+          }
+        },
+        {
+          "client_id": "94634534771-karkfl9acls7c7gal71qpfh2cb6qtlau.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDchghHwQ7O9sSFhoNzfqEWDTmome80OaA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "94634534771-karkfl9acls7c7gal71qpfh2cb6qtlau.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "94634534771-9uh1rfef4u7famv2mvsvf4e6bhpdd355.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.smackidd.dispatch"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:94634534771:android:e100c374f8cf1a9bb64706",
+        "android_client_info": {
+          "package_name": "host.exp.exponent"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "94634534771-qthghbu1dc41c45rcsbvouae4755d94d.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "host.exp.exponent",
+            "certificate_hash": "5838c78d48af83ba20996be6a9624e71347bf4ba"
+          }
+        },
+        {
           "client_id": "94634534771-karkfl9acls7c7gal71qpfh2cb6qtlau.apps.googleusercontent.com",
           "client_type": 3
         }

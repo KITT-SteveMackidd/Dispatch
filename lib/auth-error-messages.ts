@@ -14,6 +14,10 @@ function getAuthErrorCode(error: unknown) {
 export function getAuthErrorMessage(error: unknown, action: AuthAction) {
   const code = getAuthErrorCode(error);
 
+  if (action === 'google' && code === 'dispatch/google-profile-not-found') {
+    return 'No Dispatch profile was found for this Google account. Use Create Account first.';
+  }
+
   if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
     return 'Email or password is incorrect. Check both and try again, or reset your password.';
   }

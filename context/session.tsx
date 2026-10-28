@@ -456,7 +456,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await firebaseSignOut(auth);
       setProfile(null);
       setNeedsProfile(false);
-      throw new Error('No Dispatch profile was found for this Google account. Use Create Account first.');
+      throw Object.assign(new Error('No Dispatch profile was found for this Google account. Use Create Account first.'), {
+        code: 'dispatch/google-profile-not-found',
+      });
     }
   };
 

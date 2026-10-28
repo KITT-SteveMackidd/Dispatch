@@ -9,6 +9,24 @@ function clean(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeSha1(value) {
+  const fingerprint = clean(value);
+  return /^(?:[a-fA-F0-9]{40}|(?:[a-fA-F0-9]{2}:){19}[a-fA-F0-9]{2})$/.test(fingerprint)
+    ? fingerprint.replace(/:/g, '').toUpperCase()
+    : '';
+}
+
+function additionalPlaySha1s(env) {
+  const fingerprints = clean(env.DISPATCH_GOOGLE_PLAY_ADDITIONAL_SHA1S);
+  return fingerprints ? fingerprints.split(',').map(normalizeSha1) : [];
+}
+
+function isAndroidCustomerGoogleEnabled(buildProfile, env) {
+  return clean(buildProfile) === 'android-customer-beta' &&
+    [env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID]
+      .some(value => clean(value) && clean(value) !== 'disabled');
+}
+
 function isBetaProfile(buildProfile) {
   return ['beta', 'android-customer-beta', 'ios-customer-beta', 'android-billing-qa'].includes(clean(buildProfile));
 }
@@ -93,6 +111,19 @@ function getStoreBetaPolicyErrors({ buildProfile, platform, env = {}, androidGoo
   if (mode === 'customer_beta' && senderId !== PRODUCTION_FIREBASE_PROJECT_NUMBER) {
     errors.push('Customer beta must use the existing Dispatch Firebase project number.');
   }
+  if (isAndroidCustomerGoogleEnabled(buildProfile, env)) {
+    const clientProject = /^([1-9]\d*)-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/;
+    const googleIds = [env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID];
+    if (!googleIds.every(value => clientProject.exec(clean(value))?.[1] === senderId)) {
+      errors.push('Android customer beta Google OAuth client IDs must belong to the configured Firebase project number.');
+    }
+    if (!normalizeSha1(env.DISPATCH_GOOGLE_PLAY_SIGNING_SHA1)) {
+      errors.push('Android customer beta Google sign-in requires DISPATCH_GOOGLE_PLAY_SIGNING_SHA1 with the verified Play app-signing SHA-1 fingerprint.');
+    }
+    if (additionalPlaySha1s(env).some(fingerprint => !fingerprint)) {
+      errors.push('DISPATCH_GOOGLE_PLAY_ADDITIONAL_SHA1S must contain only comma-separated SHA-1 fingerprints for the additional Play signing certificates.');
+    }
+  }
 
   const emulatorMode = clean(env.EXPO_PUBLIC_USE_FIREBASE_EMULATORS).toLowerCase();
   if (emulatorMode && emulatorMode !== 'false') {
@@ -143,11 +174,13 @@ function assertStoreBetaConfiguration({
   if (!isBetaProfile(buildProfile)) return;
 
   let androidGoogleServicesProjectId;
+  let androidGoogleServices;
   const targetPlatform = clean(platform) || profilePlatform(buildProfile);
   const needsAndroid = !targetPlatform || targetPlatform === 'android';
   if (needsAndroid && clean(androidGoogleServicesFile)) {
     try {
       const googleServices = JSON.parse(readFileSync(path.resolve(projectRoot, androidGoogleServicesFile), 'utf8'));
+      androidGoogleServices = googleServices;
       androidGoogleServicesProjectId = googleServices?.project_info?.project_id;
       if (getStoreBetaMode(buildProfile) !== 'standard') {
         if (String(googleServices?.project_info?.project_number || '') !== clean(env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)) {
@@ -167,6 +200,35 @@ function assertStoreBetaConfiguration({
   }
   const errors = getStoreBetaPolicyErrors({ buildProfile, platform, env, androidGoogleServicesProjectId });
   if (errors.length) throw new Error(`Store beta blocked:\n- ${errors.join('\n- ')}`);
+
+  // OAuth works only for the installed app's package and signing certificate.
+  // Check the selected file, including EAS file variables, rather than trusting
+  // well-formed IDs or an older checked-in Firebase configuration.
+  if (needsAndroid && isAndroidCustomerGoogleEnabled(buildProfile, env)) {
+    const appClient = androidGoogleServices?.client?.find(client => client?.client_info?.android_client_info?.package_name === 'com.smackidd.dispatch');
+    const oauthClients = Array.isArray(appClient?.oauth_client) ? appClient.oauth_client : [];
+    const webClient = oauthClients.find(client => client?.client_type === 3 && client.client_id === clean(env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID));
+    if (!webClient) {
+      throw new Error('Store beta blocked: selected google-services.json must include the configured Web OAuth client for the Dispatch Android app. Refresh the Firebase services file.');
+    }
+    const androidClient = oauthClients.find(client => client?.client_type === 1 &&
+      client.client_id === clean(env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) &&
+      client.android_info?.package_name === 'com.smackidd.dispatch' &&
+      normalizeSha1(client.android_info?.certificate_hash) === normalizeSha1(env.DISPATCH_GOOGLE_PLAY_SIGNING_SHA1));
+    if (!androidClient) {
+      throw new Error('Store beta blocked: selected google-services.json must include the configured Android OAuth client for com.smackidd.dispatch and the verified Play app-signing SHA-1. Register the Play certificate and refresh the Firebase services file.');
+    }
+    const clientProject = /^([1-9]\d*)-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/;
+    for (const fingerprint of additionalPlaySha1s(env)) {
+      const additionalClient = oauthClients.find(client => client?.client_type === 1 &&
+        clientProject.exec(clean(client.client_id))?.[1] === clean(env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID) &&
+        client.android_info?.package_name === 'com.smackidd.dispatch' &&
+        normalizeSha1(client.android_info?.certificate_hash) === fingerprint);
+      if (!additionalClient) {
+        throw new Error('Store beta blocked: selected google-services.json must include a same-project Android OAuth client for com.smackidd.dispatch and every additional Play signing SHA-1. Register all Play certificates and refresh the Firebase services file.');
+      }
+    }
+  }
 }
 
 module.exports = { getStoreBetaPolicyErrors, assertStoreBetaConfiguration, getStoreBetaMode };

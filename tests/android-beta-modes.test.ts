@@ -89,7 +89,7 @@ describe('Android beta build modes', () => {
       // Missing hosted configuration deliberately blocks until provisioning is complete.
       expect(getStoreBetaPolicyErrors({ buildProfile: profile, platform: 'android', env: eas.build[profile].env })).not.toEqual([]);
     }
-    expect(eas.submit['android-customer-beta'].android).toEqual({ track: 'alpha', releaseStatus: 'draft' });
+    expect(eas.submit['android-customer-beta'].android).toEqual({ track: 'internal', releaseStatus: 'draft' });
     expect(eas.submit['android-billing-qa'].android).toEqual({ track: 'internal', releaseStatus: 'draft' });
   });
 

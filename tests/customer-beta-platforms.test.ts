@@ -12,7 +12,15 @@ describe('customer beta across native platforms', () => {
     expect(iosProfile).toMatchObject({ distribution: 'store', channel: 'ios-customer-beta', environment: 'preview', autoIncrement: true, ios: { image: 'sdk-58' } });
     expect(iosProfile.android).toBeUndefined();
     expect(iosProfile.ios.simulator).not.toBe(true);
-    expect(iosProfile.env).toEqual({ ...eas.build['android-customer-beta'].env, EXPO_PUBLIC_EAS_BUILD_PROFILE: 'ios-customer-beta' });
+    const { DISPATCH_GOOGLE_PLAY_SIGNING_SHA1, DISPATCH_GOOGLE_PLAY_ADDITIONAL_SHA1S, ...androidEnv } = eas.build['android-customer-beta'].env;
+    expect(iosProfile.env).toEqual({
+      ...androidEnv,
+      EXPO_PUBLIC_EAS_BUILD_PROFILE: 'ios-customer-beta',
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 'disabled',
+      EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: 'disabled',
+    });
+    expect(DISPATCH_GOOGLE_PLAY_SIGNING_SHA1).toMatch(/^([A-F0-9]{2}:){19}[A-F0-9]{2}$/);
+    expect(DISPATCH_GOOGLE_PLAY_ADDITIONAL_SHA1S.split(',')).toHaveLength(2);
     expect(eas.submit['ios-customer-beta']).toEqual({ ios: { ascAppId: '6799206233' } });
     expect(getStoreBetaMode('ios-customer-beta')).toBe('customer_beta');
     expect(getStoreBetaMode('beta')).toBe('standard');

@@ -27,4 +27,19 @@ describe('getAuthErrorMessage', () => {
       'Google could not finish signing you in. Try again, or use email sign-in.'
     );
   });
+
+  it('guides an authenticated Google user without a Dispatch profile to Create Account', () => {
+    expect(getAuthErrorMessage({ code: 'dispatch/google-profile-not-found', message: 'Internal profile lookup details' }, 'google')).toBe(
+      'No Dispatch profile was found for this Google account. Use Create Account first.'
+    );
+  });
+
+  it('does not infer missing profiles from arbitrary backend message text', () => {
+    expect(getAuthErrorMessage(new Error('No Dispatch profile was found for this Google account. Use Create Account first.'), 'google')).toBe(
+      'Google could not finish signing you in. Try again, or use email sign-in.'
+    );
+    expect(getAuthErrorMessage({ code: 'dispatch/google-profile-not-found' }, 'signin')).toBe(
+      'Sign-in could not be completed. Check your details and try again.'
+    );
+  });
 });

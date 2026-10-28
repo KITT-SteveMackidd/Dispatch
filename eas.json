@@ -23,8 +23,10 @@
         "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "94634534771",
         "EXPO_PUBLIC_FIREBASE_APP_ID": "1:94634534771:web:9b1ed121b8b27204b64706",
         "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "false",
-        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "disabled",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "disabled",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "94634534771-karkfl9acls7c7gal71qpfh2cb6qtlau.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "94634534771-0n2cvhu76ohjqmiodne6c4qnk72a9lor.apps.googleusercontent.com",
+        "DISPATCH_GOOGLE_PLAY_SIGNING_SHA1": "B3:46:A7:E4:58:D6:BA:3F:37:53:CA:02:2D:EE:7F:54:7F:B3:39:B3",
+        "DISPATCH_GOOGLE_PLAY_ADDITIONAL_SHA1S": "BB6AF83AC23B303286C70BE757E9C07F92501275,4DF08C2435E9F114319438E3D767148E07EF1866",
         "EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID": "disabled",
         "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "disabled",
         "EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": "disabled"
@@ -115,7 +117,7 @@
   "submit": {
     "android-customer-beta": {
       "android": {
-        "track": "alpha",
+        "track": "internal",
         "releaseStatus": "draft"
       }
     },
