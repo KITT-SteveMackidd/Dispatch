@@ -28,4 +28,19 @@ Google sign-in configuration and automated checks cannot substitute for a real G
 
 ## Build record
 
-Local validation passed: SDK58/Expo58.0.21 and current compatible dependency patches, TypeScript, all 406 tests, and Android/iOS customer profile checks. Android's validated target is an internal draft. Pending the replacement build and artifact verification.
+Local validation passed: SDK58/Expo58.0.21 and current compatible dependency patches, TypeScript, all 406 tests, and Android/iOS customer profile checks. Android's validated target is an internal draft.
+
+- EAS build [`c3314929-c4af-4dfd-914e-c0fe008bc1f9`](https://expo.dev/accounts/smackidd/projects/dispatch/builds/c3314929-c4af-4dfd-914e-c0fe008bc1f9) finished October 28, 2026: version `1.0.0`, Android code `6`, profile `android-customer-beta`.
+- Build source `4bf65d0f409f9579d9b0eea3dce161a4f7f92b8d` is pushed to `release/customer-beta-chat-safety`.
+- Downloaded AAB: 85,362,787 bytes; SHA-256 `749805df4e273d3dba005968d0d5029af53c8dc98140b954d486d69a34a4e9e8`.
+- Artifact verification passed: bundletool validation, JAR signature and expected upload certificate, package/version, native Firebase resources and Google Web client, embedded SDK58/customer beta/existing backend settings, compiled Google guidance, and OTA disabled. Both actual local emulator-host and RevenueCat Test Store key values are absent from the compiled bundle and embedded config.
+- Build profile/source are verified against the EAS record. Runtime mode/backend are verified against embedded `app.config` and the compiled `Constants.expoConfig.extra` consumers; the build-time profile name is not expected as a JavaScript bundle string.
+- Local evidence is under `.local-data/google-signin/`, including `release-android-verification.json`, manifest/resource/signature logs, and `play-internal-draft.png`.
+
+## Manual Google Play upload handoff
+
+Steve chose to upload the bundle himself. A checksum-verified copy is at `C:\Users\steve\Downloads\Dispatch-internal-google-signin-1.0.0-6.aab`.
+
+The internal release draft is saved as **1.0.0 (6) - Google sign-in internal beta**, with release notes prepared. The bundle has not been uploaded or published. The **Dispatch internal testing** list is saved and selected for this app's internal track, with `steve@krestlabssoftware.com` and `stevemackidd@gmail.com`; persistence was verified after reload.
+
+Upload the AAB in the prepared internal release, wait for Play processing, then review the release before publishing to internal testing. Follow the device acceptance checks above after installing through Google Play. Customer beta payments remain disabled. DSP-133 stays waiting for that manual upload and device acceptance; DSP-132 remains the separate hosted chat-safety rollout gate.
